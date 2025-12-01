@@ -1,0 +1,53 @@
+[MASTER]
+# A comma-separated list of package or module names from where C extensions may
+# be loaded. Extensions are loading into the active Python interpreter and may
+# run arbitrary code.
+extension-pkg-whitelist=bcc
+
+[MESSAGES CONTROL]
+# C0114: Missing module docstring (we use header blocks instead)
+# C0103: Variable name doesn't conform to snake_case (we adhere to BPF/C naming conventions sometimes)
+# R0902: Too many instance attributes (ProcessNode needs many attributes for forensics)
+# W0703: Catching too general exception (Necessary for volatile /proc scanning)
+# R0402: Use 'from X import Y' (We prefer explicit imports for namespace clarity)
+# W0621: Redefining name from outer scope (Common in small scripts)
+# R0903: Too few public methods (We use classes as data Structs)
+# W0602: Global variable not assigned (BCC requires 'global b' for callbacks)
+# W0613: Unused argument (BCC callbacks have mandatory fixed signature)
+# W0601: Global variable undefined (BCC pattern)
+# C0301: Line too long (Embedded HTML and C inevitably generate long lines)
+# C0115: Missing class docstring
+# C0116: Missing function docstring
+disable=C0114, C0103, R0902, W0703, R0402, W0621, R0903, W0602, W0613, W0601, C0301, C0115, C0116
+
+[FORMAT]
+# Maximum number of characters on a single line.
+max-line-length=200
+
+[DESIGN]
+# Maximum number of arguments for function / method.
+max-args=10
+
+# Maximum number of attributes for a class (see R0902 disabled above, but keeping limit sane)
+max-attributes=25
+
+# Maximum number of boolean expressions in an if statement.
+max-bool-expr=5
+
+# Maximum number of branch for function / method body.
+max-branches=25
+
+# Maximum number of locals for function / method body.
+max-locals=30
+
+# Maximum number of parents for a class (see R0901).
+max-parents=7
+
+# Maximum number of public methods for a class (see R0904).
+max-public-methods=20
+
+# Maximum number of return / yield for function / method body.
+max-returns=10
+
+# Maximum number of statements in function / method body.
+max-statements=100

@@ -1,0 +1,41 @@
+name: Code Quality
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v3
+      with:
+        python-version: "3.10"
+
+    - name: Install System Dependencies (eBPF)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bpfcc-tools libbpfcc-dev linux-headers-$(uname -r)
+
+    - name: Install Python Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pylint flake8
+        # We install psutil just in case, though we removed it from core
+        pip install psutil 
+
+    - name: Run Flake8
+      run: |
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+        flake8 src/ --count --exit-zero --max-complexity=10 --max-line-length=150 --statistics
+
+    - name: Run Pylint
+      run: |
+        # We add src to pythonpath so pylint finds the modules
+        export PYTHONPATH=$PYTHONPATH:$(pwd)/src
+        # Fail if score is under 9.0
+        pylint --rcfile=.pylintrc --fail-under=8.0 src/inspector.py src/sys_inspector/*.py
