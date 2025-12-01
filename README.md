@@ -1,17 +1,18 @@
 # sys-inspector - eBPF-based System Inspector and Audit Tool
 
+
+
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform: Linux](https://img.shields.io/badge/platform-linux-green.svg?logo=linux&logoColor=white)](https://www.kernel.org/)
-[![GitHub Stars](https://img.shields.io/github/stars/mariosergiosl/memusage?style=social)](https://github.com/mariosergiosl/memusage/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/mariosergiosl/memusage?style=social)](https://github.com/mariosergiosl/memusage/network/members)
-[![GitHub Release](https://img.shields.io/github/v/release/mariosergiosl/memusage)](https://github.com/mariosergiosl/memusage/releases)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/mariosergiosl/memusage/python-app.yml?branch=main)](https://github.com/mariosergiosl/memusage/actions)
-[![Issues](https://img.shields.io/github/issues/mariosergiosl/memusage)](https://github.com/mariosergiosl/memusage/issues)
-[![Code Size](https://img.shields.io/github/languages/code-size/mariosergiosl/memusage)](https://github.com/mariosergiosl/memusage)
-[![Last Commit](https://img.shields.io/github/last-commit/mariosergiosl/memusage)](https://github.com/mariosergiosl/memusage/commits/main)
-[![Downloads](https://img.shields.io/github/downloads/mariosergiosl/memusage/total?label=Downloads)](https://github.com/mariosergiosl/memusage/releases)
-![Code Quality](https://github.com/mariosergiosl/sys-inspector/actions/workflows/ci.yml/badge.svg)
+[![GitHub Stars](https://img.shields.io/github/stars/mariosergiosl/sys-inspector?style=social)](https://github.com/mariosergiosl/sys-inspector/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/mariosergiosl/sys-inspector?style=social)](https://github.com/mariosergiosl/sys-inspector/network/members)
+[![GitHub Release](https://img.shields.io/github/v/release/mariosergiosl/sys-inspector)](https://github.com/mariosergiosl/sys-inspector/releases)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/mariosergiosl/sys-inspector/ci.yml?branch=main)](https://github.com/mariosergiosl/sys-inspector/actions)
+[![Issues](https://img.shields.io/github/issues/mariosergiosl/sys-inspector)](https://github.com/mariosergiosl/sys-inspector/issues)
+[![Code Size](https://img.shields.io/github/languages/code-size/mariosergiosl/sys-inspector)](https://github.com/mariosergiosl/sys-inspector)
+[![Last Commit](https://img.shields.io/github/last-commit/mariosergiosl/sys-inspector)](https://github.com/mariosergiosl/sys-inspector/commits/main)
+[![Code Quality](https://github.com/mariosergiosl/sys-inspector/actions/workflows/ci.yml/badge.svg)]
 
 
 **Sys-Inspector** is an advanced system observability and forensic tool powered by **eBPF** (Extended Berkeley Packet Filter).
