@@ -1,3 +1,4 @@
+![Code Quality](https://github.com/mariosergiosl/sys-inspector/actions/workflows/ci.yml/badge.svg)
 # sys-inspector - eBPF-based System Inspector and Audit Tool
 
 **Sys-Inspector** is an advanced system observability and forensic tool powered by **eBPF** (Extended Berkeley Packet Filter).
