@@ -1,0 +1,40 @@
+# sys-inspector - eBPF-based System Inspector and Audit Tool
+
+**Sys-Inspector** is an advanced system observability and forensic tool powered by **eBPF** (Extended Berkeley Packet Filter).
+
+Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks directly into the Linux Kernel to capture events (process execution, file I/O, network connections) in real-time, ensuring that short-lived processes and fleeting connections are never missed.
+
+## Features
+
+* **Kernel-Level Visibility:** Uses eBPF kprobes/tracepoints for zero-blindspot monitoring.
+* **Deep Forensics:**
+    * Calculates **MD5 hashes** of executed binaries on the fly.
+    * Identifies **Storage Topology** (HCTL, WWN, SCSI Paths) for SAN zoning analysis.
+    * Detects execution context (**SSH** origin, **Sudo** user, Tmux sessions).
+* **Enterprise Reporting:** Generates self-contained, interactive **HTML Dashboards** with:
+    * Searchable Process Tree.
+    * Inventory Summary (Hardware, LVM, Network).
+    * Visual Anomaly Badges (High Priority, Suspicious Paths).
+* **Accurate Metrics:** Distinguishes between Virtual Memory (VSZ) and Physical Memory (RSS).
+
+## Requirements
+
+* Linux Kernel 4.15+ (5.x+ recommended for BTF support).
+* Root privileges (`sudo`).
+* Python 3.6+.
+* BCC Tools (`python3-bcc`).
+
+## Usage
+
+### 1. Live Stream Mode (Development)
+Monitor events in the terminal as they happen:
+```bash
+sudo sys-inspector
+```
+
+### 2. Snapshot Report (Production)
+Capture 30 seconds of activity and generate an HTML forensic report:
+
+```bash
+sudo sys-inspector --html report_server01.html --duration 30
+```

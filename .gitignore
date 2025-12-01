@@ -1,0 +1,24 @@
+# Python runtime
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Distribution / Build
+build/
+dist/
+*.egg-info/
+.rpm/
+
+# Logs and Reports (Sys-Inspector specific)
+logs/
+*.log
+*.html
+
+# IDE
+.vscode/
+.idea/
