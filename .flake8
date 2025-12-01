@@ -1,7 +1,13 @@
 [flake8]
-# E501: Line too long (kept 150 due to inline C/HTML)
-# W503: Line break before binary operator (pep8 compat)
-# E402: Import not at top of file (Necessário para sys.path.append)
+# Rationale for ignored Flake8 errors in this project:
+#
+# E501 (Line too long): Essential to ignore due to long embedded HTML templates and C code (eBPF) strings that should not be broken.
+# W503 (Line break before binary operator): Ignored to ensure compatibility with the Black formatter, which prefers line breaks before operators.
+# F541 (f-string without placeholders): Ignored to allow f-strings without variables, maintaining consistency for potential future code changes.
+# E402 (Module level import not at top of file): Critical to ignore as `sys.path.append('src')` is executed before importing project modules.
+# E741 (Ambiguous variable name): Explicitly allowed to permit variable names like 'l' (e.g., in sys_info.py loops) which were preserved by design.
+# F824: Suppressed to prevent specific plugin false positives regarding undefined or duplicate names.
+
 max-line-length = 200
 ignore = E501, W503, F541, E402, E741, F824
 exclude = 
