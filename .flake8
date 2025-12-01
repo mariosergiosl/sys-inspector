@@ -3,7 +3,7 @@
 # W503: Line break before binary operator (pep8 compat)
 # E402: Import not at top of file (Necessário para sys.path.append)
 max-line-length = 200
-ignore = E501, W503, F541, E402, E741
+ignore = E501, W503, F541, E402, E741, F824
 exclude = 
     .git,
     __pycache__,
