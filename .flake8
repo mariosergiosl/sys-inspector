@@ -1,8 +1,9 @@
 [flake8]
 # E501: Line too long (kept 150 due to inline C/HTML)
 # W503: Line break before binary operator (pep8 compat)
-max-line-length = 150
-ignore = E501, W503, F541
+# E402: Import not at top of file (Necessário para sys.path.append)
+max-line-length = 200
+ignore = E501, W503, F541, E402
 exclude = 
     .git,
     __pycache__,
@@ -10,6 +11,11 @@ exclude =
     dist,
     venv,
     .venv
+    .github,
+    logs
 
 [pycodestyle]
-max-line-length = 150
+max-line-length = 200
+
+[mccabe]
+max-complexity = 10
