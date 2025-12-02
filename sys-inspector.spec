@@ -6,7 +6,7 @@
 
 Name:           sys-inspector
 Version:        0.20.0
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        eBPF-based System Inspector and Forensic Tool
 
 License:        GPL-3.0-only
