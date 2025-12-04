@@ -1,14 +1,7 @@
 # -*- coding: utf-8 -*-
 # FILE: src/sys_inspector/sys_info.py
-# DESCRIPTION: Robust System Inventory.
-
-"""
-System Inventory Module.
-
-Collects static and dynamic information about the host system, including
-OS version, hardware specs, network interfaces, and storage topology.
-Designed to be fault-tolerant when reading /proc files.
-"""
+# DESCRIPTION: Robust System Inventory with Hierarchical Storage & Network Topology.
+# VERSION: 0.30.3
 
 import os
 import socket
@@ -20,15 +13,6 @@ import glob
 
 
 def _run_cmd(cmd):
-    """
-    Executes a shell command safely and returns stripped stdout.
-
-    Args:
-        cmd (list): List of command parts (e.g., ['ls', '-l']).
-
-    Returns:
-        str: Command output or 'N/A' on failure.
-    """
     try:
         return subprocess.check_output(
             cmd,
@@ -40,23 +24,12 @@ def _run_cmd(cmd):
 
 
 def get_os_info():
-    """
-    Retrieves Operating System details.
-
-    Tries multiple sources (/etc/os-release, /etc/issue, platform) to
-    identify the distribution. Also calculates system uptime.
-
-    Returns:
-        dict: Keys 'hostname', 'kernel', 'uptime', 'os_pretty_name'.
-    """
     d = {
         "hostname": socket.gethostname(),
         "kernel": platform.release(),
         "uptime": "N/A",
         "os_pretty_name": ""
     }
-
-    # Method 1: /etc/os-release
     try:
         if os.path.exists("/etc/os-release"):
             with open("/etc/os-release", "r", encoding="utf-8") as f:
@@ -67,7 +40,6 @@ def get_os_info():
     except Exception:
         pass
 
-    # Method 2: /etc/issue
     if not d["os_pretty_name"] and os.path.exists("/etc/issue"):
         try:
             with open("/etc/issue", "r", encoding="utf-8") as f:
@@ -75,33 +47,19 @@ def get_os_info():
         except Exception:
             pass
 
-    # Method 3: Platform
     if not d["os_pretty_name"]:
-        try:
-            d["os_pretty_name"] = f"{platform.system()} {platform.release()}"
-        except Exception:
-            pass
+        d["os_pretty_name"] = f"{platform.system()} {platform.release()}"
 
-    # Uptime
     try:
         with open("/proc/uptime", "r", encoding="utf-8") as f:
             sec = float(f.read().split()[0])
             d["uptime"] = str(datetime.timedelta(seconds=int(sec)))
     except Exception:
         pass
-
     return d
 
 
 def get_hw_info():
-    """
-    Retrieves CPU model and total memory.
-
-    Parses /proc/cpuinfo and /proc/meminfo.
-
-    Returns:
-        dict: Keys 'cpu' (model name) and 'mem_mb' (total RAM in MB).
-    """
     cpu = "Unknown"
     mem = 0
     try:
@@ -120,74 +78,102 @@ def get_hw_info():
     return {"cpu": cpu, "mem_mb": mem}
 
 
-def get_network():
+def get_network_details():
     """
-    Retrieves active IPv4 network interfaces.
-
-    Uses 'ip -4 -o addr show' to get compact interface list.
-
-    Returns:
-        list: Strings formatted as 'Interface: IP/CIDR'.
+    Retrieves comprehensive network topology: Interfaces, IPs, Gateway, DNS.
     """
-    return _run_cmd(["ip", "-4", "-o", "addr", "show"]).splitlines()
+    # 1. Interfaces and IPs
+    interfaces = []
+    try:
+        ip_out = _run_cmd(["ip", "-4", "-o", "addr", "show"])
+        for line in ip_out.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 4:
+                # Format: 2: eth0    inet 192.168.1.26/24 ...
+                iface_name = parts[1]
+                ip_cidr = parts[3]
+                interfaces.append({"name": iface_name, "ip": ip_cidr})
+    except Exception:
+        pass
+
+    # 2. Default Gateway
+    gateway = "N/A"
+    try:
+        route_out = _run_cmd(["ip", "route"])
+        for line in route_out.splitlines():
+            if line.startswith("default via"):
+                # default via 192.168.1.1 dev eth0 ...
+                gateway = line.split()[2]
+                break
+    except Exception:
+        pass
+
+    # 3. DNS Servers
+    dns = []
+    try:
+        with open("/etc/resolv.conf", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("nameserver"):
+                    dns.append(line.split()[1])
+    except Exception:
+        pass
+
+    return {"interfaces": interfaces, "gateway": gateway, "dns": dns}
 
 
-def get_storage_map():
+def get_storage_tree():
     """
-    Maps block devices to their mount points and physical paths.
-
-    Crucial for forensic analysis, identifying HCTL (SCSI address),
-    WWN, and persistent paths (/dev/disk/by-path).
-
-    Returns:
-        dict: containing 'devices' (list) and 'mounts' (dict mapping mountpoint to device info).
+    Builds a hierarchical tree of block devices (Disk -> Partitions -> LVM).
     """
-    cols = "NAME,KNAME,PKNAME,FSTYPE,MOUNTPOINT,UUID,PARTUUID,MODEL,VENDOR,SIZE,TYPE,HCTL,SERIAL,WWN"
+    cols = "NAME,KNAME,PKNAME,TYPE,FSTYPE,MOUNTPOINT,SIZE,MODEL,HCTL,UUID,VENDOR"
     out = _run_cmd(["lsblk", "-P", "-o", cols])
 
+    all_devices = {}
     mount_map = {}
-    devices = {}
 
+    # 1. Parse flat list into dictionary keyed by KNAME (Kernel Name)
     for line in out.splitlines():
         d = {}
         for m in re.finditer(r'(\w+)="([^"]*)"', line):
             d[m.group(1).lower()] = m.group(2)
 
-        name = d.get('kname', '')
-        if name:
-            paths = []
-            ids = []
-            for p in glob.glob(f"/dev/disk/by-path/*{name}"):
-                paths.append(os.path.basename(p))
-            for i in glob.glob(f"/dev/disk/by-id/*{name}"):
-                ids.append(os.path.basename(i))
-            d['paths'] = paths
-            d['ids'] = ids
+        d['children'] = []
+        kname = d.get('kname')
 
-        devices[d['name']] = d
+        # Path discovery
+        if kname:
+            paths = []
+            for p in glob.glob(f"/dev/disk/by-path/*{kname}"):
+                paths.append(os.path.basename(p))
+            d['paths'] = paths
+
+        all_devices[kname] = d
         if d.get('mountpoint'):
             mount_map[d['mountpoint']] = d
 
-    for name, d in devices.items():
-        if not d.get('hctl') and d.get('pkname'):
-            parent = devices.get(d['pkname'])
-            if parent and parent.get('hctl'):
-                d['hctl'] = parent['hctl']
+    # 2. Build Hierarchy
+    roots = []
+    for kname, dev in all_devices.items():
+        pkname = dev.get('pkname')
+        # HCTL inheritance for partitions if missing
+        if not dev.get('hctl') and pkname and pkname in all_devices:
+            dev['hctl'] = all_devices[pkname].get('hctl', '')
 
-    return {"devices": list(devices.values()), "mounts": mount_map}
+        if pkname and pkname in all_devices:
+            all_devices[pkname]['children'].append(dev)
+        else:
+            # Devices without parent are roots (physical disks, loop, rom)
+            roots.append(dev)
+
+    return {"roots": roots, "mounts": mount_map}
 
 
 def collect_full_inventory():
-    """
-    Aggregates all system information into a single dictionary.
-
-    Returns:
-        dict: Full inventory including OS, HW, Network, and Storage.
-    """
+    """Aggregates all system info."""
     return {
         "os": get_os_info(),
         "hw": get_hw_info(),
-        "net": get_network(),
-        "storage": get_storage_map(),
+        "net": get_network_details(),
+        "storage": get_storage_tree(),
         "generated": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
