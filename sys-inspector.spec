@@ -5,7 +5,7 @@
 #
 
 Name:           sys-inspector
-Version:        0.20.0
+Version:        0.30.3
 Release:        2%{?dist}
 Summary:        eBPF-based System Inspector and Forensic Tool
 

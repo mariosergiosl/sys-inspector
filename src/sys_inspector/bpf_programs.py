@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 # ===============================================================================
 # FILE: src/sys_inspector/bpf_programs.py
-# DESCRIPTION: C source eBPF. Added Process Priority (prio) extraction.
+# DESCRIPTION: C source eBPF. Includes Process, File I/O, and Network Stats.
+#              Process Priority (prio) extraction and Traffic Monitoring.
+# VERSION: 0.30.3
 # ===============================================================================
 
 BPF_SOURCE = r"""
@@ -10,6 +12,7 @@ BPF_SOURCE = r"""
 #include <linux/fs.h>
 #include <net/sock.h>
 #include <linux/mm_types.h>
+#include <bcc/proto.h>
 
 // Replace 00000 with Python PID
 #define FILTER_PID 00000
@@ -26,11 +29,23 @@ struct event_data_t {
     u64 mem_peak_rss;
     u64 io_bytes;
 
-    // New: Process Priority
+    // Process Priority
     int prio;
 };
 
+// Event Buffer (For detailed logs like Exec/Open)
 BPF_PERF_OUTPUT(events);
+
+// Stats Maps (For high-volume metrics aggregation)
+// Key: PID, Value: Count
+BPF_HASH(tcp_retrans_map, u32, u64);
+BPF_HASH(tcp_drop_map, u32, u64);
+
+// Traffic Maps (Bytes sent/recv)
+BPF_HASH(net_bytes_sent, u32, u64);
+BPF_HASH(net_bytes_recv, u32, u64);
+
+// --- HELPERS ---
 
 static int populate_basic_info(struct event_data_t *data) {
     u64 id = bpf_get_current_pid_tgid();
@@ -42,9 +57,6 @@ static int populate_basic_info(struct event_data_t *data) {
     struct task_struct *task = (struct task_struct *)bpf_get_current_task();
     data->ppid = task->real_parent->tgid;
 
-    // Extract Priority (Nice value logic is derived from this)
-    // In kernel: prio < 100 is realtime, 100-139 is normal user space.
-    // Standard nice 0 is usually prio 120.
     data->prio = task->prio;
 
     bpf_get_current_comm(&data->comm, sizeof(data->comm));
@@ -56,7 +68,7 @@ static int populate_basic_info(struct event_data_t *data) {
     return 0;
 }
 
-// --- HOOKS ---
+// --- PROBES (SYSCALLS & KPROBES) ---
 
 int syscall__execve(struct pt_regs *ctx, const char __user *filename) {
     struct event_data_t data = {};
@@ -110,6 +122,51 @@ int kretprobe__vfs_write(struct pt_regs *ctx) {
         data.io_bytes = ret;
         if (data.io_bytes > 4096) events.perf_submit(ctx, &data, sizeof(data));
     }
+    return 0;
+}
+
+// --- TRAFFIC ACCOUNTING ---
+
+int kprobe__tcp_sendmsg(struct pt_regs *ctx, struct sock *sk, struct msghdr *msg, size_t size) {
+    u32 pid = bpf_get_current_pid_tgid() >> 32;
+    if (pid == FILTER_PID) return 0;
+
+    u64 zero = 0, *val;
+    val = net_bytes_sent.lookup_or_try_init(&pid, &zero);
+    if (val) { (*val) += size; }
+    return 0;
+}
+
+int kprobe__tcp_cleanup_rbuf(struct pt_regs *ctx, struct sock *sk, int copied) {
+    u32 pid = bpf_get_current_pid_tgid() >> 32;
+    if (pid == FILTER_PID) return 0;
+    if (copied <= 0) return 0;
+
+    u64 zero = 0, *val;
+    val = net_bytes_recv.lookup_or_try_init(&pid, &zero);
+    if (val) { (*val) += copied; }
+    return 0;
+}
+
+// --- NETWORK TRACEPOINTS (Health) ---
+
+TRACEPOINT_PROBE(tcp, tcp_retransmit_skb) {
+    u32 pid = bpf_get_current_pid_tgid() >> 32;
+    if (pid == FILTER_PID) return 0;
+
+    u64 zero = 0, *val;
+    val = tcp_retrans_map.lookup_or_try_init(&pid, &zero);
+    if (val) (*val)++;
+    return 0;
+}
+
+TRACEPOINT_PROBE(skb, kfree_skb) {
+    u32 pid = bpf_get_current_pid_tgid() >> 32;
+    if (pid == FILTER_PID || pid == 0) return 0;
+
+    u64 zero = 0, *val;
+    val = tcp_drop_map.lookup_or_try_init(&pid, &zero);
+    if (val) (*val)++;
     return 0;
 }
 """

@@ -12,14 +12,17 @@ NC='\033[0m'
 # Robust Path Detection:
 # Gets the directory where THIS script is located (sys-inspector/scripts)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+echo "SCRIPT_DIR: "$SCRIPT_DIR
 # Points to the project root (sys-inspector/)
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+echo "PROJECT_ROOT: "$PROJECT_ROOT
 
 echo "--- Setting up Environment ---"
 echo "Project Root: $PROJECT_ROOT"
 
 # Export PYTHONPATH relative to the project root
 export PYTHONPATH="${PYTHONPATH}:${PROJECT_ROOT}/src"
+echo "PYTHONPATH: "$PYTHONPATH
 
 # Move to project root to run commands (so .pylintrc is found)
 cd "$PROJECT_ROOT"

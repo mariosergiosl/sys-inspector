@@ -1,16 +1,15 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 # FILE: src/inspector.py
-# VERSION: 0.20.0 (Lints: 10/10 Score & Visual Fixes)
+# VERSION: 0.30.3 (Refactored for Pylint Compliance)
 
 """
 Sys-Inspector Core Module.
 
-This is the main entry point for the application. It coordinates:
-1. eBPF Probes (C source compilation and Kernel injection).
-2. Static System Inventory collection (via sys_info module).
-3. Real-time Event Capture (via perf_buffer).
-4. HTML Report Generation.
+Orchestrates the observability pipeline with added support for:
+- Hierarchical Storage Topology in HTML report
+- Enhanced Network Topology in HTML report
+- Recursive badge propagation
 """
 
 import sys
@@ -23,33 +22,31 @@ import pwd
 import hashlib
 import glob
 import traceback
+import datetime
+import base64
 from bcc import BPF
 
+# Add src directory to Python path to allow relative imports
 sys.path.append('src')
 try:
     from sys_inspector.bpf_programs import BPF_SOURCE
-    from sys_inspector import sys_info
-    from sys_inspector import report_generator
+    import sys_inspector.sys_info as sys_info
+    import sys_inspector.report_generator as report_generator
 except ImportError as err:
     sys.exit(f"Error importing modules: {err}")
 
-PROGRAM_VERSION = "0.20.0"
+PROGRAM_VERSION = "0.30.3"
+LOGO_PATH = "/etc/sys-inspector/logo.png"
+DEFAULT_LOG_DIR = "/var/log/sys-inspector"
 _USER_CACHE = {}
 CLK_TCK = os.sysconf(os.sysconf_names['SC_CLK_TCK'])
-b = None  # Global BPF object reference
+b = None  # Global BPF object reference (kept for event handler callback)
 
 
-# --- HELPERS ---
+# --- HELPER FUNCTIONS ---
+
 def get_username(uid):
-    """
-    Resolves User ID to Username with caching to minimize syscalls.
-
-    Args:
-        uid (int): User ID.
-
-    Returns:
-        str: Username or string representation of UID.
-    """
+    """Resolves User ID to Username with caching."""
     if uid not in _USER_CACHE:
         try:
             _USER_CACHE[uid] = pwd.getpwuid(uid).pw_name
@@ -59,16 +56,7 @@ def get_username(uid):
 
 
 def calculate_md5(filepath):
-    """
-    Calculates MD5 hash of a file safely.
-    Used for forensic verification of binaries.
-
-    Args:
-        filepath (str): Path to the file.
-
-    Returns:
-        str: Hex digest of the MD5 hash or error message.
-    """
+    """Calculates MD5 hash safely."""
     if not os.path.exists(filepath):
         return "N/A"
     try:
@@ -82,15 +70,7 @@ def calculate_md5(filepath):
 
 
 def get_security_context(pid):
-    """
-    Reads the current security context (AppArmor/SELinux) of a process.
-
-    Args:
-        pid (int): Process ID.
-
-    Returns:
-        str: Security context label.
-    """
+    """Reads security context."""
     try:
         with open(f"/proc/{pid}/attr/current", "r", encoding="utf-8") as f:
             return f.read().strip().replace('\0', ' ')
@@ -99,20 +79,12 @@ def get_security_context(pid):
 
 
 def get_suspicious_env(pid):
-    """
-    Scans process environment variables for suspicious entries.
-    Detects LD_PRELOAD, LD_LIBRARY_PATH, and PATH modifications pointing to /tmp.
-
-    Args:
-        pid (int): Process ID.
-
-    Returns:
-        list: List of suspicious environment strings.
-    """
+    """Scans environment variables for suspicious entries."""
     suspicious = []
     try:
         with open(f"/proc/{pid}/environ", "rb") as f:
             env_data = f.read().decode('utf-8', 'replace').split('\0')
+
         for env_var in env_data:
             key = env_var.split('=')[0]
             if key in ["LD_PRELOAD", "LD_LIBRARY_PATH"]:
@@ -125,19 +97,17 @@ def get_suspicious_env(pid):
 
 
 def get_process_context(pid):
-    """
-    Retrieves execution context (SSH origin, Sudo user, Multiplexers).
-
-    Args:
-        pid (int): Process ID.
-
-    Returns:
-        str: Formatted string with context tags.
-    """
+    """Retrieves execution context tags."""
     tags = []
     try:
         with open(f"/proc/{pid}/environ", "rb") as f:
-            env = dict(i.split("=", 1) for i in f.read().decode('utf-8', 'replace').split('\0') if "=" in i)
+            env_items = f.read().decode('utf-8', 'replace').split('\0')
+            env = {}
+            for item in env_items:
+                if "=" in item:
+                    k, v = item.split("=", 1)
+                    env[k] = v
+
         if 'SSH_CONNECTION' in env:
             tags.append(f"[SSH:{env['SSH_CONNECTION'].split()[0]}]")
         if 'SUDO_USER' in env:
@@ -150,16 +120,7 @@ def get_process_context(pid):
 
 
 def get_lifetime_io(pid):
-    """
-    Reads lifetime I/O stats from /proc/pid/io.
-    This provides total bytes read/written since process start.
-
-    Args:
-        pid (int): Process ID.
-
-    Returns:
-        tuple: (read_bytes, write_bytes)
-    """
+    """Reads lifetime I/O stats."""
     r_bytes, w_bytes = 0, 0
     try:
         with open(f"/proc/{pid}/io", "r", encoding="utf-8") as f:
@@ -174,15 +135,7 @@ def get_lifetime_io(pid):
 
 
 def get_cpu_ticks(pid):
-    """
-    Reads CPU ticks (utime + stime) from /proc/pid/stat.
-
-    Args:
-        pid (int): Process ID.
-
-    Returns:
-        int: Total ticks.
-    """
+    """Reads CPU ticks."""
     try:
         with open(f"/proc/{pid}/stat", "r", encoding="utf-8") as f:
             parts = f.read().split()
@@ -192,15 +145,7 @@ def get_cpu_ticks(pid):
 
 
 def get_libraries(pid):
-    """
-    Scans /proc/pid/maps for loaded shared libraries (.so).
-
-    Args:
-        pid (int): Process ID.
-
-    Returns:
-        list: List of library paths.
-    """
+    """Scans loaded shared libraries."""
     libs = set()
     try:
         with open(f"/proc/{pid}/maps", "r", encoding="utf-8") as f:
@@ -216,14 +161,16 @@ def get_libraries(pid):
     return list(libs)
 
 
-def check_anomaly(node):
-    """
-    Performs heuristic anomaly detection on a process node.
-    Assigns a score based on suspicious paths, deleted binaries, or tools.
+def is_suspicious_lib(libpath):
+    """Checks if a library path is suspicious (Logic ported for aggregation)."""
+    bad = ("/tmp/", "/var/tmp/", "/dev/shm/", "/home/")
+    if libpath.startswith(bad) or "(deleted)" in libpath:
+        return True
+    return False
 
-    Args:
-        node (ProcessNode): The process object to check.
-    """
+
+def check_anomaly(node):
+    """Performs heuristic anomaly detection."""
     score = 0
     if node.cmd.startswith(("/tmp", "/dev/shm")):
         score += 10
@@ -236,27 +183,57 @@ def check_anomaly(node):
     node.anomaly_score = score
 
 
-# --- NODE CLASS ---
+# --- DATA STRUCTURE ---
+
 class ProcessNode:
     """
-    Represents a captured process in the tree.
-    Stores all metadata, metrics, and forensic artifacts.
+    Represents a captured process.
+    Updated to include tree_* flags for badge propagation.
     """
-    # pylint: disable=too-few-public-methods, too-many-instance-attributes
     def __init__(self, pid, ppid, cmd, uid, prio=120):
         self.pid = pid
         self.ppid = ppid
         self.cmd = cmd
         self.uid = uid
         self.prio = prio
+
+        # Memory
         self.vsz = 0
         self.rss = 0
+
+        # Disk I/O
         self.read_bytes_delta = 0
         self.write_bytes_delta = 0
         self.read_bytes_total = 0
         self.write_bytes_total = 0
+
+        # Network Traffic
+        self.net_tx_bytes = 0
+        self.net_rx_bytes = 0
+
+        # Tree Aggregation Stats (Sums)
+        self.tree_read_delta = 0
+        self.tree_write_delta = 0
+        self.tree_net_tx = 0
+        self.tree_net_rx = 0
+        self.tree_anomaly_score = 0
+
+        # Tree Aggregation Flags (Boolean Bubbling)
+        self.tree_has_ssh = False
+        self.tree_has_sudo = False
+        self.tree_has_unsafe = False
+        self.tree_has_warn = False
+        self.tree_has_net_err = False
+
+        # CPU Stats
         self.cpu_start_ticks = 0
         self.cpu_usage_pct = 0.0
+
+        # Network Health
+        self.tcp_retrans = 0
+        self.tcp_drops = 0
+
+        # Artifacts
         self.open_files = set()
         self.connections = set()
         self.is_new = False
@@ -272,10 +249,7 @@ process_tree = {}
 
 
 def scan_proc(init_cpu=False):
-    """
-    Performs a static scan of /proc to populate the process tree
-    with currently running processes before capturing events.
-    """
+    """Populates process tree from /proc."""
     print("Scanning /proc...", end="\r")
     my_pid = os.getpid()
     for path in glob.glob('/proc/[0-9]*'):
@@ -286,7 +260,8 @@ def scan_proc(init_cpu=False):
 
             with open(os.path.join(path, 'status'), "r", encoding="utf-8") as f:
                 s = f.read()
-            info = {line.split(':')[0]: line.split(':', 1)[1].strip() for line in s.splitlines() if ':' in line}
+            info = {line.split(':')[0]: line.split(':', 1)[1].strip()
+                    for line in s.splitlines() if ':' in line}
 
             if not init_cpu and pid in process_tree:
                 process_tree[pid].rss = int(info.get('VmHWM', '0').replace('kB', '').strip()) * 1024
@@ -299,7 +274,10 @@ def scan_proc(init_cpu=False):
             except Exception:
                 cmd = info.get('Name', '?')
 
-            node = ProcessNode(pid, int(info.get('PPid', 0)), cmd, int(info.get('Uid', '0').split()[0]))
+            ppid = int(info.get('PPid', 0))
+            uid_val = int(info.get('Uid', '0').split()[0])
+            node = ProcessNode(pid, ppid, cmd, uid_val)
+
             if 'VmHWM' in info:
                 node.rss = int(info.get('VmHWM', '0').replace('kB', '').strip()) * 1024
 
@@ -318,18 +296,14 @@ def scan_proc(init_cpu=False):
             node.libs = get_libraries(pid)
             check_anomaly(node)
             process_tree[pid] = node
+
         except Exception:
             continue
     print("Scanning /proc complete.              ")
 
 
 def handle_event(_cpu, data, _size):
-    """
-    Callback function for eBPF events (perf_buffer).
-    Decodes C structs and updates the ProcessNode.
-    """
-    # We access 'b' from module scope. Global statement is necessary here for BCC logic.
-    # pylint: disable=global-statement
+    """eBPF Event Handler."""
     global b
     event = b["events"].event(data)
     pid = event.pid
@@ -348,16 +322,16 @@ def handle_event(_cpu, data, _size):
     t = event.type_id.decode('utf-8', 'replace')
     f = event.filename.decode('utf-8', 'replace')
 
-    if t == 'E':
+    if t == 'E':  # Execve
         node.cmd = f
         node.is_new = True
         node.md5 = calculate_md5(f)
         node.context = get_process_context(pid)
         check_anomaly(node)
-    elif t == 'O':
+    elif t == 'O':  # OpenAt
         if not f.startswith(("/proc", "/sys", "/dev")):
             node.open_files.add(f)
-    elif t == 'N':
+    elif t == 'N':  # Connect
         try:
             dst = socket.inet_ntop(socket.AF_INET, struct.pack("I", event.daddr))
             node.connections.add(f"IPv4 -> {dst}:{socket.ntohs(event.dport)}")
@@ -370,10 +344,7 @@ def handle_event(_cpu, data, _size):
 
 
 def calculate_final_cpu(duration):
-    """
-    Calculates the CPU usage percentage for all processes
-    based on the delta of CPU ticks over the capture duration.
-    """
+    """Calculates CPU usage."""
     print("Calculating CPU usage...")
     for pid, node in process_tree.items():
         end_ticks = get_cpu_ticks(pid)
@@ -385,26 +356,172 @@ def calculate_final_cpu(duration):
                 pass
 
 
+def collect_network_stats(bpf_obj):
+    """Reads BPF Maps. Accepts BPF object to avoid global."""
+    print("Collecting Network Health & Traffic Stats...")
+    try:
+        retrans_map = bpf_obj["tcp_retrans_map"]
+        for k, v in retrans_map.items():
+            pid = k.value
+            count = v.value
+            if pid in process_tree:
+                process_tree[pid].tcp_retrans = count
+                if count > 10:
+                    process_tree[pid].anomaly_score += 2
+
+        drop_map = bpf_obj["tcp_drop_map"]
+        for k, v in drop_map.items():
+            pid = k.value
+            count = v.value
+            if pid in process_tree:
+                process_tree[pid].tcp_drops = count
+                process_tree[pid].anomaly_score += 5
+
+        tx_map = bpf_obj["net_bytes_sent"]
+        for k, v in tx_map.items():
+            pid = k.value
+            if pid in process_tree:
+                process_tree[pid].net_tx_bytes = v.value
+
+        rx_map = bpf_obj["net_bytes_recv"]
+        for k, v in rx_map.items():
+            pid = k.value
+            if pid in process_tree:
+                process_tree[pid].net_rx_bytes = v.value
+    except Exception:
+        pass
+
+
+def aggregate_tree_stats():
+    """
+    Recursively sums stats and propagates Badges (Alerts) from children to parents.
+    Updates tree_* fields in ProcessNode.
+    """
+    print("Aggregating Tree Stats (Disk, Net & Badges)...")
+
+    def get_tree_stats(pid):
+        if pid not in process_tree:
+            return 0, 0, 0, 0, 0, False, False, False, False, False
+
+        node = process_tree[pid]
+
+        # 1. Determine Local Flags (Self)
+        local_ssh = "[SSH:" in node.context
+        local_sudo = "[SUDO:" in node.context
+        local_unsafe = any(is_suspicious_lib(l) for l in node.libs)
+        local_warn = node.anomaly_score > 0
+        local_net_err = (node.tcp_retrans > 0 or node.tcp_drops > 0)
+
+        # 2. Base Values (Self)
+        r_sum = node.read_bytes_delta
+        w_sum = node.write_bytes_delta
+        tx_sum = node.net_tx_bytes
+        rx_sum = node.net_rx_bytes
+        anom_sum = node.anomaly_score
+
+        # 3. Recursive aggregation from children
+        children = [p for p in process_tree.values() if p.ppid == pid]
+
+        tree_ssh = local_ssh
+        tree_sudo = local_sudo
+        tree_unsafe = local_unsafe
+        tree_warn = local_warn
+        tree_net_err = local_net_err
+
+        for child in children:
+            # Recursive call
+            cr, cw, ctx, crx, ca, c_ssh, c_sudo, c_unsafe, c_warn, c_net = get_tree_stats(child.pid)
+
+            # Sum numeric metrics
+            r_sum += cr
+            w_sum += cw
+            tx_sum += ctx
+            rx_sum += crx
+            anom_sum += ca
+
+            # OR Logic for Badges (Propagate up)
+            tree_ssh = tree_ssh or c_ssh
+            tree_sudo = tree_sudo or c_sudo
+            tree_unsafe = tree_unsafe or c_unsafe
+            tree_warn = tree_warn or c_warn
+            tree_net_err = tree_net_err or c_net
+
+        # Store Aggregated Values in Node
+        node.tree_read_delta = r_sum
+        node.tree_write_delta = w_sum
+        node.tree_net_tx = tx_sum
+        node.tree_net_rx = rx_sum
+        node.tree_anomaly_score = anom_sum
+
+        # Store Boolean Flags in Node
+        node.tree_has_ssh = tree_ssh
+        node.tree_has_sudo = tree_sudo
+        node.tree_has_unsafe = tree_unsafe
+        node.tree_has_warn = tree_warn
+        node.tree_has_net_err = tree_net_err
+
+        return r_sum, w_sum, tx_sum, rx_sum, anom_sum, tree_ssh, tree_sudo, tree_unsafe, tree_warn, tree_net_err
+
+    # Trigger recursion from Root nodes
+    roots = [p.pid for p in process_tree.values() if p.ppid not in process_tree]
+    for r in roots:
+        get_tree_stats(r)
+
+
+def load_logo():
+    """Reads /etc/sys-inspector/logo.png and converts to Base64."""
+    if os.path.exists(LOGO_PATH):
+        try:
+            with open(LOGO_PATH, "rb") as img_file:
+                encoded_string = base64.b64encode(img_file.read()).decode('utf-8')
+                return encoded_string
+        except Exception as e:
+            print(f"Warning: Could not load logo: {e}")
+    return None
+
+
 def main():
-    """
-    Main entry point.
-    Initializes eBPF, runs the capture loop, and triggers report generation.
-    """
+    """Main entry point."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--html", help="HTML report file", required=True)
-    parser.add_argument("-d", "--duration", type=int, default=10, help="Capture seconds")
+    parser.add_argument("--html", help="Custom HTML report file path")
+    parser.add_argument("-d", "--duration", type=int, default=20, help="Capture seconds (default: 20)")
     args = parser.parse_args()
 
     if os.geteuid() != 0:
         sys.exit("Error: Root required.")
 
-    print(f"Loading sys-inspector v{PROGRAM_VERSION} (HTML Mode)...")
+    # --- Path Logic ---
+    output_file = args.html
+
+    if not output_file:
+        # Create default filename
+        hostname = socket.gethostname()
+        now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"sys-inspector_{PROGRAM_VERSION}_{hostname}_{now_str}.html"
+
+        # Ensure directory exists
+        try:
+            os.makedirs(DEFAULT_LOG_DIR, exist_ok=True)
+        except Exception as e:
+            sys.exit(f"Error creating default directory {DEFAULT_LOG_DIR}: {e}")
+
+        output_file = os.path.join(DEFAULT_LOG_DIR, filename)
+    else:
+        # Ensure directory exists for custom path
+        output_dir = os.path.dirname(os.path.abspath(output_file))
+        if output_dir:
+            try:
+                os.makedirs(output_dir, exist_ok=True)
+            except Exception as e:
+                sys.exit(f"Error creating directory {output_dir}: {e}")
+
+    print(f"Loading sys-inspector v{PROGRAM_VERSION}...")
     print("Collecting system inventory...")
     inv = sys_info.collect_full_inventory()
 
+    # Inject current PID
     bpf_text = BPF_SOURCE.replace("00000", str(os.getpid()))
 
-    # pylint: disable=global-statement
     global b
     try:
         b = BPF(text=bpf_text)
@@ -413,6 +530,8 @@ def main():
         b.attach_kprobe(event="tcp_v4_connect", fn_name="kprobe__tcp_v4_connect")
         b.attach_kretprobe(event="vfs_read", fn_name="kretprobe__vfs_read")
         b.attach_kretprobe(event="vfs_write", fn_name="kretprobe__vfs_write")
+        b.attach_kprobe(event="tcp_sendmsg", fn_name="kprobe__tcp_sendmsg")
+        b.attach_kprobe(event="tcp_cleanup_rbuf", fn_name="kprobe__tcp_cleanup_rbuf")
     except Exception as err:
         sys.exit(f"BPF Error: {err}")
 
@@ -428,9 +547,17 @@ def main():
 
     calculate_final_cpu(args.duration)
 
-    print("Generating HTML Report...")
+    # Passed 'b' instance explicitly to fix W0603
+    collect_network_stats(b)
+
+    aggregate_tree_stats()
+
+    # Logo Logic
+    logo_data = load_logo()
+
+    print(f"Generating HTML Report at: {output_file}")
     try:
-        out = report_generator.generate_html(inv, process_tree, args.html, PROGRAM_VERSION)
+        out = report_generator.generate_html(inv, process_tree, output_file, PROGRAM_VERSION, logo_b64=logo_data)
         print(f"\nSUCCESS: Report generated at: {os.path.abspath(out)}")
     except Exception as err:
         traceback.print_exc()
