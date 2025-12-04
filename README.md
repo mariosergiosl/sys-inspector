@@ -41,11 +41,41 @@ Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks dir
 * BCC Tools (`python3-bcc`).
 * `iproute2` (for `tc` command, required only for Chaos Maker).
 
+## Installation (RPM / openSUSE)
+
+You can install **Sys-Inspector** directly via `zypper` using the openSUSE Build Service repository.
+
+1. **Add the Repository:**
+```bash
+zypper addrepo [https://download.opensuse.org/repositories/home:mariosergiosl:sys-inspector/15.6/home:mariosergiosl:sys-inspector.repo](https://download.opensuse.org/repositories/home:mariosergiosl:sys-inspector/15.6/home:mariosergiosl:sys-inspector.repo)
+```
+
+2. **Refresh and Accept GPG Key:**
+During the refresh, you will be asked to trust the repository GPG key.
+
+**Fingerprint:** 7CF0 5795 053C F397 8E00 948E 9F8D 1AC9 E2BE EABC
+```Bash
+zypper refresh
+# Type 'a' to trust always when prompted.
+```
+
+3. **Install the Package:**
+
+```Bash
+zypper install sys-inspector
+```
+
+4. **Run:**
+Once installed, the command is available globally:
+
+```Bash
+sys-inspector
+```
+
+
 ## Usage
 
 Sys-Inspector can now be run with or without arguments. It handles directory creation automatically.
-
-## Usage
 
 ### 1. Default Mode (Recommended)
 Captures **20 seconds** of activity and saves the report to `/var/log/sys-inspector/` with an auto-generated name containing the hostname and timestamp.
@@ -96,7 +126,8 @@ To Stop: Press Ctrl+C. The script traps the signal and automatically cleans up t
 
 
 ### Project Structure
-.
+
+```bash
 ├── src/
 │   ├── inspector.py           # Main Entry Point
 │   └── sys_inspector/
@@ -108,3 +139,4 @@ To Stop: Press Ctrl+C. The script traps the signal and automatically cleans up t
 │   └── run_python_test.sh     # Linter (Pylint/Flake8)
 ├── logs/                      # Default output directory
 └── README.md
+```
