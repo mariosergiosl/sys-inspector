@@ -1,74 +1,74 @@
 #!/bin/bash
 # ==============================================================================
 # FILE: scripts/chaos_maker.sh
-# DESCRIPTION: Gera carga de CPU, I/O de Disco e DEGRADAÇÃO DE REDE.
-#              Usa 'tc' (Traffic Control) para simular perda de pacotes.
+# DESCRIPTION: Generates CPU load, Disk I/O, and NETWORK DEGRADATION.
+#              Uses 'tc' (Traffic Control) to simulate packet loss.
 #
-# WARNING: Roda apenas em VM de teste! Afeta a rede toda da VM.
+# WARNING: Run only on a test VM! Affects the entire VM network.
 #
-# Para testar a nova funcionalidade de rede (Retransmissão/Drops), 
-# precisamos de algo que simule uma rede ruim.
-# No Linux, usamos o tc (Traffic Control) com o módulo netem (Network Emulator). 
-# Ele permite injetar latência e perda de pacotes na interface 
-# de rede intencionalmente.
+# To test the new network functionality (Retransmission/Drops),
+# we need to simulate a bad network.
+# On Linux, we use tc (Traffic Control) with the netem (Network Emulator) module.
+# It allows intentionally injecting latency and packet loss into the
+# network interface.
 # ==============================================================================
 
 # Config
-TARGET_URL="http://google.com" # Algo externo para testar TCP
+TARGET_URL="http://google.com" # Something external to test TCP
 IFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 TEMP_FILE="/tmp/.chaos_data"
 FAKE_LIB="/tmp/libfake.so"
 
-# Função de Limpeza (Trap) - Roda quando você dá Ctrl+C
+# Cleanup Function (Trap) - Runs when you press Ctrl+C
 cleanup() {
     echo ""
-    echo ">>> PARANDO O CAOS..."
+    echo ">>> STOPPING THE CHAOS..."
     
-    # 1. Matar processos filhos
+    # 1. Kill child processes
     pkill -P $$ 
-    # Matar processos python soltos criados por nós
+    # Kill loose python processes created by us
     pkill -f ".unsafe_proc.py"
     
-    # 2. Limpar regras de rede (Restaura a internet normal)
+    # 2. Clear network rules (Restores normal internet)
     if [ -n "$IFACE" ]; then
-        echo ">>> Restaurando interface $IFACE..."
+        echo ">>> Restoring interface $IFACE..."
         tc qdisc del dev $IFACE root netem 2>/dev/null
     fi
     
-    # 3. Limpar arquivos
+    # 3. Clear files
     rm -f $TEMP_FILE $FAKE_LIB /tmp/.unsafe_proc.py
     
-    echo ">>> Sistema limpo. Tchau!"
+    echo ">>> System clean. Bye!"
     exit 0
 }
 
-# Captura Ctrl+C e chama cleanup
+# Captures Ctrl+C and calls cleanup
 trap cleanup SIGINT SIGTERM
 
-echo ">>> INICIANDO O GERADOR DE CAOS (PID $$)"
-echo ">>> Interface de Rede Alvo: $IFACE"
+echo ">>> STARTING CHAOS MAKER (PID $$)"
+echo ">>> Target Network Interface: $IFACE"
 
 # ------------------------------------------------------------------------------
-# 1. DEGRADAÇÃO DE REDE (Simula CrowdStrike/Firewall ruim)
+# 1. NETWORK DEGRADATION (Simulates bad CrowdStrike/Firewall)
 # ------------------------------------------------------------------------------
-echo ">>> [NET] Injetando 20% de perda de pacotes e 100ms de delay..."
-# Adiciona regra: 100ms delay, 20% packet loss, 5% corrupt
+echo ">>> [NET] Injecting 20% packet loss and 100ms delay..."
+# Adds rule: 100ms delay, 20% packet loss, 5% corrupt
 tc qdisc add dev $IFACE root netem delay 100ms loss 20% corrupt 5% 2>/dev/null || \
 tc qdisc change dev $IFACE root netem delay 100ms loss 20% corrupt 5%
 
-# Gerador de Tráfego (Loop de Download falho)
-echo ">>> [NET] Iniciando tráfego HTTP (wget loop)..."
+# Traffic Generator (Failing Download Loop)
+echo ">>> [NET] Starting HTTP traffic (wget loop)..."
 (while true; do 
     wget -q --timeout=2 --tries=1 -O /dev/null $TARGET_URL
     sleep 0.5
 done) &
 
 # ------------------------------------------------------------------------------
-# 2. ESTRESSE DE DISCO (I/O)
+# 2. DISK STRESS (I/O)
 # ------------------------------------------------------------------------------
-echo ">>> [DISK] Iniciando escrita em disco ($TEMP_FILE)..."
+echo ">>> [DISK] Starting disk write ($TEMP_FILE)..."
 (while true; do
-    # Escreve 100MB, sincroniza e apaga
+    # Writes 100MB, syncs, and deletes
     dd if=/dev/zero of=$TEMP_FILE bs=1M count=100 status=none
     sync
     rm $TEMP_FILE
@@ -76,45 +76,45 @@ echo ">>> [DISK] Iniciando escrita em disco ($TEMP_FILE)..."
 done) &
 
 # ------------------------------------------------------------------------------
-# 3. ANOMALIA DE PROCESSO (Hidden & Fileless)
+# 3. PROCESS ANOMALY (Hidden & Fileless)
 # ------------------------------------------------------------------------------
-echo ">>> [PROC] Criando processo suspeito em /dev/shm..."
+echo ">>> [PROC] Creating suspicious process in /dev/shm..."
 cp /bin/sleep /dev/shm/.hidden_miner
 /dev/shm/.hidden_miner 1000 &
 
 # ------------------------------------------------------------------------------
-# 4. ANOMALIA DE BIBLIOTECA (Unsafe Lib Load) - NOVO v0.26
+# 4. LIBRARY ANOMALY (Unsafe Lib Load) - NEW v0.26
 # ------------------------------------------------------------------------------
-echo ">>> [LIB] Criando processo com Lib Insegura (/tmp)..."
-# Copia uma lib inofensiva do sistema para /tmp para simular um payload
+echo ">>> [LIB] Creating process with Unsafe Lib (/tmp)..."
+# Copies a harmless system lib to /tmp to simulate a payload
 cp /lib64/libz.so.1 $FAKE_LIB 2>/dev/null || cp /usr/lib64/libz.so.1 $FAKE_LIB
 
-# Cria um script python que carrega essa lib explicitamente
+# Creates a python script that loads this lib explicitly
 cat << 'EOF' > /tmp/.unsafe_proc.py
 import time
 import ctypes
 import os
-print(f"PID Malicioso (Lib): {os.getpid()}")
+print(f"Malicious PID (Lib): {os.getpid()}")
 try:
-    # Carrega a lib do /tmp (Isso deve disparar o alerta [UNSAFE] no inspector)
+    # Loads lib from /tmp (This should trigger [UNSAFE] alert in inspector)
     ctypes.CDLL("/tmp/libfake.so")
 except Exception as e:
-    print(f"Erro ao carregar lib: {e}")
+    print(f"Error loading lib: {e}")
 while True: time.sleep(1)
 EOF
 
 python3 /tmp/.unsafe_proc.py &
 
 echo "----------------------------------------------------------------"
-echo " CAOS RODANDO! O sistema agora está lento e instável."
-echo " Execute o sys-inspector em outro terminal para ver:"
-echo " 1. [NET ERR] Retransmissões TCP (Devido aos 20% de perda)"
-echo " 2. [WARN] Processo oculto em /dev/shm"
-echo " 3. [UNSAFE] Biblioteca carregada de /tmp em .unsafe_proc.py"
-echo " 4. Alto I/O de escrita"
+echo " CHAOS RUNNING! System is now slow and unstable."
+echo " Run sys-inspector in another terminal to see:"
+echo " 1. [NET ERR] TCP Retransmissions (Due to 20% loss)"
+echo " 2. [WARN] Hidden process in /dev/shm"
+echo " 3. [UNSAFE] Library loaded from /tmp in .unsafe_proc.py"
+echo " 4. High Write I/O"
 echo "----------------------------------------------------------------"
-echo " PRESSIONE CTRL+C PARA PARAR E LIMPAR TUDO"
+echo " PRESS CTRL+C TO STOP AND CLEAN EVERYTHING"
 echo "----------------------------------------------------------------"
 
-# Mantém o script rodando
+# Keeps script running
 while true; do sleep 1; done
