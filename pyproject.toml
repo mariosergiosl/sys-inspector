@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sys-inspector"
-version = "0.30.6"
+version = "0.30.7"
 description = "eBPF-based System Inspector and Forensic Tool"
 authors = [
     {name = "Mario Sergio", email = "mariosergiosl@users.noreply.github.com"},
