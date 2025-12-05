@@ -2,7 +2,7 @@
 # ===============================================================================
 # FILE: src/sys_inspector/sys_info.py
 # DESCRIPTION: Robust System Inventory with Hierarchical Storage & Network Topology.
-# VERSION: 0.30.6
+# VERSION: 0.30.7
 # ===============================================================================
 
 import os

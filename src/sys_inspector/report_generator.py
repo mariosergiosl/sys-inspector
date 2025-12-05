@@ -2,7 +2,7 @@
 # ===============================================================================
 # FILE: src/sys_inspector/report_generator.py
 # DESCRIPTION: Generates HTML reports. v0.30.3
-# VERSION: 0.30.6
+# VERSION: 0.30.7
 # ===============================================================================
 
 import pwd
