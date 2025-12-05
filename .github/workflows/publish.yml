@@ -32,4 +32,4 @@ jobs:
           TWINE_USERNAME: ${{ github.actor }}
           TWINE_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          twine upload --repository-url https://pypi.pkg.github.com/${{ github.repository_owner }} dist/*
+          twine upload --repository-url https://pypi.pkg.github.com/${{ github.repository_owner }}/ dist/*
