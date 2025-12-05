@@ -4,13 +4,12 @@ on:
   release:
     types: [published]
 
-permissions:
-  contents: read
-  packages: write
-
 jobs:
   publish-package:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - uses: actions/checkout@v4
@@ -20,23 +19,17 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install build twine
+      - name: Install build tool
+        run: pip install build
 
       - name: Build package
         run: python -m build
 
       - name: Publish to GitHub Packages
-        env:
-          TWINE_USERNAME: ${{ github.actor }}
-          # AQUI ESTÁ O SEGREDO: Usamos o seu Token Pessoal (MY_PAT)
-          TWINE_PASSWORD: ${{ secrets.MY_PAT }}
-        run: |
-          # Força minúsculo
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          # Define URL via variável de ambiente (mais seguro que argumento)
-          export TWINE_REPOSITORY_URL="https://pypi.pkg.github.com/$OWNER/"
-          
-          twine upload --verbose dist/*
+        # Esta action oficial configura tudo (auth, url, pypirc) automaticamente
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          repository_url: https://pypi.pkg.github.com/mariosergiosl/
+          skip_existing: true
