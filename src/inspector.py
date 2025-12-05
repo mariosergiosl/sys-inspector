@@ -2,7 +2,8 @@
 # ===============================================================================
 # -*- coding: utf-8 -*-
 # FILE: src/inspector.py
-# VERSION: 0.30.4 (Refactored for Pylint Compliance)
+# VERSION: 0.30.5
+#  (Refactored for Pylint Compliance)
 # ===============================================================================
 
 """
@@ -37,7 +38,7 @@ try:
 except ImportError as err:
     sys.exit(f"Error importing modules: {err}")
 
-PROGRAM_VERSION = "0.30.4"
+PROGRAM_VERSION = "0.30.5"
 LOGO_PATH = "/etc/sys-inspector/logo.png"
 DEFAULT_LOG_DIR = "/var/log/sys-inspector"
 _USER_CACHE = {}

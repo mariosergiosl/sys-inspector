@@ -3,7 +3,7 @@
 # FILE: src/sys_inspector/bpf_programs.py
 # DESCRIPTION: C source eBPF. Includes Process, File I/O, and Network Stats.
 #              Process Priority (prio) extraction and Traffic Monitoring.
-# VERSION: 0.30.4
+# VERSION: 0.30.5
 # ===============================================================================
 
 BPF_SOURCE = r"""
