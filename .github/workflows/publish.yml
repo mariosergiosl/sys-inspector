@@ -4,17 +4,19 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   publish-package:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write 
 
     steps:
       - uses: actions/checkout@v4
-      
-      - uses: actions/setup-python@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
@@ -26,15 +28,15 @@ jobs:
       - name: Build package
         run: python -m build
 
-      - name: Create .pypirc config
-        run: |
-          echo "[distutils]" > ~/.pypirc
-          echo "index-servers = github" >> ~/.pypirc
-          echo "[github]" >> ~/.pypirc
-          echo "repository = https://pypi.pkg.github.com/mariosergiosl/" >> ~/.pypirc
-          echo "username = ${{ github.actor }}" >> ~/.pypirc
-          echo "password = ${{ secrets.GITHUB_TOKEN }}" >> ~/.pypirc
-
       - name: Publish to GitHub Packages
+        env:
+          TWINE_USERNAME: ${{ github.actor }}
+          # AQUI ESTÁ O SEGREDO: Usamos o seu Token Pessoal (MY_PAT)
+          TWINE_PASSWORD: ${{ secrets.MY_PAT }}
         run: |
-          twine upload --verbose --repository github dist/*
+          # Força minúsculo
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          # Define URL via variável de ambiente (mais seguro que argumento)
+          export TWINE_REPOSITORY_URL="https://pypi.pkg.github.com/$OWNER/"
+          
+          twine upload --verbose dist/*

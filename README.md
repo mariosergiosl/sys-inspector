@@ -18,7 +18,7 @@
 
 Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks directly into the Linux Kernel to capture events (process execution, file I/O, network connections) in real-time.
 
-## Features (v0.30.3)
+## Features (v0.30.5)
 
 * **Kernel-Level Visibility:** Uses eBPF kprobes/tracepoints for zero-blindspot monitoring.
 * **Deep Forensics:**
