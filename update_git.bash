@@ -187,6 +187,35 @@ if ! python3 -c "import twine" &> /dev/null || ! python3 -c "import build" &> /d
     fi
 fi
 
+
+
+# --- Check build folder /opt/build_work ---
+echo "Preparing Clean Build Environment in $BUILD_WORK_DIR..."
+
+# 1. Check if exist
+if [ ! -d "$BUILD_WORK_DIR" ]; then
+    echo "Directory $BUILD_WORK_DIR does not exist. Creating..."
+    mkdir -p "$BUILD_WORK_DIR"
+else
+    # 3. Check is is empty
+    if [ "$(ls -A $BUILD_WORK_DIR)" ]; then
+         # 4. Not emppty, do backup
+         TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+         BACKUP_DIR="$BUILD_WORK_DIR/old_$TIMESTAMP"
+         echo "Directory not empty. Moving content to $BACKUP_DIR..."
+         mkdir -p "$BACKUP_DIR"
+         
+         # Move all (excpt the backup folder with has created now for do not make a loop)
+         find "$BUILD_WORK_DIR" -maxdepth 1 -mindepth 1 -not -name "old_$TIMESTAMP" -exec mv {} "$BACKUP_DIR" \;
+    fi
+fi
+
+echo "Copying project from $PROJECT_ROOT..."
+cp -r "$PROJECT_ROOT" "$BUILD_WORK_DIR/sys-inspector"
+
+cd "$BUILD_WORK_DIR/sys-inspector"
+
+
 echo "1. Cleaning old build artifacts..."
 rm -rf dist/ build/ src/*.egg-info
 
@@ -209,6 +238,17 @@ echo "Note: Using configuration from ~/.pypirc"
 # twine upload dist/*
 # Use python3 -m twine to bypass PATH issues
 python3 -m twine upload dist/*
+
+
+echo "----------------------------------------------------------------"
+echo "Syncing artifacts back to source repo..."
+if cp -r dist/* "$PROJECT_ROOT/dist/"; then
+    echo "SUCCESS: Distribution files copied back to $PROJECT_ROOT/dist/"
+else
+    echo "WARNING: Could not copy files back to source directory."
+    echo "The package was published successfully, but local artifacts are only in $BUILD_WORK_DIR/sys-inspector/dist/"
+fi
+
 
 echo "================================================================"
 echo "   GRAND FINALE: SUCCESS! 🚀"
