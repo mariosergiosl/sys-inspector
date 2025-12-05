@@ -44,6 +44,15 @@ set -e
 # Set script version
 SCRIPT_VERSION="2.0"
 
+# --- CONFIG ---
+PROJECT_ROOT="/opt/host/Syncfolder/Trabalho/GitHub/mariosergiosl/sys-inspector"
+BUILD_WORK_DIR="/opt/build_work"
+# Define test script relative to current execution
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+TEST_SCRIPT="$SCRIPT_DIR/scripts/run_python_test.bash"
+if [[ ! -f "$TEST_SCRIPT" ]]; then TEST_SCRIPT="scripts/run_python_test.bash"; fi
+
+
 # Display help message
 show_help() {
   cat << EOF
@@ -101,7 +110,6 @@ done
 echo "----------------------------------------------------------------"
 echo ">>> STEP 1: TESTES (Safety First) - Running Python tests..."
 echo "----------------------------------------------------------------"
-TEST_SCRIPT="scripts/run_python_test.bash"
 
 # Check if the python test script exists and run it
 if [ -f "$TEST_SCRIPT" ]; then
