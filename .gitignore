@@ -10,7 +10,7 @@ env/
 
 # Distribution / Build
 build/
-dist/
+#dist/
 *.egg-info/
 .rpm/
 
