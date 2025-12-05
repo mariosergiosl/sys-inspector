@@ -1,7 +1,9 @@
 #!/usr/bin/python3
+# ===============================================================================
 # -*- coding: utf-8 -*-
 # FILE: src/inspector.py
-# VERSION: 0.30.3 (Refactored for Pylint Compliance)
+# VERSION: 0.30.4 (Refactored for Pylint Compliance)
+# ===============================================================================
 
 """
 Sys-Inspector Core Module.
@@ -35,7 +37,7 @@ try:
 except ImportError as err:
     sys.exit(f"Error importing modules: {err}")
 
-PROGRAM_VERSION = "0.30.3"
+PROGRAM_VERSION = "0.30.4"
 LOGO_PATH = "/etc/sys-inspector/logo.png"
 DEFAULT_LOG_DIR = "/var/log/sys-inspector"
 _USER_CACHE = {}

@@ -1,7 +1,9 @@
 #!/usr/bin/python3
+# ===============================================================================
 # -*- coding: utf-8 -*-
 # FILE: setup.py
 # DESCRIPTION: Installation script for sys-inspector.
+# ===============================================================================
 
 """
 Setup script for sys-inspector.
@@ -14,7 +16,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name='sys-inspector',
-    version='0.30.3',
+    version='0.30.4',
     author='Mario Luz',
     author_email='mario.mssl@gmail.com',
     description='eBPF-based System Inspector and Forensic Tool',
