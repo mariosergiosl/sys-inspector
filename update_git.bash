@@ -12,11 +12,16 @@
 #              This script only runs if the 'run_python_test.bash' script
 #              is successful.
 #
+# STEPS:       1. Runs automated tests (scripts/run_python_test.bash)
+#              2. Updates Git (Add, Commit, Pull, Push, Tags)
+#              3. Builds the Python package (Source + Wheel)
+#              4. Publishes to official PyPI (Twine)
+#
 # OPTIONS:
 #    -h, --help      Display this help message
 #    -v, --version   Display script version
 #
-# REQUIREMENTS: git, run_python_test.bash
+# REQUIREMENTS: git, python, run_python_test.bash
 #
 # BUGS:
 #
@@ -171,11 +176,15 @@ echo "----------------------------------------------------------------"
 echo ">>> STEP 3: PYPI RELEASE"
 echo "----------------------------------------------------------------"
 
-# Verifica se estamos em um ambiente Python com as ferramentas necessárias
-if ! command -v twine &> /dev/null || ! command -v build &> /dev/null; then
-    echo "Error: 'twine' or 'build' not found."
-    echo "Please run: pip install build twine"
-    exit 1
+# Check if tools are installed (using python module check for robustness)
+if ! python3 -c "import twine" &> /dev/null || ! python3 -c "import build" &> /dev/null; then
+    echo "Error: 'twine' or 'build' modules not found."
+    echo "Try to install: pip install build twine"
+    pip install build twine
+    if [ $? -eq 1 ]; then
+	echo "Error on try install: 'twine' or 'build' modules not found."
+        exit 1
+    fi
 fi
 
 echo "1. Cleaning old build artifacts..."
@@ -197,7 +206,9 @@ echo "----------------------------------------------------------------"
 echo "3. Uploading to PyPI..."
 echo "Note: Using configuration from ~/.pypirc"
 # The twine read your file ~/.pypirc automaticamente para autenticar
-twine upload dist/*
+# twine upload dist/*
+# Use python3 -m twine to bypass PATH issues
+python3 -m twine upload dist/*
 
 echo "================================================================"
 echo "   GRAND FINALE: SUCCESS! 🚀"
