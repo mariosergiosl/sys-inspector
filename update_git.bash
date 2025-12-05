@@ -27,13 +27,17 @@
 #
 # COMPANY:
 #
-# VERSION: 1.5  # Updated version
+# VERSION: 2.0  # Updated version
 # CREATED: 2024-11-18 17:00:00
 # REVISION: 2025-06-27 11:22:00 # Updated revision date
+# REVISION: 2025-12-05 14:48:00 # Updated for PyPI Automation
 #===============================================================================
 
+# Stop execution on any error
+set -e
+
 # Set script version
-SCRIPT_VERSION="1.5"
+SCRIPT_VERSION="2.0"
 
 # Display help message
 show_help() {
@@ -41,6 +45,7 @@ show_help() {
 Usage: $0 [OPTIONS] [commit message]
 
 This script updates a Git repository with the latest changes.
+Full Release Pipeline: Test -> Git Push -> Build -> PyPI Upload
 
 OPTIONS:
   -h, --help      Display this help message
@@ -48,7 +53,7 @@ OPTIONS:
 
 Examples:
   $0 "My commit message"
-  $0 -m "My commit message"
+  $0 -m "New feature: Network Scan"
   $0
 EOF
 }
@@ -59,19 +64,24 @@ show_version() {
 }
 
 # Get the commit message from the command line argument or prompt for one
+# --- ARGUMENT PARSING ---
 commit_message=""
+
 while [[ $# -gt 0 ]]; do
-  case "$1" in
+  case $1 in
     -h|--help)
       show_help
       exit 0
       ;;
     -v|--version)
-      show_version
+      echo show_version
       exit 0
       ;;
+    -m)
+      commit_message="$2"
+      shift 2
+      ;;
     *)
-      # This handles the commit message if it's the first non-option argument
       if [[ -z "$commit_message" ]]; then
         commit_message="$1"
       fi
@@ -80,65 +90,116 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Run the Python tests
-echo "Running Python tests..."
-./scripts/run_python_test.bash
+# ==============================================================================
+# STEP 1: TESTES (Safety First) - Run the Python tests
+# ==============================================================================
+echo "----------------------------------------------------------------"
+echo ">>> STEP 1: TESTES (Safety First) - Running Python tests..."
+echo "----------------------------------------------------------------"
+TEST_SCRIPT="scripts/run_python_test.bash"
 
-# Check the exit code of the Python tests
-if [[ $? -eq 0 ]]; then
-  echo "Python tests passed."
+# Check if the python test script exists and run it
+if [ -f "$TEST_SCRIPT" ]; then
+    if /bin/bash $TEST_SCRIPT; then
+        echo "Tests Passed. Proceeding..."
+    else
+        echo "!!! TESTS FAILED. Aborting Release !!!"
+        exit 1
+    fi
+else
+    echo "Warning: Test script '$TEST_SCRIPT' not found. Skipping tests."
+fi
 
-  # Always add all changes, including new untracked files, to the staging area
-  echo "Adding all changes (including new files) to staging area..."
-  git add .
+# ==============================================================================
+# STEP 2: GIT AUTOMATION
+# ==============================================================================
+echo "----------------------------------------------------------------"
+echo ">>> STEP 2: GIT SYNC (Push & Tags)"
+echo "----------------------------------------------------------------"
 
-  # Check if there are any staged changes to commit
-  if git diff --cached --quiet --exit-code; then
-    echo "No changes to commit."
+# heck if there are any staged changes to commit
+if [[ -z $(git status --porcelain) ]]; then
     # Even if no changes to commit, still pull and push for tags in case
     # there are remote updates or only tags need pushing.
+    echo "No local changes to add."
     echo "Pulling latest changes from remote repository..."
     git pull origin main
-
-    echo "Pushing (possibly just tags) to remote repository..."
     git push origin main
     git push origin --tags
-    exit 0
-  fi
-
-  # Get the list of updated files (now including newly added files)
-  updated_files=$(git diff --cached --name-only)
-
-  # Use the default commit message if none is provided via argument
-  if [[ -z "$commit_message" ]]; then
-    commit_message="Updating files: $updated_files"
-  fi
-
-  echo "Committing with message: '$commit_message'"
-  # Commit the changes
-  git commit -m "$commit_message"
-
-  # Pull the latest changes from the remote repository BEFORE pushing local commits
-  # This helps avoid conflicts if others have pushed
-  echo "Pulling latest changes from remote repository..."
-  git pull origin main
-
-  # Check for merge conflicts after pulling
-  if [[ $(git status --porcelain | grep "^UU" | wc -l) -gt 0 ]]; then
-      echo "!!! Merge conflicts detected after pulling. Please resolve them manually !!!"
-      echo "Aborting push. Run 'git status' to see conflicted files."
-      exit 1
-  fi
-
-  # Push the changes to the remote repository
-  echo "Pushing changes to remote repository..."
-  git push origin main
-
-  # Push the tags to the remote repository
-  echo "Pushing tags to remote repository..."
-  git push origin --tags
-
 else
-  echo "Python tests failed. Aborting Git update."
-  exit 1 # Exit with an error code
+    # Auto-commit message if not exist
+    if [[ -z "$commit_message" ]]; then
+        # Get the list of updated files (now including newly added files)
+        updated_files=$(git diff --cached --name-only)
+        commit_message="Update: $updated_files"
+        # Use the default commit message if none is provided via argument
+        if [[ -z "$commit_message" ]]; then commit_message="Minor updates"; fi
+    fi
+
+    echo "Adding all changes (including new files) to staging area..."
+    git add .
+
+    echo "Committing with message: '$commit_message'"
+    git commit -m "$commit_message"
+
+    # Pull the latest changes from the remote repository BEFORE pushing local commits
+    # This helps avoid conflicts if others have pushed
+    echo "Pulling latest changes from remote repository..."
+    # Commit the changes
+    git pull origin main
+
+    # Check for merge conflicts after pulling
+    if [[ $(git status --porcelain | grep "^UU" | wc -l) -gt 0 ]]; then
+        echo "!!! Merge conflicts detected after pulling. Please resolve them manually !!!"
+        echo "Aborting push. Run 'git status' to see conflicted files."
+        exit 1
+    fi
+
+    # Push the changes to the remote repository
+    echo "Pushing changes to remote repository..."
+    git push origin main
+
+    # Push the tags to the remote repository
+    echo "Pushing tags to remote repository..."    
+    git push origin --tags
 fi
+
+# ==============================================================================
+# STEP 3: BUILD & PUBLISH (PyPI)
+# ==============================================================================
+echo "----------------------------------------------------------------"
+echo ">>> STEP 3: PYPI RELEASE"
+echo "----------------------------------------------------------------"
+
+# Verifica se estamos em um ambiente Python com as ferramentas necessárias
+if ! command -v twine &> /dev/null || ! command -v build &> /dev/null; then
+    echo "Error: 'twine' or 'build' not found."
+    echo "Please run: pip install build twine"
+    exit 1
+fi
+
+echo "1. Cleaning old build artifacts..."
+rm -rf dist/ build/ src/*.egg-info
+
+echo "2. Building package (Source + Wheel)..."
+python3 -m build
+
+if [ $? -eq 0 ]; then
+    echo "Build Successful."
+    echo "Files created in dist/:"
+    ls -1 dist/
+else
+    echo "!!! BUILD FAILED. Aborting Upload !!!"
+    exit 1
+fi
+
+echo "----------------------------------------------------------------"
+echo "3. Uploading to PyPI..."
+echo "Note: Using configuration from ~/.pypirc"
+# The twine read your file ~/.pypirc automaticamente para autenticar
+twine upload dist/*
+
+echo "================================================================"
+echo "   GRAND FINALE: SUCCESS! 🚀"
+echo "   Code Pushed & Package Published to PyPI."
+echo "================================================================"

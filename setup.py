@@ -16,7 +16,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name='sys-inspector',
-    version='0.30.8',
+    version='0.30.9',
     author='Mario Luz',
     author_email='mario.mssl@gmail.com',
     description='eBPF-based System Inspector and Forensic Tool',
