@@ -32,7 +32,7 @@
 #
 # COMPANY:
 #
-# VERSION: 2.0  # Updated version
+# VERSION: 2.4  # Updated version
 # CREATED: 2024-11-18 17:00:00
 # REVISION: 2025-06-27 11:22:00 # Updated revision date
 # REVISION: 2025-12-05 14:48:00 # Updated for PyPI Automation
@@ -42,7 +42,7 @@
 set -e
 
 # Set script version
-SCRIPT_VERSION="2.0"
+SCRIPT_VERSION="2.4"
 
 # --- CONFIG ---
 PROJECT_ROOT="/opt/host/Syncfolder/Trabalho/GitHub/mariosergiosl/sys-inspector"
@@ -232,6 +232,26 @@ python3 -m build
 
 if [ $? -eq 0 ]; then
     echo "Build Successful."
+
+    # --- CORRECAO DE NOME PARA PYPI (Hifen -> Underscore) ---
+    # O PyPI rejeita .tar.gz com hifen no nome do pacote.
+    # Se encontrar arquivo com hifen, renomeia para underscore.
+    for f in dist/*.tar.gz; do
+        # if the file exist
+        if [ -e "$f" ]; then
+            # make the new name changing hifens for underscores on name of package
+            # Ex: sys-inspector-0.30.9 -> sys_inspector-0.30.9
+            base=$(basename "$f")
+            new_name=$(echo "$base" | sed -E 's/^([a-zA-Z0-9]+)-([a-zA-Z0-9]+)/\1_\2/')
+            
+            if [ "$base" != "$new_name" ]; then
+                echo "Renaming $base to $new_name for PyPI compliance..."
+                mv "$f" "dist/$new_name"
+            fi
+        fi
+    done
+    # ---------------------------------------------------------
+
     echo "Files created in dist/:"
     ls -1 dist/
 else
