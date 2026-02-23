@@ -58,5 +58,5 @@ Designed for SREs and Forensic Analysts.
 %{python3_sitelib}/sys_inspector-*.egg-info/
 
 %changelog
-* Fri Nov 28 2025 Mario Luz <mario.mssl@gmail.com> - 0.20.0
+* Fri Nov 28 2025 Mario Luz <mario.mssl[at]gmail.com> - 0.20.0
 - Release v0.20.0: Enterprise Forensic features, HCTL mapping, and HTML Reporting.
