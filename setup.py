@@ -6,7 +6,7 @@
 # DESCRIPTION: Installation and packaging script for sys-inspector.
 #              Configures the package for PyPi and local deployments.
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: 0.90.8
+# VERSION: 0.90.10
 # ==============================================================================
 
 """
@@ -26,7 +26,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 # ------------------------------------------------------------------------------
 setup(
     name='sys-inspector',
-    version='0.90.8',
+    version='0.90.10',
     license='GPLv3',
     author='Mario Luz',
     author_email='mario.mssl[at]gmail.com',
@@ -39,7 +39,11 @@ setup(
     packages=find_packages(),
     py_modules=['main'],
     include_package_data=True,
-    data_files=[('/etc/sys-inspector', ['conf/config.yaml'])],
+    data_files=[('/etc/sys-inspector', [
+        'conf/config.yaml', 
+        'conf/public_key.pem', 
+        'conf/private_key.pem'
+    ])],
     # Entry Point (Creates the 'sys-inspector' command in /usr/bin)
     entry_points={
         'console_scripts': [

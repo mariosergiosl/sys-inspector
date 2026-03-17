@@ -23,7 +23,8 @@ import json
 import logging
 from contextlib import closing
 
-DEFAULT_DB_PATH = "data/sys_inspector.db"
+# DEFAULT_DB_PATH = "data/sys_inspector.db"
+DEFAULT_DB_PATH = "/var/lib/sys-inspector/sys_inspector.db"
 DEFAULT_RETENTION_COUNT = 100
 
 
@@ -36,7 +37,11 @@ class DatabaseManager:
         # Ensure data directory exists
         db_dir = os.path.dirname(self.db_path)
         if db_dir and not os.path.exists(db_dir):
-            os.makedirs(db_dir)
+            try:
+                os.makedirs(db_dir, exist_ok=True)
+            except PermissionError:
+                self.logger.critical(f"Permission denied creating directory: {db_dir}")
+                raise
 
         self._init_db()
 

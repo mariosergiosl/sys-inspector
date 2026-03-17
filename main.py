@@ -137,12 +137,19 @@ def main():
         datefmt='%H:%M:%S'
     )
 
-    # Load Config
-    if not os.path.exists(args.config):
-        logging.critical(f"Config file not found: {args.config}")
+    # Load Config: Handle FHS fallback if running globally
+    config_path = args.config
+
+    # Se o caminho for o default relativo e não existir no local, tenta o global
+    if config_path == "conf/config.yaml" and not os.path.exists(config_path):
+        if os.path.exists("/etc/sys-inspector/config.yaml"):
+            config_path = "/etc/sys-inspector/config.yaml"
+
+    if not os.path.exists(config_path):
+        logging.critical(f"Config file not found. Tried local 'conf/config.yaml' and global '/etc/sys-inspector/config.yaml'")
         sys.exit(1)
 
-    config = load_config(args.config)
+    config = load_config(config_path)
 
     # Override Mode logic: CLI Args > Config File
     if args.mode:
