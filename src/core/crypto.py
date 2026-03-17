@@ -33,7 +33,7 @@ def generate_key_pair(private_key_path="private_key.pem", public_key_path="publi
     Generates a new RSA 4096-bit key pair for the Analyst.
     WARNING: This should be run ONCE on the Analyst's secure machine, NOT on the agent.
     """
-    print("[*] Generating RSA-4096 Key Pair...")
+    print(f"[*] Generating RSA-4096 Key Pair...")
     private_key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=4096,

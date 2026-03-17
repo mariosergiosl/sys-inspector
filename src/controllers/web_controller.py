@@ -28,8 +28,7 @@ from flask import Flask, jsonify, make_response, render_template_string
 try:
     from src.core.crypto import load_private_key, decrypt_data
     # Reusing assets for visual consistency
-    # from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, JS_BLOCK, LEGEND_HTML
-    from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, LEGEND_HTML
+    from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, JS_BLOCK, LEGEND_HTML
     from src.exporters.html_report import (
         render_os_block,
         render_net_block,
@@ -248,7 +247,7 @@ class WebController:
             inv, tree, ts, err = self._get_snapshot_data(uuid)
 
             if err:
-                return """
+                return f"""
                 <body style='background:#121212; color:#ccc; font-family:sans-serif; text-align:center; padding:50px;'>
                     <h3>Agent: {uuid}</h3>
                     <p style='color:#ff6b6b'>Status: {err}</p>
@@ -266,7 +265,7 @@ class WebController:
 
                 # Inject JS: Define Context UUID and Auto-Start
                 # [CRITICAL] We inject the specific API endpoint for THIS agent
-                context_js = """
+                context_js = f"""
                     const AGENT_UUID = "{uuid}";
                     const API_ENDPOINT = "/api/agent/{uuid}/latest";
 
@@ -307,7 +306,7 @@ class WebController:
                 )
             except Exception as e:
                 self.logger.error(f"Render Error: {e}")
-                return "Render Error: {e}"
+                return f"Render Error: {e}"
 
         # --- 3. AGENT SPECIFIC API ---
         @self.app.route('/api/agent/<uuid>/latest_fragment')

@@ -46,9 +46,6 @@ def _run_cmd(cmd):
         return "N/A"
 
 
-# ------------------------------------------------------------------------------
-# NETWORK ERROS COLLECTORS
-# ------------------------------------------------------------------------------
 def _get_physical_net_errors():
     """
     [v0.70 NEW] Parses /proc/net/dev to find physical layer errors.
@@ -56,7 +53,7 @@ def _get_physical_net_errors():
     """
     phy_issues = {}
     try:
-        with open("/proc/net/dev", 'r', encoding='utf-8') as f:
+        with open("/proc/net/dev", "r") as f:
             lines = f.readlines()
 
         # Skip header lines (first 2)
@@ -102,7 +99,7 @@ def get_os_info():
     # Try /etc/os-release
     try:
         if os.path.exists("/etc/os-release"):
-            with open("/etc/os-release", 'r', encoding='utf-8') as f:
+            with open("/etc/os-release", "r") as f:
                 for line in f:
                     if line.startswith("PRETTY_NAME="):
                         d["os_pretty_name"] = line.split("=", 1)[1].strip().strip('"')
@@ -112,16 +109,16 @@ def get_os_info():
     # Fallback to /etc/issue
     if not d["os_pretty_name"] and os.path.exists("/etc/issue"):
         try:
-            with open("/etc/issue", 'r', encoding='utf-8') as f:
+            with open("/etc/issue", "r") as f:
                 d["os_pretty_name"] = f.read().split('\\')[0].strip()
         except Exception: pass
 
     if not d["os_pretty_name"]:
-        d["os_pretty_name"] = "{platform.system()} {platform.release()}"
+        d["os_pretty_name"] = f"{platform.system()} {platform.release()}"
 
     # Uptime
     try:
-        with open("/proc/uptime", 'r', encoding='utf-8') as f:
+        with open("/proc/uptime", "r") as f:
             up_seconds = float(f.read().split()[0])
             d["uptime"] = str(datetime.timedelta(seconds=int(up_seconds)))
     except Exception: pass
@@ -129,16 +126,13 @@ def get_os_info():
     return d
 
 
-# ------------------------------------------------------------------------------
-# CPU COLLECTOR
-# ------------------------------------------------------------------------------
 def get_hw_info():
     """Retrieves basic Hardware details (CPU/RAM)."""
     d = {"cpu": "Unknown CPU", "mem_mb": 0}
 
     # CPU Model
     try:
-        with open("/proc/cpuinfo", 'r', encoding='utf-8') as f:
+        with open("/proc/cpuinfo", "r") as f:
             for line in f:
                 if "model name" in line:
                     d["cpu"] = line.split(":", 1)[1].strip()
@@ -147,7 +141,7 @@ def get_hw_info():
 
     # Memory
     try:
-        with open("/proc/meminfo", 'r', encoding='utf-8') as f:
+        with open("/proc/meminfo", "r") as f:
             for line in f:
                 if "MemTotal" in line:
                     parts = line.split()
@@ -178,7 +172,7 @@ def get_net_info():
 
     # Interfaces & IPs
     try:
-        with open("/proc/net/dev", 'r', encoding='utf-8') as f:
+        with open("/proc/net/dev", "r") as f:
             lines = f.readlines()[2:]
             for line in lines:
                 if ":" in line:
@@ -205,7 +199,7 @@ def get_net_info():
     # DNS
     try:
         if os.path.exists("/etc/resolv.conf"):
-            with open("/etc/resolv.conf", 'r', encoding='utf-8') as f:
+            with open("/etc/resolv.conf", "r") as f:
                 for line in f:
                     if line.startswith("nameserver"):
                         parts = line.split()
@@ -246,7 +240,7 @@ def get_storage_info():
 
     # 2. ENRICHMENT: Fallback to /proc/mounts
     try:
-        with open("/proc/mounts", 'r', encoding='utf-8') as f:
+        with open("/proc/mounts", "r") as f:
             for line in f:
                 parts = line.split()
                 if len(parts) < 3: continue

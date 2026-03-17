@@ -103,7 +103,7 @@ class LiveHTTPHandler(BaseHTTPRequestHandler):
                 tree = self._rehydrate_tree(data)
 
                 # Generate Full HTML to Temp
-                tmp_filename = "/tmp/sys_live_{threading.get_ident()}.html"
+                tmp_filename = f"/tmp/sys_live_{threading.get_ident()}.html"
                 generate_report(data, tree, tmp_filename, "0.61.00")
 
                 with open(tmp_filename, 'r', encoding='utf-8') as f:

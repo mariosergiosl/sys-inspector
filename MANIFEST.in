@@ -1,3 +1,4 @@
 include src/sys_inspector/bpf_program.c
 include README.md
 include LICENSE
+recursive-include conf *

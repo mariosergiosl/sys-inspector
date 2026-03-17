@@ -75,7 +75,7 @@ def _get_container_info(pid):
     """Parses cgroup to find Docker/K8s/Podman IDs."""
     c_id, c_type = None, "host"
     try:
-        with open(f"/proc/{pid}/cgroup", 'r', encoding='utf-8') as f:
+        with open(f"/proc/{pid}/cgroup", "r") as f:
             for line in f:
                 if "docker" in line:
                     parts = line.split("docker")[-1]
@@ -101,7 +101,7 @@ def _get_raw_cgroups(pid):
     """Reads all cgroup entries for detail display."""
     cgroups = []
     try:
-        with open(f"/proc/{pid}/cgroup", 'r', encoding='utf-8') as f:
+        with open(f"/proc/{pid}/cgroup", "r") as f:
             for line in f:
                 cgroups.append(line.strip())
     except: pass
@@ -112,7 +112,7 @@ def _read_maps(pid):
     """Scans /proc/PID/maps to find loaded libraries."""
     libs = set()
     try:
-        with open(f"/proc/{pid}/maps", 'r', encoding='utf-8') as f:
+        with open(f"/proc/{pid}/maps", "r") as f:
             for line in f:
                 parts = line.split()
                 if len(parts) > 5:
@@ -126,7 +126,7 @@ def _read_maps(pid):
 def _read_security_context(pid):
     """Reads SELinux/AppArmor context."""
     try:
-        with open(f"/proc/{pid}/attr/current", 'r', encoding='utf-8') as f:
+        with open(f"/proc/{pid}/attr/current", "r") as f:
             return f.read().strip().replace('\x00', '')
     except:
         return "unconfined"
@@ -135,14 +135,14 @@ def _read_security_context(pid):
 def _check_fanotify(pid):
     """Parses /proc/PID/fdinfo to find Fanotify flags."""
     try:
-        fd_dir = "/proc/{pid}/fdinfo"
+        fd_dir = f"/proc/{pid}/fdinfo"
         if not os.path.exists(fd_dir): return False
 
         inspector_details = {"found": False, "mode": "Unknown", "flags": ""}
 
         for fd_file in os.listdir(fd_dir):
             try:
-                with open(os.path.join(fd_dir, fd_file), 'r', encoding='utf-8') as f:
+                with open(os.path.join(fd_dir, fd_file), "r") as f:
                     content = f.read()
                     if "fanotify" in content:
                         inspector_details["found"] = True
@@ -166,7 +166,7 @@ def _check_wchan(pid):
     Returns: True if blocked by security tool.
     """
     try:
-        with open(f"/proc/{pid}/wchan", 'r', encoding='utf-8') as f:
+        with open(f"/proc/{pid}/wchan", "r") as f:
             wchan = f.read().strip()
             # Signatures of AV scanning/interception
             if any(x in wchan for x in ["fanotify", "fsnotify", "av_scan", "sophos", "falcon"]):
@@ -183,7 +183,7 @@ def _scan_open_fds(pid):
     """
     files = set()
     try:
-        fd_dir = "/proc/{pid}/fd"
+        fd_dir = f"/proc/{pid}/fd"
         if not os.path.exists(fd_dir): return files
         for fd in os.listdir(fd_dir):
             try:
@@ -225,7 +225,7 @@ def _check_immutable_path(path):
 def _get_udp_stats():
     """Reads global UDP OutDatagrams from /proc/net/snmp."""
     try:
-        with open("/proc/net/snmp", 'r', encoding='utf-8') as f:
+        with open("/proc/net/snmp", "r") as f:
             for line in f:
                 if line.startswith("Udp:"):
                     parts = line.split()
@@ -246,7 +246,7 @@ def _format_duration(seconds):
     if days > 0: parts.append(f"{days}D")
     if hours > 0: parts.append(f"{hours}h")
     if mins > 0: parts.append(f"{mins}m")
-    if not parts: return "{d.second}s"
+    if not parts: return f"{d.second}s"
     return " ".join(parts)
 
 
@@ -355,7 +355,7 @@ class ProcessNode:
                     except:
                         g_name = str(st.st_gid)
 
-                    self.file_metadata[f] = "{u_name}:{g_name} {mode}"
+                    self.file_metadata[f] = f"{u_name}:{g_name} {mode}"
                 except:
                     self.file_metadata[f] = ""  # Failed to stat (e.g. permission denied)
 
@@ -505,7 +505,7 @@ class ProcessTree:
                         last_paren_idx = stat_content.rfind(')')
                         if last_paren_idx != -1:
                             rest = stat_content[last_paren_idx + 1:].strip().split()
-                            if len(rest) >= 20:
+                            if len(rest) >= 20:  # Ensure we have starttime field
                                 nice_val = int(rest[16])
                                 prio_val = 120 + nice_val
 
@@ -642,7 +642,6 @@ class ProcessTree:
             if pid == 1 and hasattr(self, 'immutable_alert') and self.immutable_alert:
                 for alert in self.immutable_alert:
                     node.detection_reasons.append(f"Filesystem Anomaly: {alert} [+{SCORE_IMMUTABLE}]")
-
                     node.anomaly_score |= SCORE_IMMUTABLE
                     node.tags_accumulated.add("UNSAFE")
 
