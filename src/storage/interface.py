@@ -15,6 +15,7 @@
 
 from abc import ABC, abstractmethod
 
+
 class StorageProvider(ABC):
     """
     Abstract Interface for data persistence.
@@ -27,7 +28,6 @@ class StorageProvider(ABC):
         Establishes connection to the database or file system.
         Must handle connection errors gracefully.
         """
-        pass
 
     @abstractmethod
     def save_snapshot(self, snapshot_data):
@@ -40,7 +40,6 @@ class StorageProvider(ABC):
         Returns:
             bool: True if save was successful, False otherwise.
         """
-        pass
 
     @abstractmethod
     def get_history(self, start_ts, end_ts):
@@ -54,11 +53,9 @@ class StorageProvider(ABC):
         Returns:
             list: A list of snapshot dictionaries.
         """
-        pass
 
     @abstractmethod
     def close(self):
         """
         Closes any open file handles or database connections.
         """
-        pass

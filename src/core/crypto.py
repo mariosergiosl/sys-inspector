@@ -24,16 +24,16 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 
+
 # ------------------------------------------------------------------------------
 # KEY MANAGEMENT
 # ------------------------------------------------------------------------------
-
 def generate_key_pair(private_key_path="private_key.pem", public_key_path="public_key.pem"):
     """
     Generates a new RSA 4096-bit key pair for the Analyst.
     WARNING: This should be run ONCE on the Analyst's secure machine, NOT on the agent.
     """
-    print(f"[*] Generating RSA-4096 Key Pair...")
+    print("[*] Generating RSA-4096 Key Pair...")
     private_key = rsa.generate_private_key(
         public_exponent=65537,
         key_size=4096,
@@ -45,9 +45,9 @@ def generate_key_pair(private_key_path="private_key.pem", public_key_path="publi
         f.write(private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption() # Can add password here later
+            encryption_algorithm=serialization.NoEncryption()  # Can add password here later
         ))
-    
+
     # Save Public Key
     public_key = private_key.public_key()
     with open(public_key_path, "wb") as f:
@@ -55,7 +55,7 @@ def generate_key_pair(private_key_path="private_key.pem", public_key_path="publi
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         ))
-    
+
     print(f"[+] Keys generated: {private_key_path}, {public_key_path}")
     print("[!] KEEP THE PRIVATE KEY SAFE! The Agent only needs the PUBLIC key.")
 
@@ -68,6 +68,7 @@ def load_public_key(path):
             backend=default_backend()
         )
 
+
 def load_private_key(path):
     """Loads the Private Key (Server-Side Decryption mode)."""
     with open(path, "rb") as key_file:
@@ -77,18 +78,18 @@ def load_private_key(path):
             backend=default_backend()
         )
 
+
 # ------------------------------------------------------------------------------
 # HYBRID ENCRYPTION (AES-GCM + RSA)
 # ------------------------------------------------------------------------------
-
 def encrypt_data(data_dict, public_key):
     """
     Encrypts a dictionary object using Hybrid Encryption.
-    
+
     Args:
         data_dict (dict): The forensic data to encrypt.
         public_key: The RSA Public Key object.
-        
+
     Returns:
         dict: {
             'enc_session_key': base64_string,  # AES key encrypted with RSA
@@ -99,16 +100,16 @@ def encrypt_data(data_dict, public_key):
     """
     # 1. Prepare Data
     json_data = json.dumps(data_dict).encode('utf-8')
-    
+
     # 2. Generate Ephemeral Session Key (AES-256)
-    session_key = os.urandom(32) # 256 bits
+    session_key = os.urandom(32)  # 256 bits
     iv = os.urandom(12)          # GCM standard IV size
-    
+
     # 3. Encrypt Data with AES-GCM
     cipher = Cipher(algorithms.AES(session_key), modes.GCM(iv), backend=default_backend())
     encryptor = cipher.encryptor()
     ciphertext = encryptor.update(json_data) + encryptor.finalize()
-    
+
     # 4. Encrypt Session Key with RSA Public Key
     encrypted_session_key = public_key.encrypt(
         session_key,
@@ -118,7 +119,7 @@ def encrypt_data(data_dict, public_key):
             label=None
         )
     )
-    
+
     # 5. Return Bundle (All encoded as Base64 for safe storage/JSON)
     return {
         'enc_session_key': base64.b64encode(encrypted_session_key).decode('utf-8'),
@@ -126,6 +127,7 @@ def encrypt_data(data_dict, public_key):
         'ciphertext': base64.b64encode(ciphertext).decode('utf-8'),
         'tag': base64.b64encode(encryptor.tag).decode('utf-8')
     }
+
 
 def decrypt_data(encrypted_bundle, private_key):
     """
@@ -138,7 +140,7 @@ def decrypt_data(encrypted_bundle, private_key):
         iv = base64.b64decode(encrypted_bundle['iv'])
         ciphertext = base64.b64decode(encrypted_bundle['ciphertext'])
         tag = base64.b64decode(encrypted_bundle['tag'])
-        
+
         # 2. Decrypt Session Key using RSA Private Key
         session_key = private_key.decrypt(
             enc_session_key,
@@ -148,52 +150,53 @@ def decrypt_data(encrypted_bundle, private_key):
                 label=None
             )
         )
-        
+
         # 3. Decrypt Data using AES-GCM
         cipher = Cipher(algorithms.AES(session_key), modes.GCM(iv, tag), backend=default_backend())
         decryptor = cipher.decryptor()
         json_data = decryptor.update(ciphertext) + decryptor.finalize()
-        
+
         return json.loads(json_data.decode('utf-8'))
-        
+
     except Exception as e:
         print(f"[!] Decryption Failed: {e}")
         return None
+
 
 # ------------------------------------------------------------------------------
 # SELF-TEST (Run this file directly to verify)
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
     print("--- Running Crypto Module Self-Test ---")
-    
+
     # 1. Setup Keys (Simulation)
     generate_key_pair("test_priv.pem", "test_pub.pem")
-    
+
     # 2. Simulate Config Load
     pub_k = load_public_key("test_pub.pem")
     priv_k = load_private_key("test_priv.pem")
-    
+
     # 3. Dummy Data
     secret_data = {
         "hostname": "critical-server",
         "processes": [{"pid": 1, "name": "systemd"}, {"pid": 666, "name": "malware"}]
     }
     print(f"\n[1] Original Data: {secret_data}")
-    
+
     # 4. Encrypt
     bundle = encrypt_data(secret_data, pub_k)
     print(f"\n[2] Encrypted Bundle (What goes to DB):")
     print(f"    - AES Key (Enveloped): {bundle['enc_session_key'][:30]}...")
     print(f"    - Ciphertext: {bundle['ciphertext'][:30]}...")
-    
+
     # 5. Decrypt
     restored_data = decrypt_data(bundle, priv_k)
     print(f"\n[3] Decrypted Data: {restored_data}")
-    
+
     # 6. Validate
     assert secret_data == restored_data
     print("\n[SUCCESS] Integrity Check Passed.")
-    
+
     # Cleanup
     os.remove("test_priv.pem")
     os.remove("test_pub.pem")

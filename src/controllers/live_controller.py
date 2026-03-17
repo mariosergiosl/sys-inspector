@@ -19,7 +19,7 @@ import os
 import time
 import threading
 import logging
-import socket
+# import socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
@@ -29,9 +29,11 @@ from src.collectors.system_inventory import collect_full_inventory
 from src.exporters.html_report import generate_report, generate_table_fragment
 from src.collectors.process_tree import ProcessTree, ProcessNode
 
+
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """Multi-threaded HTTP Server for non-blocking handling."""
     daemon_threads = True
+
 
 class LiveHTTPHandler(BaseHTTPRequestHandler):
     """
@@ -51,13 +53,13 @@ class LiveHTTPHandler(BaseHTTPRequestHandler):
         """
         tree = ProcessTree()
         raw_procs = json_data.get('processes', {})
-        
+
         for pid, pdata in raw_procs.items():
             # Create Node with mandatory fields
             node = ProcessNode(
-                int(pid), 
-                int(pdata.get('ppid', 0)), 
-                pdata.get('cmd', '?'), 
+                int(pid),
+                int(pdata.get('ppid', 0)),
+                pdata.get('cmd', '?'),
                 int(pdata.get('uid', 0)),
                 pdata.get('prio', 120),
                 pdata.get('loginuid', None)
@@ -68,13 +70,13 @@ class LiveHTTPHandler(BaseHTTPRequestHandler):
                 if k == 'connections': v = set(v)
                 if hasattr(node, k):
                     setattr(node, k, v)
-            
+
             tree.nodes[int(pid)] = node
         return tree
 
     def do_GET(self):
         controller = self.server.controller
-        
+
         # --- AJAX ENDPOINT (No Page Refresh) ---
         if self.path == '/live_update':
             # Get latest snapshot
@@ -85,12 +87,12 @@ class LiveHTTPHandler(BaseHTTPRequestHandler):
                 if full_data:
                     tree = self._rehydrate_tree(full_data)
                     html_fragment = generate_table_fragment(full_data, tree)
-                    
+
                     self._set_headers(content_type="text/plain")
                     self.wfile.write(html_fragment.encode('utf-8'))
                     return
-            
-            self._set_headers(status=204) # No Content yet
+
+            self._set_headers(status=204)  # No Content yet
             return
 
         # --- LANDING PAGE ---
@@ -99,24 +101,24 @@ class LiveHTTPHandler(BaseHTTPRequestHandler):
             if snap:
                 data = controller.db.get_snapshot_details(snap[0]['id'])
                 tree = self._rehydrate_tree(data)
-                
+
                 # Generate Full HTML to Temp
-                tmp_filename = f"/tmp/sys_live_{threading.get_ident()}.html"
+                tmp_filename = "/tmp/sys_live_{threading.get_ident()}.html"
                 generate_report(data, tree, tmp_filename, "0.61.00")
-                
+
                 with open(tmp_filename, 'r', encoding='utf-8') as f:
                     html_content = f.read()
-                
+
                 # Inject JS Auto-Start for Live Mode
                 injection = """
                 <script>
                     document.addEventListener('DOMContentLoaded', function() {
-                        startLiveMode(); 
+                        startLiveMode();
                     });
                 </script>
                 """
                 html_content = html_content.replace('<body>', f'<body>{injection}')
-                
+
                 self._set_headers()
                 self.wfile.write(html_content.encode('utf-8'))
                 try: os.remove(tmp_filename)
@@ -127,6 +129,7 @@ class LiveHTTPHandler(BaseHTTPRequestHandler):
         else:
             self._set_headers(status=404)
             self.wfile.write(b"Not Found")
+
 
 class LiveController:
     """
@@ -144,29 +147,29 @@ class LiveController:
         """Background thread to capture data."""
         interval = self.config['collection']['interval']
         self.logger.info(f"[CORE] Starting Collection Loop (Interval: {interval}s)")
-        
+
         while not self.shutdown_event.is_set():
             start_ts = time.time()
             try:
                 # 1. Capture (Short duration for responsiveness, e.g., 5s fixed or dynamic)
                 self.engine.run_snapshot(duration=5, output_file=None)
-                
+
                 # 2. Package
                 full_inv = collect_full_inventory()
                 full_inv['processes'] = self.engine.tree.to_json()
                 full_inv['agent_uuid'] = self.db.agent_id
-                
+
                 # 3. Save
                 if self.db.save_snapshot(full_inv):
                     self.update_count += 1
                     self.logger.info(f"[CORE] Snapshot {self.update_count} persisted.")
             except Exception as e:
                 self.logger.error(f"[CORE] Collection Error: {e}")
-            
+
             # Sleep remainder of interval
             elapsed = time.time() - start_ts
             sleep_time = max(1, interval - elapsed)
-            
+
             # Check shutdown frequently during sleep
             for _ in range(int(sleep_time)):
                 if self.shutdown_event.is_set(): break
@@ -175,11 +178,11 @@ class LiveController:
     def run(self):
         """Starts Web Server and Collection Loop."""
         port = self.config['network']['bind_port']
-        
+
         # 1. Start HTTP Server
         server = ThreadingHTTPServer(('0.0.0.0', port), LiveHTTPHandler)
-        server.controller = self # Inject reference to self
-        
+        server.controller = self  # Inject reference to self
+
         t_server = threading.Thread(target=server.serve_forever)
         t_server.daemon = True
         t_server.start()

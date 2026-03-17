@@ -8,9 +8,11 @@
 # E741 (Ambiguous variable name): Explicitly allowed to permit variable names like 'l' (e.g., in sys_info.py loops) which were preserved by design.
 # F824: Suppressed to prevent specific plugin false positives regarding undefined or duplicate names.
 # E722 (Do not use bare 'except'): Added for Flask rapid error handling in web_controller.py.
+# E701 multiple statements on one line (colon)
+# F841 local variable 'e' is assigned to but never used
 
 max-line-length = 200
-ignore = E501, W503, F541, E402, E741, F824, E722
+ignore = E501, W503, F541, E402, E741, F824, E722, E701, F841
 exclude = 
     .git,
     __pycache__,

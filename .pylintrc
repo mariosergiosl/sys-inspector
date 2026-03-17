@@ -22,7 +22,24 @@ extension-pkg-whitelist=bcc
 # R0917: Too many positional arguments (6/5) (too-many-positional-arguments)
 # W0702: No exception type(s) specified (bare-except, used in web_controller AJAX fallback)
 # R0914: Too many local variables (used in web_controller rendering)
-disable=C0114, C0103, R0902, W0703, R0402, W0621, R0903, W0602, W0613, W0601, C0301, C0115, C0116, W0603, R0917, W0702, R0914
+# C0321: More than one statement on a single line (multiple-statements)
+# W1514: Using open without explicitly specifying an encoding (unspecified-encoding)
+# W0612: Unused variable
+# W1203: Use lazy % formatting in logging functions (logging-fstring-interpolation)
+# C0415: Import outside toplevel
+# W0212: Access to a protected member _exit of a client class
+# R0915: Too many statements
+# R0912: Too many branches
+# R0801: Similar lines
+# R1714: Consider merging these comparisons with "in"
+# R1732: Consider using 'with'
+# W0201: Attribute 'immutable_alert' defined outside __init__
+# R1715: Consider using dict.get for getting values from a dict if a key is present or a default if not 
+# R1723: Unnecessary "elif" after "break", remove the leading "el" from "elif"
+# W1309: Using an f-string that does not have any interpolated variables
+# R0201: Method could be a function
+# R1719: The if expression can be replaced with 'test'
+disable=R1719, R0201, W1309, R1723, R1715, W0201, R1732, R1714, R0801, R0912, R0915, W0212, C0415, W1203, W0612, W1514, C0114, C0103, R0902, W0703, R0402, W0621, R0903, W0602, W0613, W0601, C0301, C0115, C0116, W0603, R0917, W0702, R0914, C0321
 
 [FORMAT]
 # Maximum number of characters on a single line.

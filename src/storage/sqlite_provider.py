@@ -20,6 +20,7 @@ import time
 from contextlib import closing
 from src.storage.interface import StorageProvider
 
+
 class SQLiteProvider(StorageProvider):
     """
     Implements persistence using a local SQLite database.
@@ -29,7 +30,7 @@ class SQLiteProvider(StorageProvider):
     def __init__(self, db_path, retention_days=10):
         """
         Initialize the provider config.
-        
+
         Args:
             db_path (str): Path to the .db file.
             retention_days (int): Max age of records in days.
@@ -50,10 +51,10 @@ class SQLiteProvider(StorageProvider):
                 os.makedirs(db_dir, exist_ok=True)
 
             self.conn = sqlite3.connect(self.db_path)
-            
+
             # Optimization: Enable Write-Ahead Logging (WAL)
             self.conn.execute("PRAGMA journal_mode=WAL;")
-            
+
             self._init_schema()
             return True
         except sqlite3.Error as e:
@@ -95,7 +96,7 @@ class SQLiteProvider(StorageProvider):
                     (ts, host, json_data)
                 )
                 self.conn.commit()
-            
+
             # Trigger cleanup (could be async in future)
             self._cleanup_old_records()
             return True
@@ -118,7 +119,7 @@ class SQLiteProvider(StorageProvider):
                     results.append(json.loads(row[0]))
         except sqlite3.Error as e:
             print(f"[ERROR] Failed to fetch history: {e}")
-        
+
         return results
 
     def _cleanup_old_records(self):

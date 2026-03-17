@@ -2,7 +2,7 @@
 # ==============================================================================
 # FILE: src/storage/db_handler.py
 # DESCRIPTION: Advanced SQLite Handler for Architecture.
-#              Handles Hybrid Schema (JSON + Metrics), WAL Mode, 
+#              Handles Hybrid Schema (JSON + Metrics), WAL Mode,
 #              Store-and-Forward logic, and FIFO Retention Policy.
 #
 # FEATURES:
@@ -28,6 +28,7 @@ import logging
 from contextlib import closing
 from src.storage.interface import StorageProvider
 
+
 class DatabaseHandler(StorageProvider):
     """
     Central Persistence Handler.
@@ -44,13 +45,13 @@ class DatabaseHandler(StorageProvider):
         """
         self.config = config
         self.db_path = config['storage']['sqlite_path']
-        
+
         # Retention limit in Bytes (Default: 20MB for Client, 100MB for Server)
         # We read from config or fallback
         mode = config['general'].get('mode', 'snapshot')
         default_limit = 100 * 1024 * 1024 if mode == 'server' else 20 * 1024 * 1024
         self.size_limit = config['storage'].get('db_size_limit_bytes', default_limit)
-        
+
         self.conn = None
         self.agent_id = self._get_or_create_agent_id()
 
@@ -64,12 +65,12 @@ class DatabaseHandler(StorageProvider):
         # For simplicity/permissions, we store alongside the DB or local dir
         base_dir = os.path.dirname(os.path.abspath(self.db_path))
         id_file = os.path.join(base_dir, ".agent_id")
-        
+
         if os.path.exists(id_file):
             try:
                 with open(id_file, 'r') as f:
                     uid = f.read().strip()
-                    if len(uid) > 10: # Simple validation
+                    if len(uid) > 10:  # Simple validation
                         return uid
             except Exception as e:
                 logging.error(f"[DB] Failed to read agent_id: {e}")
@@ -86,7 +87,7 @@ class DatabaseHandler(StorageProvider):
             logging.error(f"[DB] Could not save agent_id file: {e}")
             # Fallback to volatile UUID if filesystem is read-only
             return new_uid
-            
+
         return new_uid
 
     def connect(self):
@@ -99,12 +100,12 @@ class DatabaseHandler(StorageProvider):
                 os.makedirs(db_dir, exist_ok=True)
 
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            
+
             # Performance & Concurrency Settings
             self.conn.execute("PRAGMA journal_mode=WAL;")
             self.conn.execute("PRAGMA synchronous=NORMAL;")
             self.conn.execute("PRAGMA foreign_keys=ON;")
-            
+
             self._init_schema()
             return True
         except sqlite3.Error as e:
@@ -132,20 +133,20 @@ class DatabaseHandler(StorageProvider):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             agent_uuid TEXT NOT NULL,
             timestamp REAL NOT NULL,
-            
+
             -- Hot Columns (Extracted for Performance/Graphs)
             cpu_avg REAL DEFAULT 0,
             mem_used_mb INTEGER DEFAULT 0,
             pids_count INTEGER DEFAULT 0,
             alert_score INTEGER DEFAULT 0,
             is_alert BOOLEAN DEFAULT 0,
-            
+
             -- Payload (Cold Storage)
             json_blob TEXT NOT NULL,
-            
+
             -- Sync State (For Store-and-Forward)
             synced BOOLEAN DEFAULT 0,
-            
+
             FOREIGN KEY(agent_uuid) REFERENCES agents(uuid)
         );
         """
@@ -172,7 +173,7 @@ class DatabaseHandler(StorageProvider):
             'alert_score': 0,
             'is_alert': False
         }
-        
+
         try:
             # 1. Hardware / OS Metrics
             if 'hw' in data:
@@ -183,33 +184,33 @@ class DatabaseHandler(StorageProvider):
             # 2. Process Tree Metrics
             processes = data.get('processes', {})
             metrics['pids_count'] = len(processes)
-            
+
             total_cpu = 0.0
             total_mem_kb = 0
             max_score = 0
-            
+
             for pid, pdata in processes.items():
                 total_cpu += pdata.get('cpu_usage_pct', 0)
                 total_mem_kb += pdata.get('rss', 0)
-                
+
                 # Check Anomaly Score
                 score = pdata.get('anomaly_score', 0)
                 if score > max_score:
                     max_score = score
-            
-            metrics['cpu_avg'] = total_cpu # Sum of all cores usage (can be > 100%)
+
+            metrics['cpu_avg'] = total_cpu  # Sum of all cores usage (can be > 100%)
             metrics['mem_used_mb'] = int(total_mem_kb / 1024)
             metrics['alert_score'] = max_score
             metrics['is_alert'] = True if max_score > 0 else False
 
         except Exception as e:
             logging.warning(f"[DB] Metric extraction partial failure: {e}")
-            
+
         return metrics
 
     def save_snapshot(self, snapshot_data):
         """
-        Saves a snapshot. 
+        Saves a snapshot.
         If running as Client/Daemon, uses self.agent_id.
         If running as Server, expects agent_uuid inside snapshot_data (passed from API).
         """
@@ -220,8 +221,8 @@ class DatabaseHandler(StorageProvider):
             # If we are the generator, we put our ID. If we are server receiving, we trust the data.
             agent_uuid = snapshot_data.get('agent_uuid', self.agent_id)
             host = snapshot_data.get('os', {}).get('hostname', 'unknown')
-            ip = "127.0.0.1" # Placeholder, improved in 'net' section
-            
+            ip = "127.0.0.1"  # Placeholder, improved in 'net' section
+
             # Update Agent Registry (Upsert logic)
             with closing(self.conn.cursor()) as cursor:
                 cursor.execute("""
@@ -236,17 +237,17 @@ class DatabaseHandler(StorageProvider):
             ts = time.time()
             metrics = self._extract_metrics(snapshot_data)
             json_blob = json.dumps(snapshot_data)
-            
+
             # Insert Snapshot
             with closing(self.conn.cursor()) as cursor:
                 cursor.execute("""
-                    INSERT INTO snapshots 
+                    INSERT INTO snapshots
                     (agent_uuid, timestamp, cpu_avg, mem_used_mb, pids_count, alert_score, is_alert, json_blob, synced)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
                 """, (
-                    agent_uuid, ts, 
-                    metrics['cpu_avg'], metrics['mem_used_mb'], metrics['pids_count'], 
-                    metrics['alert_score'], metrics['is_alert'], 
+                    agent_uuid, ts,
+                    metrics['cpu_avg'], metrics['mem_used_mb'], metrics['pids_count'],
+                    metrics['alert_score'], metrics['is_alert'],
                     json_blob
                 ))
                 self.conn.commit()
@@ -266,22 +267,22 @@ class DatabaseHandler(StorageProvider):
         """
         try:
             if not os.path.exists(self.db_path): return
-            
+
             current_size = os.path.getsize(self.db_path)
             if current_size > self.size_limit:
                 logging.info(f"[DB] Size limit reached ({current_size/1024/1024:.2f}MB). Pruning...")
-                
+
                 # Pruning Strategy: Delete oldest 10% or fixed amount
                 # We simply delete the oldest 50 records to be safe and fast
                 with closing(self.conn.cursor()) as cursor:
                     cursor.execute("""
-                        DELETE FROM snapshots 
+                        DELETE FROM snapshots
                         WHERE id IN (
                             SELECT id FROM snapshots ORDER BY timestamp ASC LIMIT 50
                         )
                     """)
                     self.conn.commit()
-                    
+
                     # Optional: Incremental Vacuum to release pages back to OS
                     # cursor.execute("PRAGMA incremental_vacuum(100);")
         except Exception as e:
@@ -295,11 +296,11 @@ class DatabaseHandler(StorageProvider):
         try:
             with closing(self.conn.cursor()) as cursor:
                 cursor.execute("""
-                    SELECT id, json_blob FROM snapshots 
-                    WHERE synced = 0 
+                    SELECT id, json_blob FROM snapshots
+                    WHERE synced = 0
                     ORDER BY timestamp ASC LIMIT ?
                 """, (limit,))
-                return cursor.fetchall() # Returns [(id, blob), ...]
+                return cursor.fetchall()  # Returns [(id, blob), ...]
         except Exception:
             return []
 
@@ -309,7 +310,7 @@ class DatabaseHandler(StorageProvider):
         try:
             with closing(self.conn.cursor()) as cursor:
                 placeholders = ','.join('?' for _ in snapshot_ids)
-                sql = f"UPDATE snapshots SET synced = 1 WHERE id IN ({placeholders})"
+                sql = "UPDATE snapshots SET synced = 1 WHERE id IN ({placeholders})"
                 cursor.execute(sql, tuple(snapshot_ids))
                 self.conn.commit()
         except Exception as e:
@@ -322,18 +323,18 @@ class DatabaseHandler(StorageProvider):
         if not self.conn: return []
         try:
             sql = """
-                SELECT id, timestamp, agent_uuid, cpu_avg, mem_used_mb, alert_score, is_alert 
-                FROM snapshots 
+                SELECT id, timestamp, agent_uuid, cpu_avg, mem_used_mb, alert_score, is_alert
+                FROM snapshots
                 WHERE timestamp BETWEEN ? AND ?
             """
             params = [start_ts, end_ts]
-            
+
             if agent_filter:
                 sql += " AND agent_uuid = ?"
                 params.append(agent_filter)
-                
+
             sql += " ORDER BY timestamp DESC"
-            
+
             with closing(self.conn.cursor()) as cursor:
                 cursor.execute(sql, params)
                 cols = ['id', 'timestamp', 'agent_uuid', 'cpu_avg', 'mem_used_mb', 'alert_score', 'is_alert']

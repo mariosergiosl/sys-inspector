@@ -52,6 +52,7 @@ DEFAULT_CONFIG = {
     }
 }
 
+
 def _merge_defaults(user_config, defaults):
     """
     Recursively merges user configuration with defaults.
@@ -63,6 +64,7 @@ def _merge_defaults(user_config, defaults):
         elif isinstance(value, dict) and isinstance(user_config[key], dict):
             _merge_defaults(user_config[key], value)
     return user_config
+
 
 def load_config(config_path):
     """
@@ -85,7 +87,7 @@ def load_config(config_path):
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             user_config = yaml.safe_load(f) or {}
-        
+
         # Merge with defaults to guarantee structure
         final_config = _merge_defaults(user_config, DEFAULT_CONFIG)
         return final_config

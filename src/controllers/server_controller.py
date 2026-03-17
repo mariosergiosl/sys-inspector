@@ -30,9 +30,11 @@ from socketserver import ThreadingMixIn
 from src.exporters.html_report import generate_report
 from src.collectors.process_tree import ProcessTree, ProcessNode
 
+
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """Multi-threaded HTTP Server."""
     daemon_threads = True
+
 
 class ServerHTTPHandler(BaseHTTPRequestHandler):
     """
@@ -51,12 +53,12 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         """
         tree = ProcessTree()
         raw_procs = json_data.get('processes', {})
-        
+
         for pid, pdata in raw_procs.items():
             node = ProcessNode(
-                int(pid), 
-                int(pdata.get('ppid', 0)), 
-                pdata.get('cmd', '?'), 
+                int(pid),
+                int(pdata.get('ppid', 0)),
+                pdata.get('cmd', '?'),
                 int(pdata.get('uid', 0)),
                 pdata.get('prio', 120),
                 pdata.get('loginuid', None)
@@ -71,7 +73,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         controller = self.server.controller
-        
+
         if self.path == '/':
             # --- DASHBOARD ---
             self._serve_dashboard(controller.db)
@@ -81,28 +83,28 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             agent_uuid = self.path.split('/')[-1]
             # Get latest snapshot for this agent
             snaps = controller.db.get_history(0, time.time(), agent_filter=agent_uuid)
-            
+
             if snaps:
                 # Load Details
                 data = controller.db.get_snapshot_details(snaps[0]['id'])
                 if data:
                     tree = self._rehydrate_tree(data)
-                    
+
                     # Generate HTML
-                    tmp_filename = f"/tmp/sys_server_{threading.get_ident()}.html"
+                    tmp_filename = "/tmp/sys_server_{threading.get_ident()}.html"
                     # Use version to get new Icons/CSS
                     generate_report(data, tree, tmp_filename, "0.61.00")
-                    
+
                     with open(tmp_filename, 'r', encoding='utf-8') as f:
                         html_content = f.read()
-                    
+
                     self._set_headers()
                     self.wfile.write(html_content.encode('utf-8'))
-                    
+
                     try: os.remove(tmp_filename)
                     except: pass
                     return
-            
+
             self._set_headers(status=404)
             self.wfile.write(b"Agent not found or no data received yet.")
 
@@ -113,16 +115,16 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         # --- API INGESTION ---
         controller = self.server.controller
-        
+
         if self.path == '/upload':
             try:
                 content_len = int(self.headers.get('Content-Length', 0))
                 post_body = self.rfile.read(content_len)
                 data = json.loads(post_body)
-                
+
                 # Save to Server DB
                 success = controller.db.save_snapshot(data)
-                
+
                 if success:
                     controller.logger.info(f"[API] Received Snapshot from {data.get('agent_uuid', 'unknown')}")
                     self._set_headers(status=201, content_type="application/json")
@@ -143,34 +145,34 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             cur = db.conn.cursor()
             # Get list of unique agents and their last seen time
             cur.execute("""
-                SELECT agent_uuid, 
+                SELECT agent_uuid,
                        json_extract(data, '$.os.hostname') as hostname,
                        json_extract(data, '$.net.interfaces[0].ip') as ip,
                        MAX(timestamp) as last_seen
-                FROM snapshots 
-                GROUP BY agent_uuid 
+                FROM snapshots
+                GROUP BY agent_uuid
                 ORDER BY last_seen DESC
             """)
             agents = cur.fetchall()
-        
+
         rows = ""
         for a in agents:
             uuid, host, ip, seen = a
             if not host: host = "Unknown Host"
             if not ip: ip = "Unknown IP"
-            
+
             # Check Online Status (Assume 60s timeout)
             try:
                 last_ts = datetime.datetime.strptime(seen, "%Y-%m-%d %H:%M:%S")
                 is_online = (datetime.datetime.now() - last_ts).total_seconds() < 90
             except:
                 is_online = False
-                
+
             status_style = "color:#51cf66" if is_online else "color:#ff6b6b"
             status_text = "ONLINE" if is_online else "OFFLINE"
             border_style = "border-left: 4px solid #51cf66;" if is_online else "border-left: 4px solid #ff6b6b;"
-            
-            rows += f"""
+
+            rows += """
             <tr style='background:#252526; border-bottom:1px solid #333; {border_style}'>
                 <td>
                     <a href='/agent/{uuid}' style='color:#4ec9b0; font-size:1.1em; font-weight:bold; text-decoration:none;'>{host}</a>
@@ -181,8 +183,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 <td><span style='{status_style}; font-weight:bold; font-size:11px; border:1px solid; padding:2px 6px; border-radius:3px'>{status_text}</span></td>
                 <td><a href='/agent/{uuid}' class='btn-view'>VIEW REPORT</a></td>
             </tr>"""
-            
-        html = f"""
+
+        html = """
         <html><head><title>Sys-Inspector Manager</title>
         <meta http-equiv="refresh" content="30">
         <style>
@@ -210,6 +212,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         """
         self.wfile.write(html.encode('utf-8'))
 
+
 class ServerController:
     """
     Orchestrates the Server Mode.
@@ -223,14 +226,14 @@ class ServerController:
     def run(self):
         """Starts the Server HTTP Daemon."""
         port = self.config['network']['bind_port']
-        
+
         server = ThreadingHTTPServer(('0.0.0.0', port), ServerHTTPHandler)
         server.controller = self
-        
+
         t_server = threading.Thread(target=server.serve_forever)
         t_server.daemon = True
         t_server.start()
-        
+
         self.logger.info(f"[HTTP] Server Manager listening on port {port}")
         self.logger.info("[INFO] Dashboard available at http://localhost:" + str(port))
 
