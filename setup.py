@@ -37,7 +37,7 @@ setup(
     # Source Layout Configuration
     packages=find_packages(),
     py_modules=['main'],
-    include_package_data=True
+    include_package_data=True,
 
     # Entry Point (Creates the 'sys-inspector' command in /usr/bin)
     entry_points={
