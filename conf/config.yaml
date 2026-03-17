@@ -23,7 +23,7 @@ general:
   # Default: snapshot (Runs once, saves DB, generates HTML, exits)
   # CHANGED v0.80: Set to 'daemon' for continuous local collection testing
   mode: "local-live"
-  
+
   # Logging Verbosity. Options: [DEBUG, INFO, WARN, ERROR]
   log_level: "INFO"
 
@@ -33,10 +33,10 @@ general:
 network:
   # IP Address to bind the Web Server/API.
   bind_address: "0.0.0.0"
-  
+
   # Port for the Web Interface (Live/Server mode)
   bind_port: 8080
-  
+
   # [LEGACY v0.60] Used by old Daemon to push data directly (Deprecated in v0.80)
   # target_url: "http://127.0.0.1:8080"
 
@@ -52,10 +52,11 @@ collection:
 # ------------------------------------------------------------------------------
 storage:
   type: "sqlite"
-  
+
   # Path to the encrypted database
-  sqlite_path: "data/sys_inspector.db"
-  
+  # sqlite_path: "data/sys_inspector.db"
+  sqlite_path: "/var/lib/sys-inspector/sys_inspector.db"
+
   # [v0.70] Retention Policy: Max number of snapshots to keep per Agent.
   # When limit is reached, oldest snapshots are deleted (Circular Buffer).
   max_snapshots: 100
@@ -70,10 +71,10 @@ storage:
 features:
   # Detect Docker/Podman/K8s containers via cgroups
   container_awareness: true
-  
+
   # Detect Crypto-mining signatures and GPU usage (Needs NVML libs present)
   gpu_monitoring: true
-  
+
   # Detect Security Inspectors (Fanotify/EDR presence)
   security_inspection: true
 
@@ -83,12 +84,14 @@ features:
 security:
   # [v0.70 NEW] Path to the Analyst's Public Key.
   # REQUIRED for encrypting data before saving to DB (Agent/Snapshot).
-  public_key_path: "conf/public_key.pem"
-  
+  # public_key_path: "conf/public_key.pem"
+  public_key_path: "/etc/sys-inspector/public_key.pem"
+
   # [v0.70 NEW] Path to the Analyst's Private Key.
   # REQUIRED ONLY for generating HTML reports or decrypting data.
   # WARNING: DO NOT deploy this file to Agents!
-  private_key_path: "conf/private_key.pem"
+  # private_key_path: "conf/private_key.pem"
+  private_key_path: "/etc/sys-inspector/private_key.pem"
 
   # [v0.70 NEW] Backend for symmetric encryption (fernet/aes-gcm)
   crypto_backend: "fernet"
@@ -99,22 +102,23 @@ security:
 
 # Settings for 'snapshot' mode
 snapshot:
-  duration: 30       # Seconds to capture before exiting
-  output_dir: "report"
-  format: "html"     # html, json
+  duration: 30 # Seconds to capture before exiting
+  # output_dir: "report"
+  output_dir: "/var/log/sys-inspector/reports"
+  format: "html" # html, json
 
 # Settings for 'daemon' mode (Agent)
 daemon:
   # [v0.80 NEW] Duty Cycle Configuration for Local Collector
   # The daemon loops: Capture (active) -> Sleep (idle) -> Repeat
-  capture_duration: 15   # Time collecting (Engine ON) - Active state
-  interval: 15           # Time sleeping (Engine OFF) - Idle state
+  capture_duration: 15 # Time collecting (Engine ON) - Active state
+  interval: 15 # Time sleeping (Engine OFF) - Idle state
 
   # [FUTURE] Remote Server Config (Store-and-Forward)
   server_ip: "10.0.0.1"
   server_port: 443
   auth_token: "CHANGE_ME"
-  
+
   # [LEGACY v0.60] Direct Sender Options (Not used in v0.80 Local logic yet)
   # batch_size: 10
   # retry_limit: 3
@@ -122,8 +126,10 @@ daemon:
 # Settings for 'server' mode (Central Manager)
 server:
   # TLS Configuration (Required for Server Mode)
-  ssl_cert: "conf/server_cert.pem"
-  ssl_key: "conf/server_key.pem"
-  
+  # ssl_cert: "conf/server_cert.pem"
+  ssl_cert: "/etc/sys-inspector/server_cert.pem"
+  # ssl_key: "conf/server_key.pem"
+  ssl_key: "/etc/sys-inspector/server_key.pem"
+
   # Access Control
   allowed_agents: [] # List of UUIDs. Empty = Allow All.
