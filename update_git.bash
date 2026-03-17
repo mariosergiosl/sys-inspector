@@ -32,17 +32,18 @@
 #
 # COMPANY:
 #
-# VERSION: 2.4  # Updated version
+# VERSION: 2.5
 # CREATED: 2024-11-18 17:00:00
-# REVISION: 2025-06-27 11:22:00 # Updated revision date
+# REVISION: 2025-06-27 11:22:00 
 # REVISION: 2025-12-05 14:48:00 # Updated for PyPI Automation
+# REVISION: 2026-03-16 15:32:00 # Updated for v0.90 US-ASCII Compliance
 #===============================================================================
 
 # Stop execution on any error
 set -e
 
 # Set script version
-SCRIPT_VERSION="2.4"
+SCRIPT_VERSION="2.5"
 
 # --- CONFIG ---
 PROJECT_ROOT="/opt/host/Syncfolder/Trabalho/GitHub/mariosergiosl/sys-inspector"
@@ -105,10 +106,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ==============================================================================
-# STEP 1: TESTES (Safety First) - Run the Python tests
+# STEP 1: TESTS (Safety First) - Run the Python tests
 # ==============================================================================
 echo "----------------------------------------------------------------"
-echo ">>> STEP 1: TESTES (Safety First) - Running Python tests..."
+echo ">>> STEP 1: TESTS (Safety First) - Running Python tests..."
 echo "----------------------------------------------------------------"
 
 # Check if the python test script exists and run it
@@ -130,7 +131,7 @@ echo "----------------------------------------------------------------"
 echo ">>> STEP 2: GIT SYNC (Push & Tags)"
 echo "----------------------------------------------------------------"
 
-# heck if there are any staged changes to commit
+# Check if there are any staged changes to commit
 if [[ -z $(git status --porcelain) ]]; then
     # Even if no changes to commit, still pull and push for tags in case
     # there are remote updates or only tags need pushing.
@@ -151,7 +152,6 @@ else
 
     echo "Adding all changes (including new files) to staging area..."
     git add .
-
     echo "Committing with message: '$commit_message'"
     git commit -m "$commit_message"
 
@@ -207,13 +207,14 @@ if [ ! -d "$BUILD_WORK_DIR" ]; then
 else
     # 3. Check is is empty
     if [ "$(ls -A $BUILD_WORK_DIR)" ]; then
-         # 4. Not emppty, do backup
+         # 4. Not empty, do backup
          TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
          BACKUP_DIR="$BUILD_WORK_DIR/old_$TIMESTAMP"
          echo "Directory not empty. Moving content to $BACKUP_DIR..."
          mkdir -p "$BACKUP_DIR"
          
-         # Move all (excpt the backup folder with has created now for do not make a loop)
+         # Move all (except the backup folder with has created now for do not make a loop)
+      
          find "$BUILD_WORK_DIR" -maxdepth 1 -mindepth 1 -not -name "old_$TIMESTAMP" -exec mv {} "$BACKUP_DIR" \;
     fi
 fi
@@ -232,14 +233,13 @@ python3 -m build
 
 if [ $? -eq 0 ]; then
     echo "Build Successful."
-
-    # --- CORRECAO DE NOME PARA PYPI (Hifen -> Underscore) ---
-    # O PyPI rejeita .tar.gz com hifen no nome do pacote.
-    # Se encontrar arquivo com hifen, renomeia para underscore.
+    # --- PYPI NAME CORRECTION (Hyphen -> Underscore) ---
+    # PyPI rejects .tar.gz with hyphen in the package name.
+    # If a file with a hyphen is found, rename it to underscore.
     for f in dist/*.tar.gz; do
         # if the file exist
         if [ -e "$f" ]; then
-            # make the new name changing hifens for underscores on name of package
+            # make the new name changing hyphens for underscores on name of package
             # Ex: sys-inspector-0.30.9 -> sys_inspector-0.30.9
             base=$(basename "$f")
             new_name=$(echo "$base" | sed -E 's/^([a-zA-Z0-9]+)-([a-zA-Z0-9]+)/\1_\2/')
@@ -262,7 +262,7 @@ fi
 echo "----------------------------------------------------------------"
 echo "3. Uploading to PyPI..."
 echo "Note: Using configuration from ~/.pypirc"
-# The twine read your file ~/.pypirc automaticamente para autenticar
+# Twine reads your ~/.pypirc file automatically to authenticate
 # twine upload dist/*
 # Use python3 -m twine to bypass PATH issues
 python3 -m twine upload dist/*
@@ -279,6 +279,6 @@ fi
 
 
 echo "================================================================"
-echo "   GRAND FINALE: SUCCESS! 🚀"
+echo "   GRAND FINALE: SUCCESS! "
 echo "   Code Pushed & Package Published to PyPI."
 echo "================================================================"

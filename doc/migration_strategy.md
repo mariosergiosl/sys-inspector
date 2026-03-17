@@ -1,61 +1,62 @@
-# Estratégia de Migração: Memusage para Sys-Inspector
+# Migration Strategy: Memusage to Sys-Inspector
 
-**Data:** 2025-11-28
-**Versão:** 1.0
-**Contexto:** Evolução arquitetural de monitoramento User Space para Kernel Space.
+**Date:** 2026-03-16
+**Version:** 1.1
+**Context:** Architectural evolution from User Space monitoring to Kernel Space observability.
 
-## 1. Visão Geral Executiva
+## 1. Executive Overview
 
-O projeto `sys-inspector` representa a reengenharia completa do legado `memusage`. O objetivo é transicionar de um modelo de **monitoramento passivo (polling)** para um modelo de **observabilidade ativa (event-driven)** utilizando eBPF (Extended Berkeley Packet Filter).
+The sys-inspector project represents a complete re-engineering of the legacy memusage tool. The goal is to transition from a passive monitoring model (polling) to an active observability model (event-driven) using eBPF (Extended Berkeley Packet Filter).
 
-Esta mudança visa eliminar as limitações de granularidade e performance inerentes à leitura repetitiva do sistema de arquivos `/proc`, permitindo a captura de eventos de curta duração e telemetria de I/O em tempo real.
+This change aims to eliminate granularity and performance limitations inherent in repetitive /proc filesystem reading, allowing the capture of short-lived events and real-time I/O telemetry.
 
-## 2. Matriz de Migração (De-Para)
+## 2. Migration Matrix (From-To)
 
-A tabela abaixo mapeia as características fundamentais do projeto legado e sua contraparte na nova arquitetura.
+The table below maps the fundamental characteristics of the legacy project and its counterpart in the new architecture.
 
-| Característica | Memusage (Legado) | Sys-Inspector (Novo) | Justificativa Técnica |
-| :--- | :--- | :--- | :--- |
-| **Fonte de Dados** | Leitura de `/proc` via `psutil`. | Instrumentação do Kernel via `eBPF/BCC`. | `/proc` oferece apenas o estado atual (snapshot). eBPF captura eventos no momento exato em que ocorrem (ex: `execve`, `vfs_read`). |
-| **Mecanismo** | Polling (Amostragem em Loop). | Event-Driven (Interrupções/Hooks). | O polling consome CPU desnecessária e perde processos que iniciam e terminam entre os ciclos de leitura. |
-| **Privilégios** | Usuário comum (User Space). | **Root (sudo)** obrigatório. | A syscall `bpf()` exige a capability `CAP_SYS_ADMIN` para carregar bytecode seguro no Kernel. |
-| **Estrutura** | Script Monolítico (`memusage.py`). | Pacote Python Modular (`src/`). | Separação de responsabilidades (Loader BPF vs Formatação) e facilidade para testes unitários. |
-| **Deploy** | Script standalone. | Pacote RPM via Open Build Service. | Padronização de distribuição Linux Enterprise. |
-| **Ambiente Dev** | Local (Qualquer Linux com Python). | Híbrido (Host Win + Guest Linux). | Necessário para compilação JIT do código C e headers do Kernel específicos. |
+| Feature            | Memusage (Legacy)                | Sys-Inspector (New v0.90)       | Technical Rationale                                                                                                   |
+| :---               | :---                             | :---                            | :---                                                                                                                  |
+| **Data Source** | /proc reading via psutil.        | Kernel instrumentation via eBPF. | /proc offers only current state (snapshot). eBPF captures events at the exact moment they occur.          |
+| **Mechanism** | Polling (Loop sampling).         | Event-Driven (Hooks).           | Polling consumes unnecessary CPU and misses processes that start and end between cycles.                 |
+| **Privileges** | Common User (User Space).        | **Root (sudo)** required.       | The bpf() syscall requires CAP_SYS_ADMIN to load secure bytecode into the Kernel.                         |
+| **Structure** | Monolithic script.               | Modular Package (src/ layout).  | Separation of concerns (BPF Loader vs Formatting) and ease of unit testing.                               |
+| **Deploy** | Standalone script.               | RPM Package via OBS.            | Standardization for Enterprise Linux distribution.                                                       |
+| **Dev Environment**| Local Linux.                     | Hybrid (Win Host + Linux Guest).| Required for JIT compilation of C code and specific Kernel headers.                                       |
 
-## 3. Decisões de Design e Restrições
+## 3. Design Decisions and Constraints
 
-### 3.1. Restrições de Codificação
-* **Codificação:** Estritamente **US-ASCII**. É vetado o uso de acentos ou caracteres especiais em comentários, strings ou variáveis para garantir compatibilidade universal de build.
-* **Padrão:** PEP 8 rigoroso para Python.
-* **Headers:** Blocos de comentários padronizados obrigatórios para arquivos bash e python.
+### 3.1. Coding Constraints
 
-### 3.2. Estratégia de Empacotamento (OBS/RPM)
-Diferente do legado, o `sys-inspector` adota o layout de diretório `src/`.
-* **Motivo:** Evita "importação acidental" do diretório local durante testes.
-* **Spec File:** O arquivo `.spec` deverá declarar dependências de compilação nativas:
-    * `python3-bcc` (Runtime e Bindings).
-    * `clang` / `llvm` (Compilador BPF JIT).
-    * `kernel-default-devel` (Headers do Kernel, devem coincidir com `uname -r`).
+* **Encoding:** Strictly **US-ASCII**. No accents or special characters in comments, strings, or variables to ensure universal build compatibility.
+* **Standard:** Strict PEP 8 for Python.
+* **Headers:** Mandatory standardized comment blocks for Bash and Python files.
 
-### 3.3. Supressão de Linters
-No projeto legado, diversas regras do Pylint (`R0914`, `R0915`) foram suprimidas devido à complexidade ciclomática da função principal. No novo projeto, a modularização deve eliminar a necessidade dessas supressões. O código deve ser limpo e segmentado.
+### 3.2. Packaging Strategy (OBS/RPM)
 
-## 4. Análise de Funcionalidades Críticas
+Sys-inspector adopts the src/ directory layout to avoid accidental local directory imports during testing.
+The .spec file declares native build dependencies:
 
-### 4.1. Monitoramento de Processos
-* **Legado:** Iterava sobre `psutil.process_iter()`.
-* **Novo:** Hook na syscall `execve` (entrada) e `exit_group` (saída).
-* **Ganho:** Detecção de processos "efêmeros" (que duram milissegundos) e árvore genealógica precisa (PPID) garantida pelo Kernel.
+* python3-bcc (Runtime and Bindings).
+* clang / llvm (BPF JIT Compiler).
+* kernel-default-devel (Kernel Headers matching uname -r).
 
-### 4.2. Monitoramento de I/O e Arquivos Abertos
-* **Legado:** Snapshot de `/proc/[pid]/fd`. Ineficiente para cargas intensas.
-* **Novo:** Tracepoints em `vfs_read`, `vfs_write` e `vfs_open`.
-* **Ganho:** Capacidade de ver *qual* arquivo está gerando I/O no momento exato da escrita, permitindo correlacionar processos a picos de disco instantaneamente.
+## 4. Critical Functionality Analysis
 
-## 5. Próximos Passos (Roadmap)
+### 4.1. Process Monitoring
 
-1.  **Validação de Ambiente:** Execução de trace simples (`execve`). **(Concluído)**
-2.  **Modularização:** Separar o código C (BPF) da lógica Python.
-3.  **Implementação de I/O:** Criar hooks para monitoramento de arquivos abertos (foco do Lab original).
-4.  **Integração OBS:** Gerar o primeiro RPM experimental.
+* **Legacy:** Iterated over psutil.process_iter().
+* **New:** Hooks on execve (entry) and exit_group (exit) syscalls.
+* **Gain:** Detection of "ephemeral" processes and accurate ancestry (PPID) guaranteed by the Kernel.
+
+### 4.2. I/O and Open Files Monitoring
+
+* **Legacy:** Snapshot of /proc/[pid]/fd. Inefficient for heavy loads.
+* **New:** Tracepoints on vfs_read, vfs_write, and vfs_open.
+* **Gain:** Ability to see which file is generating I/O at the exact moment of writing.
+
+## 5. Roadmap
+
+1. Environment Validation: Simple trace execution (execve). (Completed)
+2. Modularization: Separate C code (BPF) from Python logic. (Completed)
+3. I/O Implementation: Create hooks for open files monitoring. (Completed)
+4. Multi-Agent Fleet: Centralized Web Dashboard and Persistence. (Completed - v0.90)

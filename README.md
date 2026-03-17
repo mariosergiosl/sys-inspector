@@ -1,7 +1,5 @@
 # sys-inspector - eBPF-based System Inspector and Audit Tool
 
-
-
 [![OBS Build Status](https://build.opensuse.org/projects/home:mariosergiosl:sys-inspector/packages/sys-inspector/badge.svg)](https://build.opensuse.org/package/show/home:mariosergiosl:sys-inspector/sys-inspector)
 [![PyPI version](https://img.shields.io/pypi/v/sys-inspector.svg)](https://pypi.org/project/sys-inspector/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
@@ -20,20 +18,22 @@
 
 Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks directly into the Linux Kernel to capture events (process execution, file I/O, network connections) in real-time.
 
-## Features (v0.30.9)
+## Features (v0.90.00)
 
+* **Fleet View Dashboard:** Monitor multiple infrastructure nodes from a single centralized web interface.
+* **Forensic Time Machine:** Pause live execution and travel back in time to inspect historical snapshots stored in SQLite.
 * **Kernel-Level Visibility:** Uses eBPF kprobes/tracepoints for zero-blindspot monitoring.
 * **Deep Forensics:**
-    * **Real-time MD5 Hashes:** Calculates hashes of executed binaries instantly.
-    * **Context Awareness:** Detects SSH origin IPs, Sudo users, and Tmux sessions.
-    * **Recursive Alert Bubbling:** Child process anomalies (e.g., Unsafe Libs, Net Errors) propagate warnings up to the parent process in the tree view.
+  * **Real-time MD5 Hashes:** Calculates hashes of executed binaries instantly.
+  * **Context Awareness:** Detects SSH origin IPs, Sudo users, and Tmux sessions.
+  * **Recursive Alert Bubbling:** Child process anomalies (e.g., Unsafe Libs, Net Errors) propagate warnings up to the parent process in the tree view.
 * **Topology & Infrastructure:**
-    * **Storage Topology:** Hierarchical view of Disks -> Partitions -> LVM -> Mount Points with HCTL info.
-    * **Network Topology:** Auto-detection of Gateway, DNS servers, and Interfaces.
+  * **Storage Topology:** Hierarchical view of Disks -> Partitions -> LVM -> Mount Points with HCTL info.
+  * **Network Topology:** Auto-detection of Gateway, DNS servers, and Interfaces.
 * **Enterprise Reporting:**
-    * Generates self-contained, interactive **HTML Dashboards**.
-    * **Custom Logo Support:** Embeds your organization's logo automatically.
-    * **Visual Badges:** Instant identification of `[SSH]`, `[SUDO]`, `[UNSAFE]`, `[NET ERR]`.
+  * Generates self-contained, interactive **HTML Dashboards**.
+  * **Custom Logo Support:** Embeds your organization's logo automatically.
+  * **Visual Badges:** Instant identification of `[SSH]`, `[SUDO]`, `[UNSAFE]`, `[NET ERR]`.
 
 ## Requirements
 
@@ -42,76 +42,79 @@ Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks dir
 * Python 3.6+.
 * BCC Tools (`python3-bcc`).
 * `iproute2` (for `tc` command, required only for Chaos Maker).
+* Additional Python libs: `flask`, `cryptography`, `pyyaml`.
 
 ## Installation (PyPI)
+
 Works on any Linux distribution with Python 3.6+.
 
 ```bash
-pip install sys-inspector
+    pip install sys-inspector
 ```
-
 
 ## Installation (RPM / openSUSE)
 
 You can install **Sys-Inspector** directly via `zypper` using the openSUSE Build Service repository.
 
 1. **Add the Repository:**
+
 ```bash
-zypper addrepo [https://download.opensuse.org/repositories/home:mariosergiosl:sys-inspector/15.6/home:mariosergiosl:sys-inspector.repo](https://download.opensuse.org/repositories/home:mariosergiosl:sys-inspector/15.6/home:mariosergiosl:sys-inspector.repo)
+    zypper addrepo https://download.opensuse.org/repositories/home:mariosergiosl:sys-inspector/15.6/home:mariosergiosl:sys-inspector.repo
 ```
 
-2. **Refresh and Accept GPG Key:**
+1. **Refresh and Accept GPG Key:**
 During the refresh, you will be asked to trust the repository GPG key.
 
 **Fingerprint:** 7CF0 5795 053C F397 8E00 948E 9F8D 1AC9 E2BE EABC
-```Bash
-zypper refresh
-# Type 'a' to trust always when prompted.
+
+```bash
+    zypper refresh
+    # Type 'a' to trust always when prompted.
 ```
 
-3. **Install the Package:**
+1. **Install the Package:**
 
-```Bash
-zypper install sys-inspector
+```bash
+    zypper install sys-inspector
 ```
 
-4. **Run:**
+1. **Run:**
 Once installed, the command is available globally:
 
-```Bash
-sys-inspector
+```bash
+    sys-inspector
 ```
-
 
 ## Usage
 
-Sys-Inspector can now be run with or without arguments. It handles directory creation automatically.
+Sys-Inspector is orchestrated via the `main.py` entry point (or globally as `sys-inspector`). It supports multiple execution modes.
 
-### 1. Default Mode (Recommended)
-Captures **20 seconds** of activity and saves the report to `/var/log/sys-inspector/` with an auto-generated name containing the hostname and timestamp.
+### 1. Local Live Mode (Recommended)
+
+Starts the background collector daemon and the Fleet Web Dashboard simultaneously.
 
 ```bash
-sudo python3 src/inspector.py
-# Output Example: /var/log/sys-inspector/sys-inspector_v0.30.3_hostname_20251201_100000.html
+    sudo sys-inspector --mode local-live
+    # Access the dashboard at http://localhost:8080
 ```
 
-### 2. Custom Parameters
-You can specify the duration and the output file path manually.
+### 2. Snapshot Mode (Static Report)
+
+Captures activity for a specific duration and generates a standalone HTML report.
 
 ```bash
-# Capture for 60 seconds and save to a specific file
-sudo python3 src/inspector.py --duration 60 --html /tmp/my_investigation.html
-
-Argument	Short	Default	Description
---duration	-d	20	Capture duration in seconds.
---html		(Auto)	Path to output HTML file. If omitted, defaults to /var/log/sys-inspector/.
+    sudo sys-inspector --mode snapshot --interval 20
+    # Output Example: report/sys-inspector_hostname_20260316_100000.html
 ```
 
 ### 3. Custom Logo
+
 To include your company logo in the report header, simply place a PNG file at the following path:
-```Bash
-/etc/sys-inspector/logo.png
+
+```bash
+    /etc/sys-inspector/logo.png
 ```
+
 The application will automatically detect, resize (max-height: 40px), encode it to Base64, and embed it in the HTML.
 
 ## Chaos Engineering (Testing Tool)
@@ -121,32 +124,37 @@ Included in `scripts/chaos_maker.sh` is a stress testing tool designed to valida
 **⚠️ WARNING: DO NOT RUN ON PRODUCTION SYSTEMS.**
 This script uses `tc` (Traffic Control) to purposefully degrade network quality (packet loss/latency) and consumes CPU/Disk resources.
 
-### Capabilities:
+### Capabilities
+
 * **Network Degradation:** Injects 100ms latency and 20% packet loss to trigger `[NET ERR]` alerts in the report.
 * **Process Anomalies:** Hides processes in `/dev/shm` to trigger `[WARN]` alerts.
 * **Unsafe Library Loading:** Forces loading of dynamic libraries from `/tmp` via a Python script to trigger `[UNSAFE]` alerts.
 * **Disk Stress:** Generates high I/O throughput to test IO accounting.
 
-### How to Run:
+### How to Run
+
 ```bash
-sudo ./scripts/chaos_maker.sh
+    sudo ./scripts/chaos_maker.sh
 ```
+
 To Stop: Press Ctrl+C. The script traps the signal and automatically cleans up the network rules (tc qdisc del) and temporary files.
-
-
 
 ### Project Structure
 
 ```bash
-├── src/
-│   ├── inspector.py           # Main Entry Point
-│   └── sys_inspector/
-│       ├── bpf_programs.py    # C eBPF Code
-│       ├── sys_info.py        # Inventory & Topology
-│       └── report_generator.py # HTML Engine
-├── scripts/
-│   ├── chaos_maker.sh         # Chaos Engineering Tool
-│   └── run_python_test.sh     # Linter (Pylint/Flake8)
-├── logs/                      # Default output directory
-└── README.md
+    ├── conf/                  # Configuration and Cryptographic Keys
+    ├── data/                  # SQLite Persistence and Agent IDs
+    ├── doc/                   # Documentation and Requirements
+    ├── report/                # Standalone HTML Reports Output
+    ├── scripts/               # Chaos Engineering & Setup Scripts
+    ├── src/
+    │   ├── collectors/        # eBPF Engine and Process Tree Builders
+    │   ├── controllers/       # Execution Modes (Daemon, Web, Snapshot)
+    │   ├── core/              # Database and Crypto Logic
+    │   ├── exporters/         # HTML and Web Assets
+    │   ├── probes/            # C eBPF source code
+    │   ├── storage/           # Storage interface and handlers
+    │   └── utils/             # Configuration loaders
+    ├── tools/                 # Utility scripts (e.g., Key Generation)
+    └── main.py                # Unified Entry Point
 ```

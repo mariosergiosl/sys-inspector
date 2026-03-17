@@ -20,7 +20,9 @@ extension-pkg-whitelist=bcc
 # C0115: Missing class docstring
 # C0116: Missing function docstring
 # R0917: Too many positional arguments (6/5) (too-many-positional-arguments)
-disable=C0114, C0103, R0902, W0703, R0402, W0621, R0903, W0602, W0613, W0601, C0301, C0115, C0116, W0603, R0917
+# W0702: No exception type(s) specified (bare-except, used in web_controller AJAX fallback)
+# R0914: Too many local variables (used in web_controller rendering)
+disable=C0114, C0103, R0902, W0703, R0402, W0621, R0903, W0602, W0613, W0601, C0301, C0115, C0116, W0603, R0917, W0702, R0914
 
 [FORMAT]
 # Maximum number of characters on a single line.
