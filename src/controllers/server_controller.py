@@ -91,7 +91,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     tree = self._rehydrate_tree(data)
 
                     # Generate HTML
-                    tmp_filename = "/tmp/sys_server_{threading.get_ident()}.html"
+                    tmp_filename = f"/tmp/sys_server_{threading.get_ident()}.html"
                     # Use version to get new Icons/CSS
                     generate_report(data, tree, tmp_filename, "0.61.00")
 
@@ -172,7 +172,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             status_text = "ONLINE" if is_online else "OFFLINE"
             border_style = "border-left: 4px solid #51cf66;" if is_online else "border-left: 4px solid #ff6b6b;"
 
-            rows += """
+            rows += f"""
             <tr style='background:#252526; border-bottom:1px solid #333; {border_style}'>
                 <td>
                     <a href='/agent/{uuid}' style='color:#4ec9b0; font-size:1.1em; font-weight:bold; text-decoration:none;'>{host}</a>
@@ -184,7 +184,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 <td><a href='/agent/{uuid}' class='btn-view'>VIEW REPORT</a></td>
             </tr>"""
 
-        html = """
+        html = f"""
         <html><head><title>Sys-Inspector Manager</title>
         <meta http-equiv="refresh" content="30">
         <style>

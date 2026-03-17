@@ -159,7 +159,7 @@ class DatabaseManager:
         try:
             with closing(self._get_conn()) as conn:
                 placeholders = ','.join('?' * len(snapshot_ids))
-                sql = "UPDATE snapshots SET synced=1 WHERE id IN ({placeholders})"
+                sql = f"UPDATE snapshots SET synced=1 WHERE id IN ({placeholders})"
                 conn.execute(sql, snapshot_ids)
                 conn.commit()
         except Exception as e:

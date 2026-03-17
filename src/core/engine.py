@@ -86,7 +86,7 @@ class SysInspectorEngine:
 
     def _get_cpu_ticks(self, pid):
         try:
-            with open(f"/proc/{pid}/stat", 'r', encoding='utf-8') as f:
+            with open(f"/proc/{pid}/stat", "r") as f:
                 parts = f.read().split()
                 return int(parts[13]) + int(parts[14])
         except: return 0
@@ -154,7 +154,7 @@ class SysInspectorEngine:
             try:
                 dst = socket.inet_ntop(socket.AF_INET, struct.pack("I", event.daddr))
                 port = socket.ntohs(event.dport)
-                conn_str = "IPv4 -> {dst}:{port}"
+                conn_str = f"IPv4 -> {dst}:{port}"
                 if conn_str not in node.connections:  # Avoid duplicates
                     node.connections.append(conn_str)  # v0.70 uses List for JSON compat
             except: pass
@@ -176,11 +176,11 @@ class SysInspectorEngine:
                 src = socket.inet_ntop(socket.AF_INET, struct.pack("I", event.saddr))
                 dst = socket.inet_ntop(socket.AF_INET, struct.pack("I", event.daddr))
                 proto_map = {6: "TCP", 17: "UDP", 1: "ICMP"}
-                proto_name = proto_map.get(event.proto, "IP({event.proto})")
+                proto_name = proto_map.get(event.proto, f"IP({event.proto})")
                 sport = socket.ntohs(event.sport)
                 dport = socket.ntohs(event.dport)
 
-                drop_msg = "DROP: {src}:{sport} -> {dst}:{dport} ({proto_name})"
+                drop_msg = f"DROP: {src}:{sport} -> {dst}:{dport} ({proto_name})"
 
                 if hasattr(node, 'network_drops_details'):
                     node.network_drops_details.append(drop_msg)

@@ -140,7 +140,7 @@ class SnapshotController:
                     # Generate HTML
                     hostname = socket.gethostname()
                     ts_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                    outfile = "report/sys-inspector_{hostname}_{ts_str}.html"
+                    outfile = f"report/sys-inspector_{hostname}_{ts_str}.html"
 
                     # Ensure report dir exists
                     if not os.path.exists("report"): os.makedirs("report")

@@ -310,7 +310,7 @@ class DatabaseHandler(StorageProvider):
         try:
             with closing(self.conn.cursor()) as cursor:
                 placeholders = ','.join('?' for _ in snapshot_ids)
-                sql = "UPDATE snapshots SET synced = 1 WHERE id IN ({placeholders})"
+                sql = f"UPDATE snapshots SET synced = 1 WHERE id IN ({placeholders})"
                 cursor.execute(sql, tuple(snapshot_ids))
                 self.conn.commit()
         except Exception as e:

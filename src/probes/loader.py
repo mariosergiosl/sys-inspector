@@ -49,7 +49,7 @@ def load_probe_source(probe_name="base_trace.c"):
         current_pid = os.getpid()
         source_code = source_code.replace(
             "#define FILTER_PID 00000",
-            "#define FILTER_PID {current_pid}"
+            f"#define FILTER_PID {current_pid}"
         )
 
         return source_code
