@@ -6,7 +6,7 @@
 # DESCRIPTION: Installation and packaging script for sys-inspector.
 #              Configures the package for PyPi and local deployments.
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: 0.90.01
+# VERSION: 0.90.02
 # ==============================================================================
 
 """
@@ -26,7 +26,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 # ------------------------------------------------------------------------------
 setup(
     name='sys-inspector',
-    version='0.90.01',
+    version='0.90.02',
     author='Mario Luz',
     author_email='mario.mssl@gmail.com',
     description='eBPF-based System Inspector and Forensic Tool (Multi-Agent/Web)',
