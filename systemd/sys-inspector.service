@@ -1,0 +1,24 @@
+# ==============================================================================
+# FILE: systemd/sys-inspector.service
+# USAGE: systemctl start sys-inspector
+# DESCRIPTION: Systemd unit file for Sys-Inspector Daemon.
+# OPTIONS: None
+# AUTHOR: Mario Luz
+# VERSION: 0.90.10
+# ==============================================================================
+
+[Unit]
+Description=Sys-Inspector eBPF Observability Daemon
+Documentation=https://github.com/mariosergiosl/sys-inspector
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/sys-inspector --mode local-live
+Restart=on-failure
+RestartSec=5s
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target

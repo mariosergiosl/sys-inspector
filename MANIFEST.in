@@ -2,3 +2,4 @@ include src/probes/base_trace.c
 recursive-include conf *
 include README.md
 include LICENSE.md
+include systemd/sys-inspector.service
