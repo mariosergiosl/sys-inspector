@@ -25,3 +25,23 @@ logs/
 # IDE
 .vscode/
 .idea/
+
+# ------------------------------------------------------------------------------
+# Sys-Inspector v0.90 Specific Ignores
+# ------------------------------------------------------------------------------
+
+# Database files (Dynamic storage and WAL locking)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Cryptographic Keys (Strictly local security)
+conf/private_key.pem
+conf/public_key.pem
+
+# Agent Identity files
+.agent_id
+data/.agent_id
+
+# Generated HTML Reports
+report/*.html

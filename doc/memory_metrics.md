@@ -1,21 +1,23 @@
-# Entendendo Métricas de Memória no Linux (VSZ vs RSS)
+# Understanding Memory Metrics in Linux (VSZ vs RSS)
 
-Ao analisar processos como o `libuv-worker` (VSCode Server) ou Java, é comum observar discrepâncias enormes entre a memória "alocada" e a memória "usada". O sys-inspector diferencia ambas:
+When analyzing processes like the libuv-worker (VSCode Server) or Java, it is common to observe huge discrepancies between allocated memory and used memory. Sys-Inspector differentiates both:
 
 ## 1. VSZ (Virtual Memory Size)
-* **Definição:** É o total de memória virtual que o processo pode acessar. Inclui:
-    * Código do programa.
-    * Bibliotecas compartilhadas (libc, etc).
-    * Memória alocada mas não usada (mallocs preventivos).
-    * Arquivos mapeados em memória.
-* **Cenário VSCode:** O VSCode reserva uma área enorme de endereçamento virtual (ex: 32GB) para operações futuras, mas não consome isso de RAM física.
-* **Interpretação:** Um VSZ alto **não** indica necessariamente um vazamento de memória ou problema.
 
-## 2. Peak RSS (Resident Set Size - Pico)
-* **Definição:** É a quantidade máxima de RAM física que o processo ocupou durante sua vida.
-* **Composição:** Apenas as páginas de memória que estão atualmente nos pentes de RAM.
-* **Importância:** Este é o valor real que impacta a capacidade do servidor. Se o RSS atingir o limite da máquina, ocorre swap ou OOM Kill.
+* Definition: It is the total virtual memory that the process can access. It includes:
+  * Program code.
+  * Shared libraries (libc, etc).
+  * Allocated but unused memory (preventive mallocs).
+  * Memory-mapped files.
+* VSCode Scenario: VSCode reserves a huge virtual addressing area (e.g., 32GB) for future operations, but does not consume this from physical RAM.
+* Interpretation: A high VSZ does NOT necessarily indicate a memory leak or a problem.
 
-**No sys-inspector:**
-A coluna `VSZ` mostra a "promessa" de uso.
-A coluna `PK_RSS` mostra o "consumo real" físico.
+## 2. Peak RSS (Resident Set Size - Peak)
+
+* Definition: It is the maximum amount of physical RAM that the process occupied during its lifetime.
+* Composition: Only the memory pages that are currently in the RAM sticks.
+* Importance: This is the real value that impacts the server capacity. If RSS reaches the machine limit, swapping or OOM Kill occurs.
+
+In Sys-Inspector:
+The VSZ column shows the promise of use.
+The PK_RSS column shows the real physical consumption.

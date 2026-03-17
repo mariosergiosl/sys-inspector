@@ -1,0 +1,37 @@
+================================================================================
+ARCHITECTURE DESIGN NOTES
+================================================================================
+
+Item 3: Libs, GPU, and Mining Detection (Superficial?)
+Separating current capabilities from future improvements:
+
+Suspicious Libs and Locations (Legacy v0.30.9):
+Still exists. The current code (process_tree.py) checks if the binary or any loaded library comes from /tmp, /dev/shm, or is marked as (deleted). This generates the UNSAFE tag. This is pure security hygiene, not specifically related to GPU/Miner.
+
+Is "string matching" (nvidia/cuda) weak?
+Yes, it is a weak heuristic. Just loading the library does not guarantee usage.
+
+Proposed Improvement: Instead of just looking at the library name, we should look at Open Files (/proc/PID/fd).
+If a process is actually using the GPU, it needs to open a file descriptor to the driver, usually /dev/nvidia0, /dev/nvidiactl, or /dev/kfd (AMD).
+
+CPU Mining: If there is no GPU, it uses the CPU. Detecting this is hard to differentiate from a "heavy legitimate process" (like a compilation). Currently, we rely on the process name (xmrig, minerd). Without a behavioral signature (e.g., monitoring CPU registers via eBPF, which is highly complex), detection by name + CPU usage is the market standard for lightweight tools.
+
+Verdict: We will refine GPU detection to look for open descriptors in /dev/nvidia*. This proves the intent to communicate with the hardware.
+
+--------------------------------------------------------------------------------
+
+Item 4: How EDR/Firewall Inspection Actually Works
+The analogy of "Kernel warns: wait, the police are looking" is perfect for Disk I/O, but not for Network.
+
+Disk (Fanotify/Antivirus):
+How it is: The process attempts to open a file. The Kernel freezes this process (puts it in Sleep/Wait state). The Kernel notifies the Antivirus. The AV analyzes it. If approved, the Kernel unfreezes the process.
+The Symptom: The "victim" process experiences extreme latency in the system call (open or read). It does not know the AV is there; it just thinks the disk is slow.
+Our Tool: Measures this time (Latency) and shows "It took 50ms, an EDR is running".
+
+Network (Firewall/EDR):
+How it is: The packet arrives at the network card. The Kernel picks it up. Before delivering it to the "victim" process, it passes through the Firewall (Netfilter/eBPF).
+The Block: If the Firewall decides to block (DROP), it simply deletes the packet from memory (kfree_skb).
+The Difference: The Kernel DOES NOT notify the receiving process "a letter arrived but the police tore it up". The receiving process keeps waiting forever (until Timeout).
+The Symptom: Absolute silence or Timeout. The queue does not necessarily grow in the process, because the packet never reached its queue (socket buffer); it died at the Kernel's front door.
+
+Conclusion for the Code: To prove network blocking (e.g., Rancher drops), we cannot look for "process waiting for kernel warning". We must look for the packet's corpse (kfree_skb). That is why in the C code (base_trace.c) the DROP capture was added. When the firewall "tears up" the packet, we catch its remains (Source/Dest IP) and flag it. This is the only proof the victim process will have.

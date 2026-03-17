@@ -1,176 +1,184 @@
-Configuração do Ambiente de Desenvolvimento eBPF (Híbrido)
+# eBPF Development Environment Setup Guide (Hybrid Architecture)
 
-1. Visão Geral da Arquitetura
+## 1. Hybrid Architecture Overview
 
-O projeto utiliza uma arquitetura híbrida para mitigar as limitações de sistemas de arquivos virtualizados enquanto mantém a conveniência das ferramentas de desenvolvimento do host.
+This project uses a hybrid architecture to mitigate the limitations of virtualized file systems while maintaining the convenience of host development tools.
 
-Host (Edição): Windows 11 com VSCode.
+```text
+[ HOST: Windows 11 ]                                  [ GUEST: OpenSUSE 15.6 ]
+.                                                     .
+.   VSCode (Editor)                                   .   Kernel 6.4.x (eBPF)
+.   `-- Remote SSH Plugin ------------------------->  .   `-- SSH Server (Root)
+.                                                     .
+.   Project Folder (NTFS)                             .   Mount Point (/opt/host)
+.   C:\Users\<USER>\GitHub\sys-inspector <== Shared = .   /opt/host/Syncfolder
+.                                                     .   `-- Source Code (Read/Write)
+.                                                     .
+.                                                     .   Native File System (Ext4)
+.                                                     .   /root/venvs/sys-inspector
+.                                                         `-- Python Binaries and Libs
+```
 
-Guest (Execução/Compilação): VM OpenSUSE Leap 15.6 (Headless/Server) no VirtualBox.
+## 2. Components and Configuration
 
-Sincronização: Pasta compartilhada (VirtualBox Shared Folders) montada em /opt/host.
+### 2.1. Host (Windows 11)
 
-Execução Segura: Ambiente virtual Python (venv) desacoplado, residindo no sistema de arquivos nativo da VM (Ext4) para suportar symlinks e sockets.
+* Editor: Visual Studio Code.
+* Terminal: PowerShell / MobaXterm.
+* Virtualization: Oracle VirtualBox 7.x.
+* SSH Keys: Generated natively (ssh-keygen) and cleared via "ssh-keygen -R [IP]" when necessary.
 
-2. Componentes e Configuração
+### 2.2. Guest (OpenSUSE Leap 15.6)
 
-2.1. Host (Windows 11)
+* IP: Static (e.g., <VM_IP>).
+* Kernel: Version 6.4.x (Updated via Kernel:stable repository or Backports for modern eBPF support).
+* Shared Mount:
+  * Source: Local Windows folder.
+  * Destination: /opt/host/Syncfolder.
+  * Driver: vboxsf.
 
-Editor: Visual Studio Code.
+### 2.3. Toolchain eBPF/BCC
 
-Terminal: PowerShell / MobaXterm.
+Installed via Zypper and verified to ensure exact parity between Kernel and Headers:
 
-Virtualização: Oracle VirtualBox 7.x.
+* bcc-tools
+* python3-bcc
+* llvm / clang
+* kernel-default-devel (Version MUST exactly match "uname -r").
 
-Chaves SSH: Geradas nativamente (ssh-keygen) e limpas via ssh-keygen -R [IP] quando necessário.
+## 3. Critical Directory Structure
 
-2.2. Guest (OpenSUSE Leap 15.6)
+Due to the inability of the vboxsf driver to create symbolic links (required for Python venv), the following separation was adopted:
 
-IP: Estático (192.168.1.26).
+| Purpose          | Path in VM                               | File System       |
+| :---             | :---                                     | :---              |
+| Source Code      | /opt/host/Syncfolder/.../sys-inspector   | vboxsf (NTFS/Win) |
+| Virtual Env      | /root/venvs/sys-inspector                | ext4 (Native Linux)|
 
-Kernel: Versão 6.4.x (Atualizado via repositório Kernel:stable ou Backports para suporte eBPF moderno).
+## 4. Step-by-Step Installation (From Scratch)
 
-Montagem Compartilhada:
+### PHASE 1: VirtualBox Configuration
 
-Origem: Pasta local do Windows.
+1. VM Creation: Linux / openSUSE (64-bit). Minimum 4GB RAM (8GB recommended for LLVM compilation), Minimum 2 vCPUs.
+2. Network (Critical): Change from "NAT" to "Bridged Adapter". This allows the VM to receive a local network IP accessible from Windows.
+3. Shared Folders: Host Path points to your local project. Guest Path is "/opt/host". Check "Auto-mount" and "Make Permanent".
 
-Destino: /opt/host/Syncfolder.
+### PHASE 2: Guest OS Installation
 
-Driver: vboxsf.
+1. Boot: Start with openSUSE Leap 15.6 ISO.
+2. Partitioning (Critical Point): Select "Expert Partitioner". For the root partition (/), change the default file system from Btrfs to Ext4. Reason: Avoid disk filling by Snapper snapshots on small disks.
+3. Software Selection: "Server" or "Desktop with XFCE". Add "Base Development".
+4. Finish: Create root user and conclude installation.
 
-2.3. Toolchain eBPF/BCC
+### PHASE 3: System Configuration (Post-Installation)
 
-Instalada via Zypper e verificada para garantir paridade exata entre Kernel e Headers:
+1. Network Configuration: Run "yast lan". Set Static IP, Gateway, and DNS.
+2. Enable SSH for Root: Edit "/etc/ssh/sshd_config", set "PermitRootLogin yes", restart service "systemctl restart sshd".
+3. Shared Folder Prep: Add root to vboxsf group "usermod -aG vboxsf root".
 
-bcc-tools
+### PHASE 4: Toolchain and Dependencies (Guest)
 
-python3-bcc
-
-llvm / clang
-
-kernel-default-devel (Versão deve casar exatamente com uname -r).
-
-3. Estrutura de Diretórios Crítica
-
-Devido à incapacidade do driver vboxsf de criar links simbólicos (necessários para venv Python), adotou-se a seguinte separação:
-
-Finalidade
-
-Caminho na VM
-
-Sistema de Arquivos
-
-Código Fonte
-
-/opt/host/Syncfolder/.../sys-inspector
-
-vboxsf (NTFS/Win)
-
-Ambiente Virtual
-
-/root/venvs/sys-inspector
-
-ext4 (Linux Nativo)
-
-4. Configuração do VSCode (Remote SSH)
-
-4.1. Conexão
-
-Utiliza o plugin Remote - SSH.
-
-Usuário: root (Necessário para operações eBPF/BCC que exigem privilégios privilegiados de kernel).
-
-4.2. Extensões no Remoto
-
-As seguintes extensões devem ser instaladas no contexto SSH (dentro da VM):
-
-Python (Microsoft): Para IntelliSense e Debugging.
-
-Pylint / Black: Para linting e formatação (PEP 8).
-
-4.3. Definição do Intérprete Python
-
-O VSCode não detecta automaticamente o venv deslocado. A configuração é manual:
-
-Command Palette (Ctrl+Shift+P).
-
-Python: Select Interpreter.
-
-Enter interpreter path....
-
-Caminho: /root/venvs/sys-inspector/bin/python.
-
-5. Scripts de Automação
-
-O projeto contém scripts em scripts/ para replicar o ambiente:
-
-install_deps.sh: Atualiza o Zypper, instala compiladores (LLVM/Clang), ferramentas BCC e verifica a versão dos headers do kernel.
-
-setup_venv.sh: Cria o diretório /root/venvs/sys-inspector (Ext4), inicializa o ambiente virtual com --system-site-packages (para acesso ao BCC global) e instala dependências de desenvolvimento (black, pylint).
-
-6. Procedimento de Execução
-
-Como o código utiliza eBPF, a execução exige privilégios de root. O VSCode terminal já loga como root, mas o binário python correto deve ser invocado explicitamente se não estiver com o ambiente ativado.
-
-Comando Padrão:
-
-# Ativar ambiente (recomendado)
-source /root/venvs/sys-inspector/bin/activate
-python src/main.py
-
-# Ou execução direta
-sudo /root/venvs/sys-inspector/bin/python src/main.py
-
-
-7. Troubleshooting Comum
-
-Erro Operation not permitted ao criar venv: Ocorre se tentar criar .venv dentro da pasta do projeto. Solução: Use o script setup_venv.sh que aponta para /root/venvs.
-
-Erro de Importação BCC: Ocorre se o venv for criado sem a flag --system-site-packages.
-
-Falha de Compilação eBPF: Geralmente indica incompatibilidade entre uname -r e o pacote kernel-default-devel. Executar zypper install -f kernel-default-devel e reiniciar.
-
-## 8. Instalação de Ferramentas de Qualidade (QA)
-
-Para garantir que o código siga os padrões PEP 8 (exigido pelo Flake8), é necessário instalar as ferramentas de linting no ambiente virtual.
-
-O script `scripts/setup_venv.sh` já foi atualizado para fazer isso automaticamente, mas você pode instalar manualmente:
+Run the following commands to install compilers and Kernel headers:
 
 ```bash
-source /root/venvs/sys-inspector/bin/activate
-pip install flake8 pylint
-``` 
+    # 1. Update Zypper
+    zypper refresh
+    
+    # 2. Install Compilers and Dependencies
+    zypper install -y git clang llvm make gcc python3 python3-pip python3-devel
+    
+    # 3. Install BCC Tools
+    zypper install -y python3-bcc bcc-tools
+    
+    # 4. Install Kernel Headers
+    zypper install -y kernel-devel kernel-default-devel
+```
 
-9. Fluxo de Desenvolvimento e Teste (Cheat Sheet)
-9.1. Retomando o Trabalho (Após Reboot)
-Como o código está na pasta compartilhada (Windows) e o Venv no Linux (Ext4):
+### PHASE 5: Host Configuration (Windows)
 
-Bash
+If you reinstalled the VM keeping the IP, clear the old key:
 
-# 1. Vá para a pasta do projeto
-cd /opt/host/Syncfolder/Trabalho/GitHub/mariosergiosl/sys-inspector
+```bash
+    ssh-keygen -R <VM_IP>
+```
 
-# 2. Ative o Ambiente Virtual
-source /root/venvs/sys-inspector/bin/activate
+Test connection:
 
-# 3. Execute o inspetor (requer sudo)
-sudo python3 src/inspector.py --html relatorio_teste.html --duration 10
-9.2. Verificação de Qualidade (Linting)
-Antes de fazer commit, verifique se o código está limpo:
+```bash
+    ssh root@<VM_IP>
+```
 
-Bash
+### PHASE 6: Hybrid Project Environment (Resolving Symlinks)
 
-# Execute da raiz do projeto
-./scripts/run_python_test.bash
-9.3. Gerando Anomalias para Teste
-Para validar se o inspetor detecta malwares e uso indevido:
+1. Navigate to project: cd /opt/host/Syncfolder/.../sys-inspector
+2. Create Decoupled Virtual Environment: Do NOT create venv in the current folder.
 
-Bash
+```bash
+    mkdir -p /root/venvs
+    python3 -m venv /root/venvs/sys-inspector --system-site-packages
+```
 
-# Inicia o script malicioso em background
-./scripts/gerar_anomalia.sh
+3. Install QA Tools:
 
-# (Gere o relatório enquanto ele roda...)
+```bash
+    source /root/venvs/sys-inspector/bin/activate
+    pip install black pylint flake8
+```
 
-# Para matar o processo malicioso (que ignora Ctrl+C):
-sudo pkill -9 -f ".kworker_fake"
+### PHASE 7: VSCode Configuration (Remote SSH)
+
+1. Connect using "Remote-SSH: Connect to Host..." -> root@<VM_IP>.
+2. Install Extensions on Remote: Install "Python" (Microsoft) on the SSH target.
+3. Configure Python Interpreter (Manual): Press F1 -> "Python: Select Interpreter" -> "Enter interpreter path...". Path: /root/venvs/sys-inspector/bin/python.
+4. Disable Auto Creation: If VSCode offers to create a venv in the project folder, refuse.
+
+## 5. Automation Scripts
+
+The project contains scripts in "scripts/" to replicate the environment:
+
+* install_deps.sh: Updates Zypper, installs compilers (LLVM/Clang), BCC tools, and checks the kernel headers version.
+* setup_venv.sh: Creates the /root/venvs/sys-inspector (Ext4) directory, initializes the virtual environment with --system-site-packages (for global BCC access), and installs development dependencies (black, pylint, flake8).
+
+## 6. Daily Workflow and Cheat Sheet
+
+### Starting a Development Session
+
+1. Open VSCode, connect via SSH.
+2. Open Integrated Terminal.
+3. Activate environment: source /root/venvs/sys-inspector/bin/activate
+
+### Running the Inspector
+
+Since the code uses eBPF, execution requires root privileges.
+
+```bash
+    sudo python3 main.py --mode local-live
+```
+
+### Quality Assurance (Linting)
+
+Before committing, check if the code is clean:
+
+```bash
+    ./scripts/run_python_test.bash
+```
+
+### Generating Anomalies for Testing
+
+To validate if the inspector detects malwares and improper use:
+
+```bash
+    ./scripts/chaos_maker.sh
+```
+
+    # To kill the malicious process (which ignores Ctrl+C):
+
+```bash
+    sudo pkill -9 -f ".kworker_fake"
+```
+
+## 7. Common Troubleshooting
+
+* Error "Operation not permitted" creating venv: Occurs if trying to create .venv inside the project folder (shared). Solution: Use setup_venv.sh which points to /root/venvs.
+* BCC Import Error: Occurs if venv is created without the --system-site-packages flag.
+* eBPF Compilation Failure: Usually indicates a mismatch between "uname -r" and the "kernel-default-devel" package. Run "zypper install -f kernel-default-devel" and reboot.
