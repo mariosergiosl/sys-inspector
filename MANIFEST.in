@@ -1,4 +1,4 @@
-include src/sys_inspector/bpf_program.c
+include src/probes/base_trace.c
+recursive-include conf *
 include README.md
 include LICENSE
-recursive-include conf *

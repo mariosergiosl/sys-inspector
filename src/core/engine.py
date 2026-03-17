@@ -37,10 +37,14 @@ class SysInspectorEngine:
     Manages the lifecycle of BPF probes and data collection loops.
     """
 
-    def __init__(self, config_or_path="conf/config.yaml"):
+    def __init__(self, config_or_path="/etc/sys-inspector/config.yaml"):
+        # Check if config is already a dictionary (from main.py)
         if isinstance(config_or_path, dict):
             self.config = config_or_path
         else:
+            # Fallback for local development environment
+            if not os.path.exists(config_or_path) and os.path.exists("conf/config.yaml"):
+                config_or_path = "conf/config.yaml"
             self.config = load_config(config_or_path)
 
         # Engine Components
