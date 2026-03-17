@@ -18,6 +18,7 @@ import logging
 from src.core.engine import SysInspectorEngine
 from src.collectors.system_inventory import collect_full_inventory
 
+
 class CollectionManager:
     """
     Standardizes the data collection process across all modes.
@@ -36,16 +37,16 @@ class CollectionManager:
         3. Collects Static Inventory (Hardware/Network).
         4. Merges everything into a standardized Dictionary.
         5. Stops Engine.
-        
+
         Returns:
             dict: The complete forensic data structure ready for Encryption/Storage.
         """
         try:
             self.logger.info(f"[COLLECT] Starting capture window ({duration}s)...")
-            
+
             # 1. Start Dynamic Analysis (eBPF + Pollers)
             self.engine.start()
-            
+
             # 2. Sampling Loop
             # We sleep in small chunks to remain responsive to interrupts if needed
             start_time = time.time()
@@ -54,19 +55,19 @@ class CollectionManager:
 
             # 3. Stop Engine (Freeze state)
             self.engine.stop()
-            
+
             # 4. Static Collection
             self.logger.info("[COLLECT] Gathering static system inventory...")
             full_data = collect_full_inventory()
-            
+
             # 5. Merge Dynamic Data
             # This calls the updated ProcessTree logic (Duration, EDR Wchan, etc.)
             full_data['processes'] = self.engine.tree.to_json()
-            
+
             # 6. Metadata
             full_data['capture_duration'] = duration
             full_data['mode'] = self.config.get('general', {}).get('mode', 'unknown')
-            
+
             self.logger.info(f"[COLLECT] Capture complete. {len(full_data['processes'])} processes tracked.")
             return full_data
 

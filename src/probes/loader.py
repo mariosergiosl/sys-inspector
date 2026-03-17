@@ -16,10 +16,11 @@
 import os
 import sys
 
+
 def load_probe_source(probe_name="base_trace.c"):
     """
     Reads the C source file from the probes directory and prepares it for BCC.
-    
+
     It performs necessary runtime replacements, such as injecting the current
     PID into the FILTER_PID macro to prevent the agent from tracing itself.
 
@@ -48,9 +49,9 @@ def load_probe_source(probe_name="base_trace.c"):
         current_pid = os.getpid()
         source_code = source_code.replace(
             "#define FILTER_PID 00000",
-            f"#define FILTER_PID {current_pid}"
+            "#define FILTER_PID {current_pid}"
         )
-        
+
         return source_code
 
     except Exception as e:

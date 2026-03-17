@@ -171,12 +171,12 @@ body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:
 .grad-cpu { background: linear-gradient(to right, var(--grn), var(--red)); }
 
 /* Base Tag Style */
-.tag { 
+.tag {
     display:inline-flex; align-items:center; justify-content:center;
-    padding:1px 4px; border-radius:3px; 
-    font-weight:bold; margin-right:4px; cursor:help; 
+    padding:1px 4px; border-radius:3px;
+    font-weight:bold; margin-right:4px; cursor:help;
     font-size:16px; /* Optimized for Emojis */
-    border:1px solid transparent; 
+    border:1px solid transparent;
     vertical-align: middle;
 }
 .tag:hover { transform: scale(1.2); transition: 0.1s; background: rgba(255,255,255,0.1); }
@@ -199,10 +199,10 @@ body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:
 .t-err  { background:var(--red); color:#000; }
 
 .btn-clear { cursor:pointer; padding:2px 6px; border-radius:3px; border:1px solid #555; font-size:10px; font-weight:bold; color:#aaa; background:#333; }
-.btn-act { 
-    cursor:pointer; padding:3px 8px; border-radius:3px; border:1px solid #555; 
+.btn-act {
+    cursor:pointer; padding:3px 8px; border-radius:3px; border:1px solid #555;
     font-size:14px; /* Icon size */
-    font-weight:bold; color:#ddd; background:#2a2a2a; transition:0.2s; margin-right:5px; 
+    font-weight:bold; color:#ddd; background:#2a2a2a; transition:0.2s; margin-right:5px;
     min-width: 24px; text-align: center; display: inline-block;
 }
 .btn-act:hover { background:#444; border-color:var(--acc); transform: scale(1.1); }
@@ -222,7 +222,7 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
 .det-blk { margin-bottom:15px; border-bottom:1px solid #333; padding-bottom:10px; }
 .det-title { color:var(--acc); font-weight:bold; margin-bottom:8px; display:block; font-size:1.1em; border-bottom:1px solid #444; padding-bottom:2px; }
 .ctx-tbl { width:100%; border-spacing:0; }
-.ctx-lbl { color:#666; width:150px; vertical-align:top; } 
+.ctx-lbl { color:#666; width:150px; vertical-align:top; }
 .ctx-val { color:#ccc; font-family:'Consolas',monospace; white-space: pre-wrap; word-break: break-all; }
 .hctl { color:var(--cyn); font-weight:bold; background:rgba(78, 201, 176, 0.1); padding:0 3px; border-radius:2px; }
 .disk-str { color:#888; font-size:0.9em; margin-left:10px; }
@@ -265,10 +265,10 @@ JS_BLOCK = r"""
     function toggleBranch(pid) {
         var btn = document.getElementById('b-'+pid);
         if(btn && btn.classList.contains('disabled')) return;
-        
+
         var closed = btn && btn.innerText === '+';
         if(btn) btn.innerText = closed ? '-' : '+';
-        
+
         // Track state
         if(closed) state.expandedPids.add(parseInt(pid));
         else state.expandedPids.delete(parseInt(pid));
@@ -281,14 +281,14 @@ JS_BLOCK = r"""
                 // Recursive close logic
                 var sub = document.getElementById('b-'+childPid);
                 if(sub && sub.innerText==='-') toggleBranch(childPid);
-                
+
                 var det = document.getElementById('d-'+childPid);
                 if(det) det.classList.remove('show');
             }
         });
     }
 
-    function toggleDet(pid) { 
+    function toggleDet(pid) {
         var el = document.getElementById('d-'+pid);
         if(el) {
             el.classList.toggle('show');
@@ -313,19 +313,19 @@ JS_BLOCK = r"""
     // --- FILTERING ---
     function filterTable() {
         var v = document.getElementById("search").value.toUpperCase();
-        state.currentFilter = v; 
-        
+        state.currentFilter = v;
+
         var isFiltering = v !== "";
         document.querySelectorAll(".proc-row").forEach(r => {
             // Include hidden text (badge names) in search
-            var txt = r.innerText.toUpperCase(); 
+            var txt = r.innerText.toUpperCase();
             // Also check data-filter attribute specifically
             var badges = r.querySelectorAll('.tag');
             badges.forEach(b => { if(b.dataset.filter) txt += b.dataset.filter.toUpperCase(); });
-            
+
             var pid = r.dataset.pid;
             var btn = document.getElementById('b-'+pid);
-            
+
             var match = txt.indexOf(v) > -1;
 
             if(isFiltering) {
@@ -340,11 +340,11 @@ JS_BLOCK = r"""
                 if(btn) btn.innerText='+';
             }
         });
-        
+
         if(isFiltering) document.querySelectorAll('.det-row').forEach(d => d.classList.remove('show'));
         else restoreTreeState();
     }
-    
+
     function setFilter(val) { document.getElementById("search").value = val; filterTable(); }
 
     // --- LIVE MODE LOGIC ---
@@ -362,7 +362,7 @@ JS_BLOCK = r"""
         if(state.isLive) return;
         state.isLive = true;
         console.log("Starting Live Updates...");
-        
+
         // Create Banner safely if not exists
         if(!document.getElementById('live-banner')) {
             var div = document.createElement('div');
@@ -382,28 +382,28 @@ JS_BLOCK = r"""
             } catch (e) {
                 console.error("Live Update Failed:", e);
             }
-        }, 5000); 
+        }, 5000);
     }
-    
+
     // --- UTILS ---
     function toggleDisk(name) {
         // [UPDATED] Sanitize name for ID selector (match with Python logic)
-        var safeName = name.replace(/[^a-zA-Z0-9_-]/g, '_'); 
-        
+        var safeName = name.replace(/[^a-zA-Z0-9_-]/g, '_');
+
         var el = document.getElementById('dd-'+safeName);
         var btn = document.getElementById('db-'+safeName);
         if(el && btn) {
-            if(el.classList.contains('show')) { el.classList.remove('show'); btn.innerText = '+'; } 
+            if(el.classList.contains('show')) { el.classList.remove('show'); btn.innerText = '+'; }
             else { el.classList.add('show'); btn.innerText = '-'; }
         }
     }
-    
+
     function sortView(metric) {
         var tbody = document.querySelector(".table-container tbody");
         if (!tbody) return;
         var rows = Array.from(tbody.querySelectorAll(".proc-row"));
-        rows.forEach(r => { 
-            r.classList.remove('hidden'); r.style.display=""; 
+        rows.forEach(r => {
+            r.classList.remove('hidden'); r.style.display="";
             var btn=document.getElementById('b-'+r.dataset.pid);
             if(btn){ btn.innerText='•'; btn.classList.add('disabled'); }
         });
@@ -468,7 +468,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 <h3>System</h3>
                 <div id="os-info">{OS_CONTENT}</div>
             </div>
-            
+
             <div class="card" id="storage-card">
                 <h3>Storage Topology <span class="btn-print-disk" onclick="printStorage()">Print</span></h3>
                 <div class="disk-topology-wrapper"> <div class="disk-topology-box">
@@ -476,7 +476,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     </div>
                 </div>
             </div>
-            
+
             <div class="card">
                 <h3>Network Topology</h3>
                 <div id="net-info">{NET_CONTENT}</div>
@@ -515,10 +515,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     <span class="filter-btn" onclick="setFilter('UNSAFE')" title="Unsafe Path">☢️</span>
                     <span class="filter-btn" onclick="setFilter('NET ERR')" title="Network Errors">❌</span>
                     <span class="filter-btn" onclick="setFilter('ZOMBIE')" title="Zombies">🧟</span>
-                    
+
                     <span class="btn-clear" onclick="setFilter('')">🧹 CLEAR</span>
                     <span class="btn-act" onclick="window.print()" title="Save PDF">🖨️</span>
-                    
+
                     {LEGEND_HTML}
                 </div>
             </div>
@@ -546,8 +546,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <colgroup>
                 <col width="20%">
                 <col width="60px">
-                <col width="90px"> 
-                <col width="90px"> 
+                <col width="90px">
+                <col width="90px">
                 <col width="50px">
                 <col width="60px">
                 <col width="80px">

@@ -39,7 +39,8 @@ fi
 
 # 2. Pylint
 echo -e "\n[2/2] Running Pylint..."
-pylint --rcfile=.pylintrc src/inspector.py src/sys_inspector/*.py
+#pylint --rcfile=.pylintrc src/inspector.py src/sys_inspector/*.py
+pylint --rcfile=.pylintrc src/ main.py
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}Pylint Passed.${NC}"
 else
