@@ -12,7 +12,7 @@
 #   - Network Aware (Captures IPs/Hostname for Agent ID).
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: 0.80.02 (Fix: Imports & Function Calls)
+# VERSION: v0.90.15
 # ==============================================================================
 
 import time

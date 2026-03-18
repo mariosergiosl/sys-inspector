@@ -11,7 +11,7 @@
 #   --help       Displays this help message.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: 1.1.0 (Added Flask Support)
+# VERSION: v0.90.15
 # ==============================================================================
 
 # ------------------------------------------------------------------------------

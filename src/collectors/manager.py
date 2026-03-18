@@ -10,7 +10,7 @@
 #   data = mgr.collect_snapshot(duration=30)
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: 0.70.01
+# VERSION: v0.90.15
 # ==============================================================================
 
 import time

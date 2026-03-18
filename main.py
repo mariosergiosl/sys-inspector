@@ -9,7 +9,7 @@
 #              Includes auto-setup for critical dependencies.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: 0.90.00 (Refactored Entry Point)
+# VERSION: v0.90.15
 # ==============================================================================
 
 import sys
