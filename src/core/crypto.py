@@ -29,10 +29,7 @@ from cryptography.hazmat.backends import default_backend
 # KEY MANAGEMENT
 # ------------------------------------------------------------------------------
 def generate_key_pair(private_key_path="private_key.pem", public_key_path="public_key.pem"):
-    """
-    Generates a new RSA 4096-bit key pair for the Analyst.
-    WARNING: This should be run ONCE on the Analyst's secure machine, NOT on the agent.
-    """
+    """Generates a new RSA 4096-bit key pair with strict FHS permissions."""
     print(f"[*] Generating RSA-4096 Key Pair...")
     private_key = rsa.generate_private_key(
         public_exponent=65537,
@@ -40,24 +37,38 @@ def generate_key_pair(private_key_path="private_key.pem", public_key_path="publi
         backend=default_backend()
     )
 
-    # Save Private Key
+    # Save Private Key with restricted permissions (0600)
     with open(private_key_path, "wb") as f:
         f.write(private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption()  # Can add password here later
+            encryption_algorithm=serialization.NoEncryption()
         ))
+    os.chmod(private_key_path, 0o600)
 
-    # Save Public Key
+    # Save Public Key (0644)
     public_key = private_key.public_key()
     with open(public_key_path, "wb") as f:
         f.write(public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         ))
+    os.chmod(public_key_path, 0o644)
 
     print(f"[+] Keys generated: {private_key_path}, {public_key_path}")
-    print("[!] KEEP THE PRIVATE KEY SAFE! The Agent only needs the PUBLIC key.")
+
+
+def ensure_crypto_environment(public_key_path, private_key_path):
+    """Checks if keys exist; if not, auto-provisions them for the agent."""
+    if not os.path.exists(public_key_path) or not os.path.exists(private_key_path):
+        print("[!] Cryptographic keys not found. Auto-provisioning identity...")
+
+        # Ensure directory exists with secure permissions
+        config_dir = os.path.dirname(public_key_path)
+        if config_dir and not os.path.exists(config_dir):
+            os.makedirs(config_dir, mode=0o750, exist_ok=True)
+
+        generate_key_pair(private_key_path, public_key_path)
 
 
 def load_public_key(path):

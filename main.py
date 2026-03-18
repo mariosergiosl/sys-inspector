@@ -47,12 +47,18 @@ def ensure_environment():
         print(f"[!] Missing critical modules: {', '.join(missing_modules)}")
         print("[*] Triggering auto-setup...")
 
-        # Determine script path relative to this file
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        script_path = os.path.join(base_dir, "scripts", "setup_env.sh")
+        import shutil
+        # 1. Tenta localizar no $PATH global (/usr/bin/)
+        script_path = shutil.which("setup_env.sh")
 
-        if not os.path.exists(script_path):
-            print(f"[ERROR] Setup script not found at {script_path}. Aborting.")
+        # 2. Fallback para ambiente de desenvolvimento local
+        if not script_path:
+            # Determine script path relative to this file
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            script_path = os.path.join(base_dir, "tools", "setup_env.sh")
+
+        if not script_path or not os.path.exists(script_path):
+            print("[ERROR] Setup script not found. Aborting.")
             sys.exit(1)
 
         # Call the shell script with --install flag
@@ -150,6 +156,19 @@ def main():
         sys.exit(1)
 
     config = load_config(config_path)
+
+    # --------------------------------------------------------------------------
+    # AUTO-PROVISION CRYPTOGRAPHIC IDENTITY
+    # --------------------------------------------------------------------------
+    try:
+        from src.core.crypto import ensure_crypto_environment
+        ensure_crypto_environment(
+            config['security']['public_key_path'],
+            config['security']['private_key_path']
+        )
+    except Exception as e:
+        logging.critical(f"Failed to provision cryptographic keys: {e}")
+        sys.exit(1)
 
     # Override Mode logic: CLI Args > Config File
     if args.mode:
