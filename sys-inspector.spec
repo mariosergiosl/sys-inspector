@@ -63,10 +63,11 @@ Designed for SREs and Forensic Analysts.
 mkdir -p %{buildroot}/etc/sys-inspector
 mkdir -p %{buildroot}/var/lib/sys-inspector
 mkdir -p %{buildroot}/var/log/sys-inspector/reports
-
-SUSE Policy: Move systemd unit file from /etc to /usr/lib
+# SUSE Policy: Move systemd unit file from /etc to /usr/lib
 mkdir -p %{buildroot}%{_unitdir}
-mv %{buildroot}/etc/systemd/system/sys-inspector.service %{buildroot}%{_unitdir}/
+if [ -f %{buildroot}/etc/systemd/system/sys-inspector.service ]; then
+    mv %{buildroot}/etc/systemd/system/sys-inspector.service %{buildroot}%{_unitdir}/
+fi
 
 %pre
 %service_add_pre sys-inspector.service
@@ -93,18 +94,19 @@ mv %{buildroot}/etc/systemd/system/sys-inspector.service %{buildroot}%{_unitdir}
 %{_bindir}/generate_keys.py
 %{python3_sitelib}/*
 
+# ==============================================================================
+# Configuration and systemd files
+# ==============================================================================
 # Configuration Files (FHS)
 %dir /etc/sys-inspector
 %config(noreplace) /etc/sys-inspector/config.yaml
-
 # Systemd Unit File
 %{_unitdir}/sys-inspector.service
-
 # State and Log Directories (FHS)
 %dir %attr(0750,root,root) /var/lib/sys-inspector
 %dir %attr(0750,root,root) /var/log/sys-inspector
 %dir %attr(0750,root,root) /var/log/sys-inspector/reports
 
 %changelog
-* Wed Mar 18 2026 Mario Luz <mario.mssl-at-gmail.com> - 0.90.12
-- Release v0.90.12: FHS compliant paths, systemd integration, and PyPI sync.
+* Wed Mar 18 2026 Mario Luz <mario.mssl@gmail.com> - 0.90.14
+- Release v0.90.14: FHS compliant paths, systemd integration, and PyPI and OBS sync.

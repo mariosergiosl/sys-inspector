@@ -1,0 +1,29 @@
+sys-Inspector
+
+
+Lint:
+pylint --rcfile=.pylintrc src/ main.py setup.py
+
+
+flake8 src/ main.py setup.py
+flake8 src/exporters/html_report.py
+
+Git
+./update_git.bash -m "Refactor: Move operational scripts to tools directory and fix OBS packaging"
+
+Git tag
+git tag -a v0.90.13 -m "Release v0.90.13"
+git push origin v0.90.13
+
+
+Testar PIP
+
+python3 -m pip install --upgrade sys-inspector==0.90.11
+
+
+Testar sys-inspector
+
+python3 main.py --snapshot
+python3 main.py --mode snapshot --interval 30
+
+sys-inspector --mode local-live
