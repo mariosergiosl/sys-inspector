@@ -6,7 +6,7 @@
 #              after a global pip installation.
 # OPTIONS: None
 # AUTHOR: Mario Luz
-# VERSION: 1.0.0
+# VERSION: v0.90.15
 # ==============================================================================
 
 set -e

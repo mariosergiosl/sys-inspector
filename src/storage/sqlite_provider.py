@@ -10,7 +10,7 @@
 #
 # AUTHOR: Mario Luz (Refactoring Sys-Inspector Project)
 # CHANGELOG:
-# VERSION: 0.50.56
+# VERSION: v0.90.15
 # ==============================================================================
 
 import sqlite3

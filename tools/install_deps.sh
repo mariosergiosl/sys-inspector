@@ -5,7 +5,7 @@
 # DESCRIPTION: Installs system-level dependencies for eBPF (BCC) and Web UI.
 #              Targets openSUSE Leap 15.6 / SLES 15/16.
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: 1.2.0 (Integrated Web & US-ASCII)
+# VERSION: v0.90.15
 # ==============================================================================
 
 set -euo pipefail

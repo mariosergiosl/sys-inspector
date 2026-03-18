@@ -4,7 +4,7 @@
 # DESCRIPTION: Systemd unit file for Sys-Inspector Daemon.
 # OPTIONS: None
 # AUTHOR: Mario Luz
-# VERSION: 0.90.10
+# VERSION: v0.90.15
 # ==============================================================================
 
 [Unit]

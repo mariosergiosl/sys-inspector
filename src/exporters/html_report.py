@@ -10,7 +10,7 @@
 #                        HTML explosion during massive Port Scans.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: 0.61.00
+# VERSION: v0.90.15
 # ==============================================================================
 
 # import os

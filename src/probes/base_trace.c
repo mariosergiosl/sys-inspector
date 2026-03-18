@@ -19,7 +19,7 @@
  *
  * AUTHOR: Mario Luz (Refactoring Sys-Inspector Project)
  * CHANGELOG:
- * VERSION: 0.70.08 (Patched for Kernel 6.x/SLES16 Compatibility)
+ * VERSION: v0.90.14
 # ==============================================================================
  */
 

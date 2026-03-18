@@ -14,7 +14,7 @@
 #              - MAINTAINED: Full rehydration and crypto logic.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: 0.70.03
+# VERSION: v0.90.15
 # ==============================================================================
 
 import os

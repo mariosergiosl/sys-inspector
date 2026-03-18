@@ -12,7 +12,7 @@
 #
 # DEPENDENCIES: pip install cryptography
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: 0.70.01
+# VERSION: v0.90.15
 # ==============================================================================
 
 import os
