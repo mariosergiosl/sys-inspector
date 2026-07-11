@@ -17,12 +17,19 @@
 import logging
 import json
 import os
+import re
 import sqlite3
 import time
 from contextlib import closing
 # [FIX] Added render_template_string to imports
 # from flask import Flask, jsonify, make_response, redirect, url_for, render_template_string
 from flask import Flask, jsonify, make_response, render_template_string
+# [SEC] markupsafe ships with Flask; used to escape untrusted data in HTML
+from markupsafe import escape
+
+# [SEC] Agent IDs are UUIDs or the literal 'local'. Anything else is rejected
+# before being interpolated into HTML/JS responses (XSS prevention).
+SAFE_ID_PATTERN = re.compile(r'^[A-Za-z0-9\-]{1,64}$')
 
 # Core & Exporter Imports
 try:
@@ -95,6 +102,14 @@ FLEET_TEMPLATE = """
     </div>
 
     <script>
+        // [SEC] Escape agent-controlled fields (hostname, ip, os_info) before
+        // inserting into innerHTML. A compromised agent must not inject HTML/JS.
+        function esc(value) {
+            const div = document.createElement('div');
+            div.textContent = (value === null || value === undefined) ? '' : String(value);
+            return div.innerHTML;
+        }
+
         async function loadFleet() {
             try {
                 const res = await fetch('/api/agents');
@@ -118,15 +133,15 @@ FLEET_TEMPLATE = """
 
                     const card = document.createElement('div');
                     card.className = 'agent-card';
-                    card.onclick = () => window.location.href = '/inspector/' + a.uuid;
+                    card.onclick = () => window.location.href = '/inspector/' + encodeURIComponent(a.uuid);
 
                     card.innerHTML = `
                         <div class="status-bar ${statusClass}"></div>
-                        <div class="agent-name">${a.hostname || 'Unknown Host'}</div>
-                        <div class="agent-ip">${a.ip_address || a.uuid.substring(0,8)+'...'}</div>
+                        <div class="agent-name">${esc(a.hostname) || 'Unknown Host'}</div>
+                        <div class="agent-ip">${esc(a.ip_address) || esc(a.uuid.substring(0,8))+'...'}</div>
 
                         <div style="font-size:11px; color:#aaa; min-height:30px;">
-                            ${a.os_info || 'Linux'}
+                            ${esc(a.os_info) || 'Linux'}
                         </div>
 
                         <div class="last-seen">
@@ -244,13 +259,17 @@ class WebController:
         # --- 2. DEEP INSPECTOR (MICRO VIEW) ---
         @self.app.route('/inspector/<uuid>')
         def inspector_view(uuid):
+            # [SEC] Reject malformed IDs before any HTML/JS interpolation
+            if not SAFE_ID_PATTERN.match(uuid):
+                return make_response("Invalid agent id.", 400)
+
             inv, tree, ts, err = self._get_snapshot_data(uuid)
 
             if err:
                 return f"""
                 <body style='background:#121212; color:#ccc; font-family:sans-serif; text-align:center; padding:50px;'>
-                    <h3>Agent: {uuid}</h3>
-                    <p style='color:#ff6b6b'>Status: {err}</p>
+                    <h3>Agent: {escape(uuid)}</h3>
+                    <p style='color:#ff6b6b'>Status: {escape(err)}</p>
                     <a href='/' style='color:#0078d4'>&larr; Back to Fleet</a>
                 </body>
                 """
@@ -294,7 +313,7 @@ class WebController:
 
                 return HTML_TEMPLATE.format(
                     VERSION="0.90 (Live)",
-                    HOSTNAME=inv.get('os', {}).get('hostname', 'Unknown'),
+                    HOSTNAME=escape(inv.get('os', {}).get('hostname', 'Unknown')),
                     TIMESTAMP=inv['generated'],
                     CSS_BLOCK=CSS_BASE,
                     JS_BLOCK=context_js,  # Uses the context-aware JS
@@ -306,12 +325,16 @@ class WebController:
                 )
             except Exception as e:
                 self.logger.error(f"Render Error: {e}")
-                return f"Render Error: {e}"
+                return f"Render Error: {escape(e)}"
 
         # --- 3. AGENT SPECIFIC API ---
         @self.app.route('/api/agent/<uuid>/latest_fragment')
         def api_agent_fragment(uuid):
             """AJAX: Returns only the Table Rows for the live update."""
+            # [SEC] Same allowlist validation as inspector_view
+            if not SAFE_ID_PATTERN.match(uuid):
+                return make_response("", 400)
+
             inv, tree, _, err = self._get_snapshot_data(uuid)
             if err or not tree: return make_response("", 204)
             try:
