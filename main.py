@@ -162,6 +162,11 @@ def main():
 
     config = load_config(config_path)
 
+    # Apply the configured log level (overrides the INFO bootstrap default).
+    # Fallback seguro para INFO se o valor estiver ausente ou invalido.
+    log_level_name = config.get('general', {}).get('log_level', 'INFO').upper()
+    logging.getLogger().setLevel(getattr(logging, log_level_name, logging.INFO))
+
     # --------------------------------------------------------------------------
     # AUTO-PROVISION CRYPTOGRAPHIC IDENTITY
     # --------------------------------------------------------------------------
