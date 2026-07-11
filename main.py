@@ -47,18 +47,23 @@ def ensure_environment():
         print(f"[!] Missing critical modules: {', '.join(missing_modules)}")
         print("[*] Triggering auto-setup...")
 
-        import shutil
-        # 1. Tenta localizar no $PATH global (/usr/bin/)
-        script_path = shutil.which("setup_env.sh")
+        # [SEC] Resolve setup_env.sh only from trusted, fixed locations.
+        # Nao usar shutil.which(): buscar no $PATH como root permitiria que
+        # um 'setup_env.sh' malicioso, colocado antes no PATH, fosse executado.
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        candidate_paths = [
+            os.path.join(base_dir, "tools", "setup_env.sh"),  # dev / source tree
+            "/usr/bin/setup_env.sh",                          # RPM / pip install
+        ]
 
-        # 2. Fallback para ambiente de desenvolvimento local
+        script_path = None
+        for candidate in candidate_paths:
+            if os.path.exists(candidate):
+                script_path = candidate
+                break
+
         if not script_path:
-            # Determine script path relative to this file
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            script_path = os.path.join(base_dir, "tools", "setup_env.sh")
-
-        if not script_path or not os.path.exists(script_path):
-            print("[ERROR] Setup script not found. Aborting.")
+            print("[ERROR] Setup script not found in trusted locations. Aborting.")
             sys.exit(1)
 
         # Call the shell script with --install flag
