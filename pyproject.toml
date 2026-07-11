@@ -1,23 +1,13 @@
+# ==============================================================================
+# FILE: pyproject.toml
+# DESCRIPTION: Build system declaration for sys-inspector.
+#              All package metadata (version, entry points, dependencies)
+#              is defined in setup.py, which is the single source of truth.
+#              Do NOT add a [project] table here; it would conflict with
+#              setup.py and break the console_scripts entry point.
+# AUTHOR: Mario Luz (Sys-Inspector Project)
+# ==============================================================================
+
 [build-system]
 requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
-
-[project]
-name = "sys-inspector"
-version = "0.90.14"
-description = "eBPF-based System Inspector and Forensic Tool"
-authors = [
-    {name = "Mario Sergio", email = "mariosergiosl@users.noreply.github.com"},
-]
-readme = "README.md"
-license = {text = "GPL-3.0"}
-requires-python = ">=3.6"
-dependencies = [
-    # BCC is usually a system package, typically not installed via pip
-]
-
-[project.scripts]
-sys-inspector = "inspector:main"
-
-[tool.setuptools.packages.find]
-where = ["src"]
