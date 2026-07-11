@@ -5,6 +5,18 @@ All notable changes to the **Sys-Inspector** project will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **Dashboard XSS Prevention:** Agent-supplied fields (`hostname`, `ip_address`, `os_info`) and the URL agent id are now validated against an allowlist and escaped before being rendered in the Fleet and Inspector views. A compromised agent can no longer inject script into the analyst's browser.
+- **Setup Script Hardening:** `ensure_environment()` now resolves `setup_env.sh` only from fixed trusted locations (the packaged `tools/` directory and `/usr/bin/setup_env.sh`) instead of searching `$PATH`. This prevents execution of a malicious `setup_env.sh` when the agent runs as root.
+
+### Fixed
+
+- **Packaging Conflict:** Removed the divergent `[project]` table from `pyproject.toml` (stale version and an invalid `inspector:main` entry point) that could break the `sys-inspector` console script depending on the build backend. `setup.py` is now the single source of truth for package metadata.
+- **Log Level:** The application now honors `general.log_level` from `config.yaml`. Previously the level was hardcoded to `INFO` and the configured value was ignored.
+
 ## [0.90.00] - 2026-03-16
 
 ### Added
