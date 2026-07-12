@@ -192,20 +192,19 @@ body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:
 /* Badge Filters in Toolbar (Clickable) */
 .filter-btn { cursor: pointer; opacity: 0.7; transition: 0.2s; font-size: 16px; margin: 0 4px; }
 .filter-btn:hover { opacity: 1.0; transform: scale(1.2); }
-.filter-btn.active { opacity: 1.0; border-bottom: 2px solid var(--acc); padding-bottom: 2px; }
+/* [UI] Active indicator: outline (not border) so it never shifts neighbor icons */
+.filter-btn.active { opacity: 1.0; outline: 2px solid var(--red); outline-offset: 2px; border-radius: 3px; }
 
 /* Special Badges (Backgrounds can be minimal now, relying on Icon) */
 .t-warn { border-color:var(--red); background:rgba(255, 107, 107, 0.1); }
 .t-err  { background:var(--red); color:#000; }
 
 .btn-clear { cursor:pointer; padding:2px 6px; border-radius:3px; border:1px solid #555; font-size:10px; font-weight:bold; color:#aaa; background:#333; }
-.btn-act {
-    cursor:pointer; padding:3px 8px; border-radius:3px; border:1px solid #555;
-    font-size:14px; /* Icon size */
-    font-weight:bold; color:#ddd; background:#2a2a2a; transition:0.2s; margin-right:5px;
-    min-width: 24px; text-align: center; display: inline-block;
-}
-.btn-act:hover { background:#444; border-color:var(--acc); transform: scale(1.1); }
+/* [UI] Sort buttons styled as bare icons, symmetric with .filter-btn (no gray box) */
+.btn-act { cursor:pointer; opacity:0.7; transition:0.2s; font-size:16px; margin:0 4px; display:inline-block; }
+.btn-act:hover { opacity:1.0; transform: scale(1.2); }
+/* [UI] Active sort indicator, identical to the active filter outline (no layout shift) */
+.btn-act.sort-active { opacity:1.0; outline: 2px solid var(--red); outline-offset: 2px; border-radius: 3px; }
 #search { width:100%; padding:8px; background:#252526; border:1px solid #555; color:white; border-radius:3px; font-family:monospace; box-sizing:border-box; }
 
 /* --- TABLE STYLES --- */
@@ -345,7 +344,13 @@ JS_BLOCK = r"""
         else restoreTreeState();
     }
 
-    function setFilter(val) { document.getElementById("search").value = val; filterTable(); }
+    function setFilter(val, el) {
+        document.getElementById("search").value = val;
+        filterTable();
+        // [UI] Highlight the active filter badge (single active filter at a time)
+        document.querySelectorAll(".filter-btn").forEach(function(b){ b.classList.remove("active"); });
+        if (el) el.classList.add("active");
+    }
 
     // --- LIVE MODE LOGIC ---
     function updateTableContent(newHtml) {
@@ -398,7 +403,7 @@ JS_BLOCK = r"""
         }
     }
 
-    function sortView(metric) {
+    function sortView(metric, el) {
         var tbody = document.querySelector(".table-container tbody");
         if (!tbody) return;
         var rows = Array.from(tbody.querySelectorAll(".proc-row"));
@@ -413,6 +418,9 @@ JS_BLOCK = r"""
             return vb - va;
         });
         rows.forEach(r => { tbody.appendChild(r); var det = document.getElementById('d-'+r.dataset.pid); if(det) tbody.appendChild(det); });
+        // [UI] Highlight the active sort badge (independent from the filter highlight)
+        document.querySelectorAll(".btn-act").forEach(function(b){ b.classList.remove("sort-active"); });
+        if (el) el.classList.add("sort-active");
     }
 
     // Function to Print Storage Card content (Handles 100+ disks by removing Scroll)
@@ -495,26 +503,26 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 <div class="leg-grp">
                     <span class="leg-lbl">Process By</span>
                     <span class="btn-act" onclick="location.reload()" title="Reset Tree View">⟳</span>
-                    <span class="btn-act" onclick="sortView('cpu')" title="Top CPU Usage">🔥</span>
-                    <span class="btn-act" onclick="sortView('io')" title="Top Disk I/O">💾</span>
-                    <span class="btn-act" onclick="sortView('mem')" title="Top Memory (RSS)">🧠</span>
-                    <span class="btn-act" onclick="sortView('net')" title="Top Network Activity">🌐</span>
-                    <span class="btn-act" onclick="sortView('prio')" title="Top Priority (Nice)">⚖️</span>
+                    <span class="btn-act" onclick="sortView('cpu', this)" title="Top CPU Usage">🔥</span>
+                    <span class="btn-act" onclick="sortView('io', this)" title="Top Disk I/O">💾</span>
+                    <span class="btn-act" onclick="sortView('mem', this)" title="Top Memory (RSS)">🧠</span>
+                    <span class="btn-act" onclick="sortView('net', this)" title="Top Network Activity">🌐</span>
+                    <span class="btn-act" onclick="sortView('prio', this)" title="Top Priority (Nice)">⚖️</span>
                 </div>
 
                 <div class="leg-grp" style="border:none; margin-left:auto; display:flex; align-items:center;">
                     <span class="leg-lbl">Filters</span>
-                    <span class="filter-btn" onclick="setFilter('NEW')" title="New Processes">✨</span>
-                    <span class="filter-btn" onclick="setFilter('SSH')" title="SSH Connections">🔌</span>
-                    <span class="filter-btn" onclick="setFilter('SUDO')" title="Privileged (Sudo)">🛡️</span>
-                    <span class="filter-btn" onclick="setFilter('CONTAINER')" title="Containerized">📦</span>
-                    <span class="filter-btn" onclick="setFilter('EDR/AV')" title="Security Inspectors - EDR (Endpoint Detection and Response) / AV (Antivirus)">💊</span>
-                    <span class="filter-btn" onclick="setFilter('EDR-WAIT')" title="Process Frozen by EDR/AV (Wchan Wait)">🧊</span>
-                    <span class="filter-btn" onclick="setFilter('GPU')" title="GPU Activity">🕹️</span>
-                    <span class="filter-btn" onclick="setFilter('MINER')" title="Mining Signature">⛏️</span>
-                    <span class="filter-btn" onclick="setFilter('UNSAFE')" title="Unsafe Path">☢️</span>
-                    <span class="filter-btn" onclick="setFilter('NET ERR')" title="Network Errors">❌</span>
-                    <span class="filter-btn" onclick="setFilter('ZOMBIE')" title="Zombies">🧟</span>
+                    <span class="filter-btn" onclick="setFilter('NEW', this)" title="New Processes">✨</span>
+                    <span class="filter-btn" onclick="setFilter('SSH', this)" title="SSH Connections">🔌</span>
+                    <span class="filter-btn" onclick="setFilter('SUDO', this)" title="Privileged (Sudo)">🛡️</span>
+                    <span class="filter-btn" onclick="setFilter('CONTAINER', this)" title="Containerized">📦</span>
+                    <span class="filter-btn" onclick="setFilter('EDR/AV', this)" title="Security Inspectors - EDR (Endpoint Detection and Response) / AV (Antivirus)">💊</span>
+                    <span class="filter-btn" onclick="setFilter('EDR-WAIT', this)" title="Process Frozen by EDR/AV (Wchan Wait)">🧊</span>
+                    <span class="filter-btn" onclick="setFilter('GPU', this)" title="GPU Activity">🕹️</span>
+                    <span class="filter-btn" onclick="setFilter('MINER', this)" title="Mining Signature">⛏️</span>
+                    <span class="filter-btn" onclick="setFilter('UNSAFE', this)" title="Unsafe Path">☢️</span>
+                    <span class="filter-btn" onclick="setFilter('NET ERR', this)" title="Network Errors">❌</span>
+                    <span class="filter-btn" onclick="setFilter('ZOMBIE', this)" title="Zombies">🧟</span>
 
                     <span class="btn-clear" onclick="setFilter('')">🧹 CLEAR</span>
                     <span class="btn-act" onclick="window.print()" title="Save PDF">🖨️</span>

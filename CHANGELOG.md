@@ -5,7 +5,7 @@ All notable changes to the **Sys-Inspector** project will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.90.16] - 2026-07-12
 
 ### Security
 
@@ -14,10 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dashboard XSS Prevention:** Agent-supplied fields (`hostname`, `ip_address`, `os_info`) and the URL agent id are now validated against an allowlist and escaped before being rendered in the Fleet and Inspector views. A compromised agent can no longer inject script into the analyst's browser.
 - **Setup Script Hardening:** `ensure_environment()` now resolves `setup_env.sh` only from fixed trusted locations (the packaged `tools/` directory and `/usr/bin/setup_env.sh`) instead of searching `$PATH`. This prevents execution of a malicious `setup_env.sh` when the agent runs as root.
 
+### Changed
+
+- **Toolbar active-state indicator:** The report toolbar now visually marks which sort (Process By) and which filter (Filters) are currently applied, using a reddish outline on the active badge. Sort and filter are independent, so both can be highlighted at once. The indicator uses `outline` (not `border`) to avoid any layout shift of neighboring icons. Clearing the filter keeps the active sort highlighted.
+- **Symmetric toolbar:** The Process By sort buttons are now rendered as bare icons, matching the Filters block (the previous gray button boxes were an incidental style difference, not a semantic distinction).
+
 ### Fixed
 
 - **Packaging Conflict:** Removed the divergent `[project]` table from `pyproject.toml` (stale version and an invalid `inspector:main` entry point) that could break the `sys-inspector` console script depending on the build backend. `setup.py` is now the single source of truth for package metadata.
 - **Log Level:** The application now honors `general.log_level` from `config.yaml`. Previously the level was hardcoded to `INFO` and the configured value was ignored.
+- **Leaf-node expander:** Leaf rows in the process tree emitted a literal `toggleBranch({node.pid})` because the string was not an f-string; the expander now uses the real PID.
+- **Duplicate EDR-WAIT badge:** The frozen-process (EDR-WAIT) badge was emitted twice (once by the tag loop, once by a dedicated block); the redundant block was removed so it renders once.
+- **WARN score tooltip:** The anomaly-score badge showed a placeholder ("Check Details"); it now lists the actual score reasons, noting when a higher score was bubbled up from a child process.
+- **False-positive NET ERR on kernel threads:** TCP drop/retransmit events fired in softirq context were attributed to the running kernel thread (`ksoftirqd`, `kthreadd`) instead of the socket owner, flagging kernel threads with NET ERR. Kernel threads (PID 2 and its subtree) are now excluded from NET ERR badges, scores and tree aggregation; the socket-owning processes remain flagged correctly.
 
 ## [0.90.00] - 2026-03-16
 

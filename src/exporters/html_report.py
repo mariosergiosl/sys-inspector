@@ -268,12 +268,24 @@ def _render_badges(node, tree=None):
 
     score_to_show = getattr(node, 'tree_max_score', node.anomaly_score)
     if score_to_show > 0:
-        tooltip = "Score Breakdown:\nCheck Details."
+        # [FIX] Surface the real score breakdown instead of a placeholder.
+        own_reasons = _get_anomaly_reasons(node)
+        if own_reasons:
+            breakdown = "\n- ".join(own_reasons)
+            if node.anomaly_score < score_to_show:
+                tooltip = f"Score Breakdown (this process):\n- {breakdown}\n(Higher score bubbled up from a child process.)"
+            else:
+                tooltip = f"Score Breakdown:\n- {breakdown}"
+        else:
+            tooltip = "Alert score aggregated from child processes (open the subtree for details)."
+        # Escape for safe use inside the title="" attribute.
+        tooltip = (tooltip.replace('&', '&amp;').replace('"', '&quot;')
+                   .replace('<', '&lt;').replace('>', '&gt;'))
         badges.append(f'<b class="tag t-warn" data-filter="WARN" title="{tooltip}">⚠️ {score_to_show}<span class="visually-hidden">WARN</span></b>')
 
-    if "EDR-WAIT" in getattr(node, 'context_tags', []):
-        icon, cls, tooltip = tag_map["EDR-WAIT"]
-        badges.append(f'<span class="tag {cls}" data-filter="EDR-WAIT" title="{tooltip}">{icon}<span class="visually-hidden">EDR-WAIT</span></span>')
+    # [FIX] EDR-WAIT is already emitted by the context_tags loop above (it is in
+    # tag_map), so the previous dedicated block here produced a duplicate badge.
+    # Removed to render it exactly once.
 
     return " ".join(badges)
 
@@ -543,7 +555,7 @@ def render_process_rows(tree, mounts):
             expander = f"<span id='{exp_id}' class='exp' onclick='event.stopPropagation();toggleBranch({node.pid})'>+</span>"
         else:
             expander = ""
-            if level > 0: expander = "|-- <span class='exp' onclick='event.stopPropagation();toggleBranch({node.pid})'>&bull;</span>"
+            if level > 0: expander = f"|-- <span class='exp' onclick='event.stopPropagation();toggleBranch({node.pid})'>&bull;</span>"
             elif level == 0: expander = "<span class='exp' onclick='event.stopPropagation()'>&bull;</span>"
 
         pid_style = "color:#569cd6"
