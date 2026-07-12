@@ -200,15 +200,11 @@ body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:
 .t-err  { background:var(--red); color:#000; }
 
 .btn-clear { cursor:pointer; padding:2px 6px; border-radius:3px; border:1px solid #555; font-size:10px; font-weight:bold; color:#aaa; background:#333; }
-.btn-act {
-    cursor:pointer; padding:3px 8px; border-radius:3px; border:1px solid #555;
-    font-size:14px; /* Icon size */
-    font-weight:bold; color:#ddd; background:#2a2a2a; transition:0.2s; margin-right:5px;
-    min-width: 24px; text-align: center; display: inline-block;
-}
-.btn-act:hover { background:#444; border-color:var(--acc); transform: scale(1.1); }
-/* [UI] Active sort indicator, same reddish outline as active filters (no layout shift) */
-.btn-act.sort-active { outline: 2px solid var(--red); outline-offset: 1px; border-color: var(--red); color:#fff; }
+/* [UI] Sort buttons styled as bare icons, symmetric with .filter-btn (no gray box) */
+.btn-act { cursor:pointer; opacity:0.7; transition:0.2s; font-size:16px; margin:0 4px; display:inline-block; }
+.btn-act:hover { opacity:1.0; transform: scale(1.2); }
+/* [UI] Active sort indicator, identical to the active filter outline (no layout shift) */
+.btn-act.sort-active { opacity:1.0; outline: 2px solid var(--red); outline-offset: 2px; border-radius: 3px; }
 #search { width:100%; padding:8px; background:#252526; border:1px solid #555; color:white; border-radius:3px; font-family:monospace; box-sizing:border-box; }
 
 /* --- TABLE STYLES --- */
