@@ -576,6 +576,25 @@ class ProcessTree:
     def aggregate_stats(self):
         """Bubble up stats AND BADGES using Recursive DFS."""
 
+        # [FIX item1] Identify kernel threads: PID 2 (kthreadd) and its whole
+        # subtree. TCP drop/retransmit events fired in softirq context get
+        # charged to the running kernel thread (ksoftirqd, kthreadd), not to the
+        # socket owner. Those are false-positive NET ERR alerts, so kernel
+        # threads are excluded from NET ERR (badge, score and tree aggregation).
+        # User processes always descend from PID 1, so this set is exact.
+        kthread_children = {}
+        for _pid, _n in self.nodes.items():
+            kthread_children.setdefault(int(_n.ppid), []).append(_pid)
+        self.kernel_pids = set()
+        if 2 in self.nodes:
+            _stack = [2]
+            while _stack:
+                _kp = _stack.pop()
+                if _kp in self.kernel_pids:
+                    continue
+                self.kernel_pids.add(_kp)
+                _stack.extend(kthread_children.get(_kp, []))
+
         for n in self.nodes.values():
             n.anomaly_score = 0
 
@@ -587,12 +606,17 @@ class ProcessTree:
             if "DELETED" in n.context_tags: n.anomaly_score += SCORE_DELETED
             if n.cmd.startswith(("/tmp", "/dev/shm")): n.anomaly_score += SCORE_MALWARE
 
-            if n.tcp_retrans > 0 or n.tcp_drops > 0:
+            if n.pid not in self.kernel_pids and (n.tcp_retrans > 0 or n.tcp_drops > 0):
                 n.tags_accumulated = set(n.context_tags)
                 n.tags_accumulated.add("NET ERR")
                 n.anomaly_score += SCORE_NET_ISSUE
             else:
                 n.tags_accumulated = set(n.context_tags)
+                # [FIX item1] Drop any pre-existing NET ERR tag on kernel threads
+                # (set upstream by the collector) so it does not linger in the
+                # filter or bubble up to kthreadd.
+                if n.pid in self.kernel_pids:
+                    n.tags_accumulated.discard("NET ERR")
 
             if n.state == 'Z' or "<defunct>" in n.cmd:
                 n.anomaly_score |= SCORE_ZOMBIE
@@ -636,8 +660,14 @@ class ProcessTree:
             node.tree_net_tx = node.net_tx_bytes
             node.tree_net_rx = node.net_rx_bytes
             node.tree_io_latency = node.io_latency_tot
-            node.tree_tcp_drops = node.tcp_drops
-            node.tree_tcp_retrans = node.tcp_retrans
+            # [FIX item1] Kernel threads do not own sockets; drop their softirq-
+            # attributed TCP counters so they neither alert nor bubble up.
+            if node.pid in self.kernel_pids:
+                node.tree_tcp_drops = 0
+                node.tree_tcp_retrans = 0
+            else:
+                node.tree_tcp_drops = node.tcp_drops
+                node.tree_tcp_retrans = node.tcp_retrans
 
             if pid == 1 and hasattr(self, 'immutable_alert') and self.immutable_alert:
                 for alert in self.immutable_alert:

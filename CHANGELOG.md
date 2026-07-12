@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Leaf-node expander:** Leaf rows in the process tree emitted a literal `toggleBranch({node.pid})` because the string was not an f-string; the expander now uses the real PID.
 - **Duplicate EDR-WAIT badge:** The frozen-process (EDR-WAIT) badge was emitted twice (once by the tag loop, once by a dedicated block); the redundant block was removed so it renders once.
 - **WARN score tooltip:** The anomaly-score badge showed a placeholder ("Check Details"); it now lists the actual score reasons, noting when a higher score was bubbled up from a child process.
+- **False-positive NET ERR on kernel threads:** TCP drop/retransmit events fired in softirq context were attributed to the running kernel thread (`ksoftirqd`, `kthreadd`) instead of the socket owner, flagging kernel threads with NET ERR. Kernel threads (PID 2 and its subtree) are now excluded from NET ERR badges, scores and tree aggregation; the socket-owning processes remain flagged correctly.
 
 ## [0.90.00] - 2026-03-16
 
