@@ -10,7 +10,7 @@
 #              - MAINTAINED: Full logic from v0.61/v0.79.00.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.15
+# VERSION: v0.90.16
 # ==============================================================================
 
 import os

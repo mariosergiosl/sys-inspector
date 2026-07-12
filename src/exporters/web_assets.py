@@ -11,7 +11,7 @@
 #              - MAINTAINED: All features, logic, and documentation from v0.61.00.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.15
+# VERSION: v0.90.16
 # ==============================================================================
 
 # ------------------------------------------------------------------------------

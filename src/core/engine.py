@@ -12,7 +12,7 @@
 #              - COMPAT: Fixed load_probe_source() call.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.15
+# VERSION: v0.90.16
 # ==============================================================================
 
 import os

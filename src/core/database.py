@@ -13,7 +13,7 @@
 #   - [FIX v0.90.02] Moved PRAGMA WAL to init only to reduce locks.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.15
+# VERSION: v0.90.16
 # ==============================================================================
 
 import sqlite3

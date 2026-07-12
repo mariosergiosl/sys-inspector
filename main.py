@@ -9,7 +9,7 @@
 #              Includes auto-setup for critical dependencies.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.15
+# VERSION: v0.90.16
 # ==============================================================================
 
 import sys

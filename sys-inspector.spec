@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           sys-inspector
-Version:        0.90.15
+Version:        0.90.16
 Release:        1%{?dist}
 Summary:        eBPF-based System Inspector and Forensic Tool (Multi-Agent/Web)
 
@@ -108,5 +108,9 @@ fi
 %dir %attr(0750,root,root) /var/log/sys-inspector/reports
 
 %changelog
+* Sun Jul 12 2026 Mario Luz <mario.mssl@gmail.com> - 0.90.16
+- Security: optional dashboard HTTP Basic Auth and HTTPS (self-signed auto-generation), XSS prevention in the Fleet/Inspector views, and setup-script PATH hardening.
+- Fixed: pyproject/setup packaging conflict, honor general.log_level, leaf-node expander literal, duplicate EDR-WAIT badge, WARN score tooltip, and false-positive NET ERR on kernel threads.
+- Changed: toolbar active-state indicator and symmetric Process By / Filters icons.
 * Wed Mar 18 2026 Mario Luz <mario.mssl@gmail.com> - 0.90.14
 - Release v0.90.14: FHS compliant paths, systemd integration, and PyPI and OBS sync.
