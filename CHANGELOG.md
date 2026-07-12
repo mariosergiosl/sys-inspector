@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Toolbar active-state indicator:** The report toolbar now visually marks which sort (Process By) and which filter (Filters) are currently applied, using a reddish outline on the active badge. Sort and filter are independent, so both can be highlighted at once. The indicator uses `outline` (not `border`) to avoid any layout shift of neighboring icons. Clearing the filter keeps the active sort highlighted.
+- **Symmetric toolbar:** The Process By sort buttons are now rendered as bare icons, matching the Filters block (the previous gray button boxes were an incidental style difference, not a semantic distinction).
+
+### Fixed
+
+- **Leaf-node expander:** Leaf rows in the process tree emitted a literal `toggleBranch({node.pid})` because the string was not an f-string; the expander now uses the real PID.
+- **Duplicate EDR-WAIT badge:** The frozen-process (EDR-WAIT) badge was emitted twice (once by the tag loop, once by a dedicated block); the redundant block was removed so it renders once.
+- **WARN score tooltip:** The anomaly-score badge showed a placeholder ("Check Details"); it now lists the actual score reasons, noting when a higher score was bubbled up from a child process.
 
 ## [0.90.00] - 2026-03-16
 
