@@ -46,6 +46,14 @@ network:
     username: "admin"
     password_hash: ""
 
+  # [v0.90.16 NEW] Serve the dashboard over HTTPS. Disabled by default (HTTP).
+  # When enabled, if the cert/key below are missing, a self-signed pair is
+  # generated automatically on first start (browsers will warn about the
+  # unknown issuer, which is expected). Basic Auth works over HTTP and HTTPS.
+  tls_enabled: false
+  ssl_cert: "/etc/sys-inspector/server_cert.pem"
+  ssl_key: "/etc/sys-inspector/server_key.pem"
+
   # [LEGACY v0.60] Used by old Daemon to push data directly (Deprecated in v0.80)
   # target_url: "http://127.0.0.1:8080"
 

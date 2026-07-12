@@ -225,6 +225,14 @@ class WebController:
         self.host = config['network'].get('bind_address', '0.0.0.0')
         self.port = config['network'].get('bind_port', 8080)
 
+        # [SEC] Optional HTTPS. Disabled by default (plain HTTP, no regression).
+        net_cfg = config['network']
+        self.tls_enabled = bool(net_cfg.get('tls_enabled', False))
+        # Cert/key paths default to the 'server' section for consistency.
+        srv_cfg = config.get('server', {}) or {}
+        self.ssl_cert = net_cfg.get('ssl_cert') or srv_cfg.get('ssl_cert', '/etc/sys-inspector/server_cert.pem')
+        self.ssl_key = net_cfg.get('ssl_key') or srv_cfg.get('ssl_key', '/etc/sys-inspector/server_key.pem')
+
     def _before_request(self):
         """Flask hook: enforce Basic Auth before serving any route.
 
@@ -376,11 +384,35 @@ class WebController:
                 return render_process_rows(tree, mounts)
             except: return make_response("", 500)
 
+    def _build_ssl_context(self):
+        """Return an (cert, key) tuple for HTTPS, or None for plain HTTP.
+
+        When TLS is enabled and the configured cert/key are missing, a
+        self-signed pair is generated automatically. If generation fails
+        (e.g. non-writable path), logs the error and falls back to HTTP so the
+        dashboard still comes up rather than crashing.
+        """
+        if not self.tls_enabled:
+            return None
+        try:
+            from src.core.tls import ensure_self_signed_cert
+            hostname = self.config.get('general', {}).get('hostname') or 'sys-inspector'
+            generated = ensure_self_signed_cert(self.ssl_cert, self.ssl_key, common_name=hostname)
+            if generated:
+                self.logger.info(f"[WEB] Generated self-signed certificate at {self.ssl_cert}")
+            return (self.ssl_cert, self.ssl_key)
+        except Exception as e:
+            self.logger.error(f"[WEB] TLS setup failed ({e}); falling back to HTTP.")
+            return None
+
     def run(self):
-        self.logger.info(f"[WEB] Fleet Server starting at http://{self.host}:{self.port}")
+        ssl_context = self._build_ssl_context()
+        scheme = "https" if ssl_context else "http"
+        self.logger.info(f"[WEB] Fleet Server starting at {scheme}://{self.host}:{self.port}")
         log = logging.getLogger('werkzeug')
         log.setLevel(logging.ERROR)
         try:
-            self.app.run(host=self.host, port=self.port, debug=False, use_reloader=False, threaded=True)
+            self.app.run(host=self.host, port=self.port, debug=False,
+                         use_reloader=False, threaded=True, ssl_context=ssl_context)
         except Exception as e:
             self.logger.critical(f"[WEB] Server crashed: {e}")
