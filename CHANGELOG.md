@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Dashboard Authentication (opt-in):** Added optional HTTP Basic Auth to the Fleet/Inspector dashboard, working over both HTTP and HTTPS. Disabled by default (`network.auth.enabled: false`) so existing deployments are unaffected. Credentials are stored as a PBKDF2 hash in `config.yaml`; generate it with `tools/gen_password.py` (run it on the host that serves the dashboard). When enabled without a hash, the server fails closed and rejects all requests.
 - **Dashboard XSS Prevention:** Agent-supplied fields (`hostname`, `ip_address`, `os_info`) and the URL agent id are now validated against an allowlist and escaped before being rendered in the Fleet and Inspector views. A compromised agent can no longer inject script into the analyst's browser.
 - **Setup Script Hardening:** `ensure_environment()` now resolves `setup_env.sh` only from fixed trusted locations (the packaged `tools/` directory and `/usr/bin/setup_env.sh`) instead of searching `$PATH`. This prevents execution of a malicious `setup_env.sh` when the agent runs as root.
 

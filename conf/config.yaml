@@ -37,6 +37,15 @@ network:
   # Port for the Web Interface (Live/Server mode)
   bind_port: 8080
 
+  # [v0.90.16 NEW] Dashboard authentication (HTTP Basic Auth).
+  # Works over both HTTP and HTTPS. Disabled by default to preserve the current
+  # open behavior; set enabled: true and provide a password_hash to require login.
+  # Generate the hash with: python3 tools/gen_password.py
+  auth:
+    enabled: false
+    username: "admin"
+    password_hash: ""
+
   # [LEGACY v0.60] Used by old Daemon to push data directly (Deprecated in v0.80)
   # target_url: "http://127.0.0.1:8080"
 

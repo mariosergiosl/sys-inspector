@@ -23,9 +23,11 @@ import time
 from contextlib import closing
 # [FIX] Added render_template_string to imports
 # from flask import Flask, jsonify, make_response, redirect, url_for, render_template_string
-from flask import Flask, jsonify, make_response, render_template_string
+from flask import Flask, jsonify, make_response, render_template_string, request, Response
 # [SEC] markupsafe ships with Flask; used to escape untrusted data in HTML
 from markupsafe import escape
+# [SEC] werkzeug ships with Flask; used to verify the hashed dashboard password
+from werkzeug.security import check_password_hash
 
 # [SEC] Agent IDs are UUIDs or the literal 'local'. Anything else is rejected
 # before being interpolated into HTML/JS responses (XSS prevention).
@@ -202,11 +204,43 @@ class WebController:
             self.logger.critical(f"Invalid Private Key: {e}")
             raise
 
+        # [SEC] Dashboard authentication (HTTP Basic Auth). Disabled by default
+        # so existing deployments keep working unchanged (no regression).
+        auth_cfg = config['network'].get('auth', {}) or {}
+        self.auth_enabled = bool(auth_cfg.get('enabled', False))
+        self.auth_user = auth_cfg.get('username', 'admin')
+        self.auth_hash = auth_cfg.get('password_hash', '') or ''
+        if self.auth_enabled and not self.auth_hash:
+            # Fail closed: enabled without a hash means nobody can authenticate.
+            self.logger.warning(
+                "[AUTH] enabled but no password_hash set; all requests will be "
+                "rejected. Run tools/gen_password.py and set network.auth.password_hash."
+            )
+
         # Setup Flask
         self.app = Flask(__name__)
         self._register_routes()
+        # [SEC] Register the auth gate AFTER routes; it short-circuits any request.
+        self.app.before_request(self._before_request)
         self.host = config['network'].get('bind_address', '0.0.0.0')
         self.port = config['network'].get('bind_port', 8080)
+
+    def _before_request(self):
+        """Flask hook: enforce Basic Auth before serving any route.
+
+        Returns None when the request is authorized (Flask proceeds to the
+        route), or a 401 Response otherwise. When auth is disabled this always
+        returns None, preserving the original open behavior.
+        """
+        if not self.auth_enabled:
+            return None
+        auth = request.authorization
+        if (auth and self.auth_hash and auth.username == self.auth_user
+                and check_password_hash(self.auth_hash, auth.password or "")):
+            return None
+        resp = Response("Authentication required.", 401)
+        resp.headers['WWW-Authenticate'] = 'Basic realm="Sys-Inspector"'
+        return resp
 
     def _get_snapshot_data(self, uuid):
         """Fetch and adapt the latest snapshot for a specific UUID."""
