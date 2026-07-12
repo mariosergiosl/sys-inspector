@@ -168,7 +168,7 @@ Before committing, check if the code is clean:
 To validate if the inspector detects malwares and improper use:
 
 ```bash
-    ./scripts/chaos_maker.sh
+    ./tools/chaos_maker.sh
 ```
 
     # To kill the malicious process (which ignores Ctrl+C):

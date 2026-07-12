@@ -119,7 +119,7 @@ The application will automatically detect, resize (max-height: 40px), encode it 
 
 ## Chaos Engineering (Testing Tool)
 
-Included in `scripts/chaos_maker.sh` is a stress testing tool designed to validate the inspector's detection capabilities.
+Included in `tools/chaos_maker.sh` is a stress testing tool designed to validate the inspector's detection capabilities.
 
 **⚠️ WARNING: DO NOT RUN ON PRODUCTION SYSTEMS.**
 This script uses `tc` (Traffic Control) to purposefully degrade network quality (packet loss/latency) and consumes CPU/Disk resources.
@@ -134,7 +134,7 @@ This script uses `tc` (Traffic Control) to purposefully degrade network quality 
 ### How to Run
 
 ```bash
-    sudo ./scripts/chaos_maker.sh
+    sudo ./tools/chaos_maker.sh
 ```
 
 To Stop: Press Ctrl+C. The script traps the signal and automatically cleans up the network rules (tc qdisc del) and temporary files.

@@ -120,7 +120,7 @@ def main():
         print(f"[CRITICAL] Failed to import modules after setup: {e}")
         # Hint for Flask which is required by WebController
         if "flask" in str(e).lower():
-            print("HINT: 'flask' is missing. Run 'pip install flask' or './scripts/setup_env.sh --install'")
+            print("HINT: 'flask' is missing. Run 'pip install flask' or './tools/setup_env.sh --install'")
         sys.exit(1)
 
     # 3. Argument Parsing
