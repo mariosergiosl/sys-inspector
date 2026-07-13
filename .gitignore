@@ -45,3 +45,8 @@ data/.agent_id
 
 # Generated HTML Reports
 report/*.html
+
+# Private / internal strategy documents (kept local, not published)
+ROADMAP-internal.md
+*-internal.md
+docs/internal/
