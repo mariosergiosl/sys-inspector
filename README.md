@@ -1,5 +1,7 @@
 # sys-inspector - eBPF-based System Inspector and Audit Tool
 
+**Language / Idioma:** English | [Português](README.pt-BR.md)
+
 [![OBS Build Status](https://build.opensuse.org/projects/home:mariosergiosl:sys-inspector/packages/sys-inspector/badge.svg)](https://build.opensuse.org/package/show/home:mariosergiosl:sys-inspector/sys-inspector)
 [![PyPI version](https://img.shields.io/pypi/v/sys-inspector.svg)](https://pypi.org/project/sys-inspector/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
@@ -18,7 +20,7 @@
 
 Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks directly into the Linux Kernel to capture events (process execution, file I/O, network connections) in real-time.
 
-## Features (v0.90.00)
+## Features (v0.90.16)
 
 * **Fleet View Dashboard:** Monitor multiple infrastructure nodes from a single centralized web interface.
 * **Forensic Time Machine:** Pause live execution and travel back in time to inspect historical snapshots stored in SQLite.
@@ -34,6 +36,11 @@ Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks dir
   * Generates self-contained, interactive **HTML Dashboards**.
   * **Custom Logo Support:** Embeds your organization's logo automatically.
   * **Visual Badges:** Instant identification of `[SSH]`, `[SUDO]`, `[UNSAFE]`, `[NET ERR]`.
+  * **Active-state Toolbar:** The report toolbar highlights the sort and filter currently applied.
+* **Dashboard Security (optional):**
+  * **HTTP Basic Authentication:** PBKDF2-hashed credentials, working over HTTP and HTTPS.
+  * **HTTPS with auto self-signed certificate:** Zero manual PKI; operator-provided certificates are honored.
+  * Both disabled by default (see the "Dashboard Security" section below).
 
 ## Requirements
 
@@ -117,6 +124,45 @@ To include your company logo in the report header, simply place a PNG file at th
 
 The application will automatically detect, resize (max-height: 40px), encode it to Base64, and embed it in the HTML.
 
+## Dashboard Security (Authentication & HTTPS)
+
+Both are **optional and disabled by default**, so existing deployments are unaffected. Configure them in `conf/config.yaml` (or `/etc/sys-inspector/config.yaml`) under the `network` section.
+
+### HTTP Basic Authentication
+
+1. Generate a password hash (run it on the host that serves the dashboard, so the hash matches its `werkzeug` version):
+
+```bash
+    python3 tools/gen_password.py
+```
+
+2. Paste the result into `config.yaml` and enable it:
+
+```yaml
+    network:
+      auth:
+        enabled: true
+        username: "admin"
+        password_hash: "pbkdf2:sha256:..."
+```
+
+Authentication works over both HTTP and HTTPS. If enabled without a hash, the server fails closed and rejects all requests.
+
+### HTTPS (TLS)
+
+Enable TLS in `config.yaml`. If the certificate/key below are missing, a self-signed pair is generated automatically on first start (browsers will warn about the unknown issuer, which is expected):
+
+```yaml
+    network:
+      tls_enabled: true
+      ssl_cert: "/etc/sys-inspector/server_cert.pem"
+      ssl_key: "/etc/sys-inspector/server_key.pem"
+```
+
+To use your own PKI, place your certificate and key at the configured paths and they will be used instead of generating one.
+
+See [docs/en/dashboard_security.md](docs/en/dashboard_security.md) for details.
+
 ## Chaos Engineering (Testing Tool)
 
 Included in `tools/chaos_maker.sh` is a stress testing tool designed to validate the inspector's detection capabilities.
@@ -144,9 +190,9 @@ To Stop: Press Ctrl+C. The script traps the signal and automatically cleans up t
 ```bash
     ├── conf/                  # Configuration and Cryptographic Keys
     ├── data/                  # SQLite Persistence and Agent IDs
-    ├── doc/                   # Documentation and Requirements
+    ├── docs/                  # Narrative documentation (docs/en, docs/pt-BR)
     ├── report/                # Standalone HTML Reports Output
-    ├── scripts/               # Chaos Engineering & Setup Scripts
+    ├── scripts/               # Development helpers (formatting, venv, test runner)
     ├── src/
     │   ├── collectors/        # eBPF Engine and Process Tree Builders
     │   ├── controllers/       # Execution Modes (Daemon, Web, Snapshot)
@@ -155,6 +201,6 @@ To Stop: Press Ctrl+C. The script traps the signal and automatically cleans up t
     │   ├── probes/            # C eBPF source code
     │   ├── storage/           # Storage interface and handlers
     │   └── utils/             # Configuration loaders
-    ├── tools/                 # Utility scripts (e.g., Key Generation)
+    ├── tools/                 # Operational tools (chaos_maker, setup_env, key/password generation)
     └── main.py                # Unified Entry Point
 ```

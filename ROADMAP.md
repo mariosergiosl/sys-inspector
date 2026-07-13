@@ -46,3 +46,4 @@ This document outlines the development trajectory of **Sys-Inspector**.
   - Attach to NVIDIA driver tracepoints to detect unauthorized crypto-mining.
 - [ ] **Role-Based Access Control (RBAC)**
   - Add authentication and authorization to the Fleet View Dashboard.
+  - v0.90.16: optional HTTP Basic Auth and HTTPS landed as a first step (single credential; full role-based authorization is still pending).

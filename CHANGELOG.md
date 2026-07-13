@@ -5,6 +5,14 @@ All notable changes to the **Sys-Inspector** project will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Documentation
+
+- Documented the new opt-in dashboard authentication and HTTPS in the README and in a dedicated `docs/en/dashboard_security.md`.
+- Updated the README feature list to v0.90.16 and corrected the project structure (`scripts/` vs `tools/`).
+- Adopted the i18n layout: English `README.md` with a language selector, Portuguese `README.pt-BR.md`, and narrative docs split into `docs/en/` and `docs/pt-BR/`.
+
 ## [0.90.16] - 2026-07-12
 
 ### Security
