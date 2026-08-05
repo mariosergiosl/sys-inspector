@@ -19,14 +19,12 @@ import time
 import logging
 # import threading
 # import json
-import os
-import uuid
-import socket
 
 # Imports from Core
 from src.core.engine import SysInspectorEngine
 # [FIXED] Importing the function directly, not a non-existent class
 from src.collectors.system_inventory import collect_full_inventory
+from src.collectors.manager import summarize_metrics
 # from src.core.database import DatabaseManager
 from src.core.crypto import load_public_key, encrypt_data
 
@@ -46,8 +44,9 @@ class DaemonController:
         self.shutdown_event = shutdown_event
         self.logger = logging.getLogger("DaemonCtrl")
 
-        # Identity
-        self.agent_uuid = self._get_uuid()
+        # Identity (unificada: o mesmo agent_id do DatabaseManager, usado por
+        # todos os modos, persistido ao lado do banco).
+        self.agent_uuid = db_manager.agent_id
 
         # Load Security Keys
         try:
@@ -125,64 +124,28 @@ class DaemonController:
             return
 
         # C. Retrieve Data
-
-        # 1. Dynamic Data (Process Tree)
-        # Force aggregation in the process tree to finalize metrics
+        # Finaliza a agregacao da arvore (tags, scores).
         engine.tree.aggregate_stats()
-        dynamic_data = {
-            "process_tree": engine.tree.to_json(),
-            "global_metrics": {
-                "cpu_load": 0,
-                "threat_score": 0
-            }
-        }
 
-        # Calculate simplistic score from tree nodes
-        total_score = 0
-        pids_count = 0
-        for pid, node in engine.tree.nodes.items():
-            pids_count += 1
-            if hasattr(node, 'anomaly_score'):
-                total_score += node.anomaly_score
+        # Modelo unico de captura: mesmo shape do snapshot e do live, com os
+        # processos no topo em 'processes', para o renderizador reidratar sem
+        # precisar conhecer formatos diferentes por modo.
+        full_data = collect_full_inventory()
+        full_data['processes'] = engine.tree.to_json()
+        full_data['capture_duration'] = self.capture_duration
+        full_data['mode'] = 'daemon'
+        full_data['agent_uuid'] = self.agent_uuid
+        full_data['cycle'] = cycle_id
 
-        dynamic_data['global_metrics']['threat_score'] = total_score
-
-        # 2. Static Data
-        # [FIXED] Calling the function directly
-        static_data = collect_full_inventory()
-
-        # Extract hostname from existing OS info
-        hostname = static_data.get('os', {}).get('hostname', socket.gethostname())
-
-        # D. Prepare Bundle
-        timestamp = time.time()
-        full_snapshot = {
-            "meta": {
-                "uuid": self.agent_uuid,
-                "timestamp": timestamp,
-                "type": "daemon_periodic",
-                "cycle": cycle_id,
-                "duration": self.capture_duration,
-                "hostname": hostname
-            },
-            "static": static_data,
-            "dynamic": dynamic_data
-        }
-
-        # Metrics for Hot Columns (SQL Searchable without decryption)
-        metrics = {
-            'cpu': 0,
-            'mem': static_data.get('memory', {}).get('used', 0),
-            'pids': pids_count,
-            'score': total_score
-        }
+        # D. Metricas quentes (mesmo helper compartilhado do snapshot).
+        metrics = summarize_metrics(full_data['processes'])
 
         # E. Encrypt
         self.logger.debug(f"[CYCLE #{cycle_id}] Encrypting payload...")
-        encrypted_bundle = encrypt_data(full_snapshot, self.pub_key)
+        encrypted_bundle = encrypt_data(full_data, self.pub_key)
 
-        # F. Persist (Using v0.70 Database Manager)
-        # Updates agent status to 'ONLINE' and inserts snapshot
+        # F. Persist (DatabaseManager): atualiza status do agente para ONLINE e
+        # insere o snapshot com as colunas quentes.
         success = self.db.insert_snapshot(
             encrypted_bundle,
             agent_uuid=self.agent_uuid,
@@ -193,26 +156,3 @@ class DaemonController:
             self.logger.info(f"[CYCLE #{cycle_id}] Snapshot persisted successfully (PIDs: {metrics['pids']}).")
         else:
             self.logger.error(f"[CYCLE #{cycle_id}] Database Insert Failed.")
-
-    def _get_uuid(self):
-        """
-        Retrieves or generates a unique Agent ID.
-        Persists it to .agent_id file to maintain identity across restarts.
-        """
-        id_file = ".agent_id"
-        if os.path.exists(id_file):
-            try:
-                with open(id_file, 'r') as f:
-                    return f.read().strip()
-            except:
-                pass
-
-        # Generate new if not found
-        new_id = str(uuid.uuid4())
-        try:
-            with open(id_file, 'w') as f:
-                f.write(new_id)
-        except Exception as e:
-            self.logger.warning(f"Could not save .agent_id: {e}")
-
-        return new_id
