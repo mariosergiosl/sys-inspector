@@ -29,6 +29,7 @@ from socketserver import ThreadingMixIn
 # Internal Modules
 from src.exporters.html_report import generate_report
 from src.collectors.process_tree import ProcessTree, ProcessNode
+from src.core.crypto import load_private_key, decrypt_data
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -85,8 +86,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             snaps = controller.db.get_history(0, time.time(), agent_filter=agent_uuid)
 
             if snaps:
-                # Load Details
-                data = controller.db.get_snapshot_details(snaps[0]['id'])
+                # get_snapshot_details devolve o bundle cifrado; descriptografa.
+                data = controller.decrypt(controller.db.get_snapshot_details(snaps[0]['id']))
                 if data:
                     tree = self._rehydrate_tree(data)
 
@@ -122,8 +123,13 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 post_body = self.rfile.read(content_len)
                 data = json.loads(post_body)
 
-                # Save to Server DB
-                success = controller.db.save_snapshot(data)
+                # Ingestao (minima): o agente envia o bundle cifrado, seu
+                # agent_uuid e as metricas quentes. O protocolo completo de
+                # ingestao distribuida (fila, ack, lote) e da Fase 2 (W6).
+                agent_uuid = data.get('agent_uuid', 'remote') if isinstance(data, dict) else 'remote'
+                bundle = data.get('bundle', data) if isinstance(data, dict) else data
+                metrics = data.get('metrics', {}) if isinstance(data, dict) else {}
+                success = controller.db.insert_snapshot(bundle, agent_uuid=agent_uuid, metrics=metrics)
 
                 if success:
                     controller.logger.info(f"[API] Received Snapshot from {data.get('agent_uuid', 'unknown')}")
@@ -141,32 +147,26 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
     def _serve_dashboard(self, db):
         """Renders the Server Manager Dashboard HTML."""
-        with db.conn:
-            cur = db.conn.cursor()
-            # Get list of unique agents and their last seen time
-            cur.execute("""
-                SELECT agent_uuid,
-                       json_extract(data, '$.os.hostname') as hostname,
-                       json_extract(data, '$.net.interfaces[0].ip') as ip,
-                       MAX(timestamp) as last_seen
-                FROM snapshots
-                GROUP BY agent_uuid
-                ORDER BY last_seen DESC
-            """)
-            agents = cur.fetchall()
+        # Envia a status line e os headers antes do corpo. Sem isto a resposta
+        # sai sem cabecalho HTTP (o cliente ve conexao malformada / HTTP 000).
+        self._set_headers()
+        # Usa a tabela 'agents' (colunas em claro) via get_agents, em vez de
+        # extrair campos com json_extract do blob, que agora esta cifrado.
+        agents = db.get_agents()
 
         rows = ""
         for a in agents:
-            uuid, host, ip, seen = a
-            if not host: host = "Unknown Host"
-            if not ip: ip = "Unknown IP"
+            uuid = a.get('uuid', '')
+            host = a.get('hostname') or "Unknown Host"
+            ip = a.get('ip_address') or "Unknown IP"
+            seen = a.get('last_seen', '')
 
-            # Check Online Status (Assume 60s timeout)
+            # Status a partir da coluna 'status' e do last_seen (timeout 90s).
             try:
                 last_ts = datetime.datetime.strptime(seen, "%Y-%m-%d %H:%M:%S")
                 is_online = (datetime.datetime.now() - last_ts).total_seconds() < 90
-            except:
-                is_online = False
+            except Exception:
+                is_online = str(a.get('status', '')).upper() == 'ONLINE'
 
             status_style = "color:#51cf66" if is_online else "color:#ff6b6b"
             status_text = "ONLINE" if is_online else "OFFLINE"
@@ -222,6 +222,30 @@ class ServerController:
         self.db = db_handler
         self.shutdown_event = shutdown_event
         self.logger = logging.getLogger("ServerCtrl")
+
+        # Modelo unico cifrado: para renderizar o snapshot de um agente, o
+        # server descriptografa com a chave privada local, se presente. Num
+        # cenario zero-knowledge a chave pode nao existir aqui (o analista
+        # descriptografa noutro ponto); nesse caso o view avisa.
+        self.priv_key = None
+        priv_path = config.get('security', {}).get('private_key_path', 'conf/private_key.pem')
+        if os.path.exists(priv_path):
+            try:
+                self.priv_key = load_private_key(priv_path)
+            except Exception as e:
+                self.logger.error(f"[SECURITY] Failed to load Private Key: {e}")
+        else:
+            self.logger.warning("[SECURITY] Private Key not found; agent snapshots cannot be rendered here.")
+
+    def decrypt(self, bundle):
+        """Descriptografa um bundle cifrado; retorna dict em claro ou None."""
+        if not self.priv_key or not bundle:
+            return None
+        try:
+            return decrypt_data(bundle, self.priv_key)
+        except Exception as e:
+            self.logger.error(f"[SECURITY] Decryption failed: {e}")
+            return None
 
     def run(self):
         """Starts the Server HTTP Daemon."""

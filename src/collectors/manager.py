@@ -13,10 +13,53 @@
 # VERSION: v0.90.16
 # ==============================================================================
 
+import os
 import time
 import logging
 from src.core.engine import SysInspectorEngine
 from src.collectors.system_inventory import collect_full_inventory
+
+
+def summarize_metrics(processes):
+    """
+    Resume as metricas quentes de uma captura a partir da arvore ja agregada
+    (aggregate_stats roda em engine.stop). Alimenta as colunas estruturadas da
+    tabela 'snapshots' (cpu_avg, mem_used_mb, pids_count, alert_score), usadas
+    para timeline e ordenacao por alerta sem descriptografar o blob. Helper
+    compartilhado por snapshot e daemon para manter um unico modelo.
+
+    PARAMETER processes: dict pid -> dados do processo (data['processes']).
+    Retorna dict com chaves cpu, mem, pids, score.
+    """
+    nodes = list(processes.values()) if processes else []
+
+    pids = len(nodes)
+
+    # CPU: utilizacao media por core no periodo. cpu_usage_pct ja vem calculado
+    # na janela de captura; somamos por processo e dividimos pelo numero de
+    # cores para obter um percentual medio de ocupacao.
+    total_cpu = sum(float(p.get("cpu_usage_pct", 0.0) or 0.0) for p in nodes)
+    ncpu = os.cpu_count() or 1
+    cpu_avg = round(total_cpu / ncpu, 1)
+
+    # Score de alerta: pico de anomaly_score na arvore (processo mais suspeito).
+    score = max((int(p.get("anomaly_score", 0) or 0) for p in nodes), default=0)
+
+    # Memoria usada (MB) via /proc/meminfo: MemTotal - MemAvailable.
+    mem_used = 0
+    try:
+        info = {}
+        with open("/proc/meminfo", "r") as f:
+            for line in f:
+                parts = line.split(":")
+                if len(parts) == 2:
+                    info[parts[0].strip()] = int(parts[1].strip().split()[0])
+        if "MemTotal" in info and "MemAvailable" in info:
+            mem_used = int((info["MemTotal"] - info["MemAvailable"]) / 1024)
+    except Exception:
+        mem_used = 0
+
+    return {"cpu": cpu_avg, "mem": mem_used, "pids": pids, "score": score}
 
 
 class CollectionManager:
