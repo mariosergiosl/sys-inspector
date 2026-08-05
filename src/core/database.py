@@ -210,6 +210,43 @@ class DatabaseManager:
             self.logger.error(f"Get Pending Failed: {e}")
             return []
 
+    def get_history(self, start_ts, end_ts, agent_filter=None):
+        """
+        Retorna a lista leve de snapshots (apenas colunas quentes) dentro da
+        janela de tempo, ordenada do mais recente para o mais antigo.
+
+        Espelha o contrato de storage/db_handler.DatabaseHandler.get_history:
+        cada item e um dict com id, timestamp, agent_uuid e as metricas quentes.
+        Os controllers live/server dependem do acesso por chave (ex.: item['id']).
+
+        PARAMETER start_ts: limite inferior do timestamp (epoch, inclusivo).
+        PARAMETER end_ts: limite superior do timestamp (epoch, inclusivo).
+        PARAMETER agent_filter: se informado, restringe a um agent_uuid.
+        """
+        cols = ['id', 'timestamp', 'agent_uuid', 'cpu_avg',
+                'mem_used_mb', 'alert_score', 'is_alert']
+        sql = """
+            SELECT id, timestamp, agent_uuid, cpu_avg,
+                   mem_used_mb, alert_score, is_alert
+            FROM snapshots
+            WHERE timestamp BETWEEN ? AND ?
+        """
+        params = [start_ts, end_ts]
+
+        if agent_filter:
+            sql += " AND agent_uuid = ?"
+            params.append(agent_filter)
+
+        sql += " ORDER BY timestamp DESC"
+
+        try:
+            with closing(self._get_conn()) as conn:
+                cursor = conn.execute(sql, params)
+                return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        except Exception as e:
+            self.logger.error(f"Get History Failed: {e}")
+            return []
+
     def get_snapshot_details(self, snap_id):
         try:
             with closing(self._get_conn()) as conn:
