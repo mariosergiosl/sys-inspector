@@ -23,7 +23,13 @@ jobs:
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pylint flake8
+          pip install pylint flake8 pytest cryptography
+
+      - name: Run Tests (pytest)
+        run: |
+          # Torna 'src' importavel (conftest.py tambem cuida disso).
+          export PYTHONPATH=$PYTHONPATH:$(pwd):/usr/lib/python3/dist-packages
+          pytest
 
       - name: Run Flake8
         run: |
