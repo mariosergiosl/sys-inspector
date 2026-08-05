@@ -93,6 +93,47 @@ class SnapshotController:
 
         return tree
 
+    def _summarize_metrics(self, processes):
+        """
+        Resume as metricas quentes do snapshot a partir da arvore ja agregada
+        (aggregate_stats roda em engine.stop, antes daqui). Alimenta as colunas
+        estruturadas da tabela 'snapshots' (cpu_avg, mem_used_mb, pids_count,
+        alert_score), usadas para timeline e ordenacao por alerta sem precisar
+        descriptografar o blob. Antes essas colunas ficavam sempre em 0 porque
+        insert_snapshot era chamado sem metrics.
+
+        PARAMETER processes: dict pid -> dados do processo (full_data['processes']).
+        """
+        nodes = list(processes.values()) if processes else []
+
+        pids = len(nodes)
+
+        # CPU: utilizacao media por core no periodo. cpu_usage_pct ja vem
+        # calculado na janela de captura; somamos por processo e dividimos pelo
+        # numero de cores para obter um percentual medio de ocupacao.
+        total_cpu = sum(float(p.get("cpu_usage_pct", 0.0) or 0.0) for p in nodes)
+        ncpu = os.cpu_count() or 1
+        cpu_avg = round(total_cpu / ncpu, 1)
+
+        # Score de alerta: pico de anomaly_score na arvore (processo mais suspeito).
+        score = max((int(p.get("anomaly_score", 0) or 0) for p in nodes), default=0)
+
+        # Memoria usada (MB) via /proc/meminfo: MemTotal - MemAvailable.
+        mem_used = 0
+        try:
+            info = {}
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        info[parts[0].strip()] = int(parts[1].strip().split()[0])
+            if "MemTotal" in info and "MemAvailable" in info:
+                mem_used = int((info["MemTotal"] - info["MemAvailable"]) / 1024)
+        except Exception:
+            mem_used = 0
+
+        return {"cpu": cpu_avg, "mem": mem_used, "pids": pids, "score": score}
+
     def run(self, duration=30):
         """
         Executes the Secure Capture Workflow.
@@ -116,8 +157,10 @@ class SnapshotController:
             encrypted_bundle = encrypt_data(full_data, pub_key)
 
             # 3. PERSISTENCE (Store-and-Forward)
-            # Save the BLOB to SQLite
-            row_id = self.db.insert_snapshot(encrypted_bundle)
+            # Save the BLOB to SQLite, com as metricas quentes resumidas
+            # (antes iam sempre zeradas por falta do argumento metrics).
+            metrics = self._summarize_metrics(full_data.get('processes', {}))
+            row_id = self.db.insert_snapshot(encrypted_bundle, metrics=metrics)
             if row_id:
                 self.logger.info(f"[CORE] Encrypted Snapshot saved to DB (ID: {row_id}).")
             else:

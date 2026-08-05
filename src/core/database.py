@@ -125,7 +125,7 @@ class DatabaseManager:
                 """, (agent_uuid, "unknown"))
 
                 # 2. Insert Snapshot
-                conn.execute("""
+                cur = conn.execute("""
                     INSERT INTO snapshots (
                         agent_uuid, timestamp,
                         cpu_avg, mem_used_mb, pids_count, alert_score, is_alert,
@@ -141,6 +141,9 @@ class DatabaseManager:
                     1 if metrics.get('score', 0) > 0 else 0,
                     blob_json
                 ))
+                # Guarda o id da linha recem-inserida para retorno ao chamador
+                # (antes retornava True, o que fazia o log exibir "ID: True").
+                snap_id = cur.lastrowid
 
                 # 3. Enforce Retention
                 conn.execute("""
@@ -154,10 +157,10 @@ class DatabaseManager:
                 """, (agent_uuid, self.max_snapshots))
 
                 conn.commit()
-                return True
+                return snap_id
         except Exception as e:
             self.logger.error(f"Insert Failed: {e}")
-            return False
+            return None
 
     def mark_as_synced(self, snapshot_ids):
         if not snapshot_ids: return
