@@ -224,6 +224,34 @@ def _process_cgroups_block(raw_cgroups):
 
 
 # ------------------------------------------------------------------------------
+# SEVERITY
+# ------------------------------------------------------------------------------
+# Faixas provisorias de severidade a partir do anomaly_score (bitfield/soma dos
+# SCORE_* em process_tree). Elas substituem a exibicao do numero cru no badge de
+# alerta, que era confuso: o valor mostrado era o tree_max_score (maximo da
+# subarvore), entao TODO ancestral do pior processo exibia o mesmo numero (ex.:
+# 64 = SCORE_NET_ISSUE), dando a falsa impressao de contagem global. Uma palavra
+# de severidade herdada por um ancestral ("o pior filho e High") le-se de forma
+# intuitiva. NOTA: mapeamento numerico e provisorio; a normalizacao definitiva
+# (deteccao -> severidade, nao score -> severidade) vem na aba Findings.
+def _severity_label(score):
+    """Traduz um anomaly_score inteiro em rotulo de severidade (ou None se 0)."""
+    try:
+        score = int(score or 0)
+    except (TypeError, ValueError):
+        return None
+    if score <= 0:
+        return None
+    if score >= 128:
+        return "Critical"
+    if score >= 32:
+        return "High"
+    if score >= 8:
+        return "Medium"
+    return "Low"
+
+
+# ------------------------------------------------------------------------------
 # COMPONENT RENDERERS
 # ------------------------------------------------------------------------------
 def _render_badges(node, tree=None):
@@ -267,21 +295,22 @@ def _render_badges(node, tree=None):
         badges.append(f'<span class="tag t-err" data-filter="NET ERR" title="{tooltip}">❌ {format_number(net_issues)}<span class="visually-hidden">NET ERR</span></span>')
 
     score_to_show = getattr(node, 'tree_max_score', node.anomaly_score)
-    if score_to_show > 0:
+    severity = _severity_label(score_to_show)
+    if severity:
         # [FIX] Surface the real score breakdown instead of a placeholder.
         own_reasons = _get_anomaly_reasons(node)
         if own_reasons:
             breakdown = "\n- ".join(own_reasons)
             if node.anomaly_score < score_to_show:
-                tooltip = f"Score Breakdown (this process):\n- {breakdown}\n(Higher score bubbled up from a child process.)"
+                tooltip = f"Severity {severity} (score {score_to_show}), worst in subtree.\nThis process:\n- {breakdown}\n(Higher severity bubbled up from a child process.)"
             else:
-                tooltip = f"Score Breakdown:\n- {breakdown}"
+                tooltip = f"Severity {severity} (score {score_to_show}).\nBreakdown:\n- {breakdown}"
         else:
-            tooltip = "Alert score aggregated from child processes (open the subtree for details)."
+            tooltip = f"Severity {severity}: aggregated from child processes (open the subtree for details)."
         # Escape for safe use inside the title="" attribute.
         tooltip = (tooltip.replace('&', '&amp;').replace('"', '&quot;')
                    .replace('<', '&lt;').replace('>', '&gt;'))
-        badges.append(f'<b class="tag t-warn" data-filter="WARN" title="{tooltip}">⚠️ {score_to_show}<span class="visually-hidden">WARN</span></b>')
+        badges.append(f'<b class="tag t-warn" data-filter="WARN" title="{tooltip}">⚠️ {severity}<span class="visually-hidden">WARN severity {severity}</span></b>')
 
     # [FIX] EDR-WAIT is already emitted by the context_tags loop above (it is in
     # tag_map), so the previous dedicated block here produced a duplicate badge.
