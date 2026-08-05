@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # ==============================================================================
 # FILE: install_service.bash
 # USAGE: sudo ./install_service.bash

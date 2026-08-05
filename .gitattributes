@@ -1,0 +1,24 @@
+# Normaliza finais de linha para LF no repositorio, evitando
+# wrong-script-end-of-line-encoding do rpmlint em scripts com CRLF
+# (gerados/editados no Windows). Codigo e texto sempre em LF.
+* text=auto eol=lf
+
+*.py   text eol=lf
+*.sh   text eol=lf
+*.bash text eol=lf
+*.c    text eol=lf
+*.h    text eol=lf
+*.spec text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.md   text eol=lf
+*.cfg  text eol=lf
+*.ini  text eol=lf
+
+# Artefatos binarios: sem conversao de EOL.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gz   binary
+*.whl  binary
+*.pem  binary
