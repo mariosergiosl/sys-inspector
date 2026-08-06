@@ -20,6 +20,7 @@ import html as html_lib
 from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, JS_BLOCK, LEGEND_HTML
 from src.core.findings import (SEV_INFO, SEV_LOW, SEV_MEDIUM, SEV_HIGH,
                                SEV_CRITICAL, SEVERITY_ORDER)
+from src.core.attack import describe, technique_url, used_techniques
 
 
 # ------------------------------------------------------------------------------
@@ -745,7 +746,9 @@ def render_process_rows(tree, mounts):
         nice_val = getattr(node, 'nice', 0)
         prio_color = "var(--red)" if nice_val < 0 else "var(--grn)"
 
-        data_attrs = f'data-pid="{node.pid}" data-prio="{-nice_val}" data-cpu="{node.cpu_usage_pct}" data-mem="{node.rss}" data-io="{total_io}" data-net="{own_net_total}"'
+        # data-ppid permite ao pivo (aba Findings) subir a cadeia e revelar
+        # todos os ancestrais ate o processo alvo.
+        data_attrs = f'data-pid="{node.pid}" data-ppid="{node.ppid}" data-prio="{-nice_val}" data-cpu="{node.cpu_usage_pct}" data-mem="{node.rss}" data-io="{total_io}" data-net="{own_net_total}"'
 
         rows_html += f"""<tr class="{row_cls}" {data_attrs} onclick="toggleDet({node.pid})">
             <td width="20%" style="{cmd_style}">{indent}{expander} {_esc(node.cmd)}</td>
@@ -818,8 +821,27 @@ def render_findings_panel(findings):
         sev = f.get("severity", SEV_INFO)
         color = SEVERITY_COLORS.get(sev, "#888")
         technique = f.get("technique") or ""
-        tech_html = (f"<span class='fnd-tech' title='MITRE ATT&amp;CK technique'>{_esc(technique)}</span>"
-                     if technique else "")
+        tech_html = ""
+        if technique:
+            info = describe(technique)
+            if info:
+                name, tactic, _desc = info
+                tip = f"{technique} - {name}\nTactic: {tactic}\nClick the ATT&CK tab for details."
+            else:
+                tip = f"{technique} (MITRE ATT&CK technique)"
+            tech_html = (f"<span class='fnd-tech' title='{_esc(tip)}'>{_esc(technique)}</span>")
+
+        # Pivo para o runtime: so aparece quando o caminho denunciado pelo
+        # achado esta de fato sendo executado por algum processo capturado.
+        pivot_html = ""
+        related = f.get("related_pids") or []
+        if related:
+            pid_list = ",".join(str(p) for p in related)
+            label = ("View process" if len(related) == 1
+                     else f"View {len(related)} processes")
+            pivot_html = (f"<span class='fnd-pivot' onclick=\"pivotToProcess('{_esc(pid_list)}'); event.stopPropagation();\" "
+                          f"title='This path is running now (PID {_esc(pid_list)}). Jump to it in the process tree.'>"
+                          f"&#9654; {label}</span>")
 
         # Evidencia bruta, exibida sob demanda (chave: valor).
         ev_rows = []
@@ -846,6 +868,7 @@ def render_findings_panel(findings):
                 <span class="fnd-sev" style="background:{color}">{_esc(sev)}</span>
                 <span class="fnd-title">{_esc(f.get('title', ''))}</span>
                 {tech_html}
+                {pivot_html}
                 <span class="fnd-src" title="Which collector produced this finding">{_esc(f.get('source', ''))}</span>
             </div>
             <div class="fnd-target">{_esc(f.get('target', ''))}</div>
@@ -859,6 +882,59 @@ def render_findings_panel(findings):
         </div>""")
 
     return head + "<div class='fnd-list'>" + "".join(items) + "</div>"
+
+
+def render_attack_panel(findings):
+    """
+    Monta a aba ATT&CK: legenda das tecnicas presentes NESTA captura.
+
+    Um identificador como "T1053.003" nao diz nada a quem le o laudo. Aqui ele
+    ganha nome, tatica e uma explicacao curta. O catalogo e local, porque o
+    relatorio precisa ser legivel offline; o link para o MITRE e um extra para
+    quem tiver conectividade.
+    """
+    ids = used_techniques(findings)
+    if not ids:
+        return ("<div class='fnd-empty'>No ATT&amp;CK techniques were "
+                "referenced in this capture.</div>")
+
+    # Quantos achados citam cada tecnica, para o analista pesar o que investigar.
+    counts = {}
+    for f in findings or []:
+        tech = f.get("technique")
+        if tech:
+            counts[tech] = counts.get(tech, 0) + 1
+
+    rows = []
+    for tid in ids:
+        info = describe(tid)
+        qty = counts.get(tid, 0)
+        url = technique_url(tid)
+        if info:
+            name, tactic, desc = info
+        else:
+            name, tactic, desc = ("Unknown technique", "-",
+                                  "This identifier is not in the local catalogue.")
+        rows.append(f"""
+        <div class="atk-item">
+            <div class="atk-head">
+                <span class="atk-id">{_esc(tid)}</span>
+                <span class="atk-name">{_esc(name)}</span>
+                <span class="atk-qty" title="Findings citing this technique">{qty}</span>
+            </div>
+            <div class="atk-tactic">Tactic: {_esc(tactic)}</div>
+            <div class="atk-desc">{_esc(desc)}</div>
+            <a class="atk-link" href="{_esc(url)}" target="_blank" rel="noopener noreferrer">
+                Reference: {_esc(url)}</a>
+        </div>""")
+
+    intro = ("<div class='atk-intro'>MITRE ATT&amp;CK is a public catalogue of "
+             "adversary techniques observed in real intrusions. The techniques "
+             "below are the ones referenced by the findings in this capture. "
+             "Descriptions are stored locally so this report stays readable "
+             "offline.</div>")
+
+    return intro + "<div class='atk-list'>" + "".join(rows) + "</div>"
 
 
 def generate_report(inventory, process_tree, output_file, version):
@@ -890,6 +966,7 @@ def generate_report(inventory, process_tree, output_file, version):
             NET_CONTENT=net_c,
             FINDINGS_CONTENT=findings_html,
             FINDINGS_BADGE=findings_badge,
+            ATTACK_CONTENT=render_attack_panel(findings),
             TABLE_ROWS=rows
         )
         with open(output_file, "w", encoding="utf-8") as f:

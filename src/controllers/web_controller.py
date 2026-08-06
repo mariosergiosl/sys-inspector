@@ -43,7 +43,8 @@ try:
         render_net_block,
         render_disk_block,
         render_process_rows,
-        render_findings_panel
+        render_findings_panel,
+        render_attack_panel
     )
 except ImportError as e:
     print(f"[CRITICAL] Import Error in WebController: {e}")
@@ -372,6 +373,7 @@ class WebController:
                     NET_CONTENT=net_html,
                     FINDINGS_CONTENT=findings_html,
                     FINDINGS_BADGE=(f"<span class='tab-count'>{actionable}</span>" if actionable else ""),
+                    ATTACK_CONTENT=render_attack_panel(findings),
                     TABLE_ROWS=rows_html
                 )
             except Exception as e:

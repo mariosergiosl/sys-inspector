@@ -308,6 +308,35 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
     white-space: pre-wrap; word-break: break-all; flex: 1;
     background: #1e1e1e; padding: 4px 6px; border-radius: 3px; max-height: 220px; overflow: auto;
 }
+/* Pivo para o processo em execucao (so aparece quando ha correspondencia). */
+.fnd-pivot {
+    font-size: 10px; color: var(--grn); border: 1px solid var(--grn);
+    padding: 2px 8px; border-radius: 3px; cursor: pointer; white-space: nowrap;
+}
+.fnd-pivot:hover { background: var(--grn); color: #1e1e1e; }
+
+/* Destaque temporario da linha alvo apos o pivo. */
+@keyframes pivotPulse {
+    0%   { background: rgba(78,201,176,0.55); }
+    100% { background: transparent; }
+}
+.pivot-target { animation: pivotPulse 2.5s ease-out; }
+
+/* --- ATT&CK REFERENCE --- */
+.atk-intro { color: #aaa; font-size: 12px; margin-bottom: 14px; max-width: 900px; line-height: 1.5; }
+.atk-list { display: flex; flex-direction: column; gap: 8px; }
+.atk-item { background: #252526; border-left: 4px solid var(--yel); border-radius: 3px; padding: 10px 12px; }
+.atk-head { display: flex; align-items: center; gap: 10px; }
+.atk-id { font-family: monospace; font-weight: bold; color: var(--yel); font-size: 12px; }
+.atk-name { color: #eee; font-weight: bold; flex: 1; }
+.atk-qty {
+    background: #333; color: #ccc; font-size: 10px; padding: 1px 8px;
+    border-radius: 8px; border: 1px solid #555;
+}
+.atk-tactic { color: #999; font-size: 11px; margin-top: 4px; }
+.atk-desc { color: #bbb; font-size: 12px; margin-top: 6px; line-height: 1.5; }
+.atk-link { color: var(--acc); font-size: 10px; text-decoration: none; display: inline-block; margin-top: 6px; }
+.atk-link:hover { text-decoration: underline; }
 """
 
 # ------------------------------------------------------------------------------
@@ -534,6 +563,54 @@ JS_BLOCK = r"""
         d.style.display = (d.style.display === 'block') ? 'none' : 'block';
     }
 
+    // Pivo: leva da aba Findings ate o processo que executa o caminho
+    // denunciado pelo achado, revelando toda a cadeia de ancestrais.
+    function pivotToProcess(pidList) {
+        var pids = String(pidList).split(',');
+        var targetPid = pids[0];
+
+        // 1. Vai para a aba Processes.
+        var procTab = document.querySelector('.tab[data-tab="processes"]');
+        showTab('processes', procTab);
+
+        // 2. Sobe pelos data-ppid revelando cada ancestral, para o alvo nao
+        //    ficar escondido dentro de um ramo recolhido.
+        var row = document.querySelector('tr[data-pid="' + targetPid + '"]');
+        if (!row) { return; }
+
+        var guard = 0;
+        var current = row;
+        while (current && guard < 64) {
+            guard++;
+            current.classList.remove('hidden');
+            current.style.display = '';
+            var ppid = current.getAttribute('data-ppid');
+            if (!ppid || ppid === '0') { break; }
+            var parent = document.querySelector('tr[data-pid="' + ppid + '"]');
+            if (!parent || parent === current) { break; }
+            // Marca o pai como expandido, se tiver botao de expansao.
+            var btn = document.getElementById('b-' + ppid);
+            if (btn) { btn.innerText = '-'; }
+            current = parent;
+        }
+
+        // 3. Destaca os demais processos correlacionados, se houver.
+        for (var i = 1; i < pids.length; i++) {
+            var extra = document.querySelector('tr[data-pid="' + pids[i] + '"]');
+            if (extra) {
+                extra.classList.remove('hidden');
+                extra.style.display = '';
+                extra.classList.add('pivot-target');
+            }
+        }
+
+        // 4. Rola ate o alvo e pisca para o olho encontrar.
+        row.scrollIntoView({behavior: 'smooth', block: 'center'});
+        row.classList.remove('pivot-target');
+        void row.offsetWidth;  // reinicia a animacao
+        row.classList.add('pivot-target');
+    }
+
     // Filtra a lista de achados por severidade ('' mostra todos).
     function filterFindings(sev) {
         var items = document.querySelectorAll('.fnd-item');
@@ -598,6 +675,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="tabbar">
             <span class="tab tab-active" data-tab="findings" onclick="showTab('findings', this)">Findings {FINDINGS_BADGE}</span>
             <span class="tab" data-tab="processes" onclick="showTab('processes', this)">Processes</span>
+            <span class="tab" data-tab="attack" onclick="showTab('attack', this)">ATT&amp;CK</span>
         </div>
 
         <div class="controls panel-hidden" data-panel="processes">
@@ -660,6 +738,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     <div class="findings-container" data-panel="findings">
         {FINDINGS_CONTENT}
+    </div>
+
+    <div class="findings-container panel-hidden" data-panel="attack">
+        {ATTACK_CONTENT}
     </div>
 
     <div class="table-container panel-hidden" data-panel="processes">
