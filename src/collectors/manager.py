@@ -64,6 +64,48 @@ def summarize_metrics(processes):
     return {"cpu": cpu_avg, "mem": mem_used, "pids": pids, "score": score}
 
 
+def correlate_findings_with_processes(findings, processes):
+    """
+    Liga cada achado aos processos que estao executando o caminho que ele
+    denuncia.
+
+    Um achado de persistencia aponta para um ARQUIVO (a unit, a entrada de
+    cron), nao para um PID. O valor pericial aparece quando esse caminho esta
+    de fato rodando: a persistencia deixa de ser teorica e passa a ser
+    atividade em curso. Preenche 'related_pids' nos achados correlacionados.
+
+    PARAMETER findings: lista de dicts (Finding.to_dict).
+    PARAMETER processes: dict pid -> dados do processo (data['processes']).
+    """
+    if not findings or not processes:
+        return findings
+
+    for finding in findings:
+        # Caminho denunciado pelo achado: a referencia encontrada na evidencia
+        # (ex.: o binario que a unit executa) e, como apoio, o proprio alvo.
+        evidence = finding.get("evidence") or {}
+        candidates = []
+        reference = evidence.get("reference")
+        if reference:
+            candidates.append(str(reference))
+
+        matches = []
+        for pid, proc in processes.items():
+            exe = str(proc.get("exe_path") or "")
+            cmd = str(proc.get("cmd") or "")
+            for path in candidates:
+                if not path or len(path) < 4:
+                    continue
+                if exe == path or path in cmd:
+                    matches.append(int(pid))
+                    break
+
+        if matches:
+            finding["related_pids"] = sorted(set(matches))
+
+    return findings
+
+
 def collect_findings():
     """
     Executa os coletores de achados estaticos e devolve a lista normalizada,
@@ -130,7 +172,10 @@ class CollectionManager:
             # Roda depois da janela eBPF para nao competir com a captura.
             self.logger.info("[COLLECT] Enumerating persistence mechanisms...")
             findings = collect_findings()
-            full_data['findings'] = [f.to_dict() for f in findings]
+            serialized = [f.to_dict() for f in findings]
+            # Liga o achado estatico ao runtime: a persistencia esta ativa?
+            correlate_findings_with_processes(serialized, full_data['processes'])
+            full_data['findings'] = serialized
             full_data['findings_summary'] = summarize_by_severity(findings)
 
             # 7. Metadata
