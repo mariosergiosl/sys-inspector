@@ -320,6 +320,18 @@ class ProcessNode:
         self.anomaly_score = 0
         self.context_tags = []
         self.md5 = "Calculating..."
+
+        # Proveniencia do executavel (/proc/PID/exe): caminho real, se foi
+        # apagado do disco ainda em execucao, se roda apenas em memoria
+        # (memfd) e os MAC times do binario, para a analise temporal.
+        self.exe_path = ""
+        self.exe_deleted = False
+        self.exe_memfd = False
+        self.exe_size = 0
+        self.exe_mtime = 0
+        self.exe_ctime = 0
+        self.exe_atime = 0
+
         self.libs = []
         self.open_files = set()
         self.file_metadata = {}  # [NEW] Stores permissions/owner
@@ -402,14 +414,67 @@ class ProcessNode:
         if "sudo" in cmd_lower:
             if "SUDO" not in self.context_tags: self.context_tags.append("SUDO")
 
+        self._collect_exe_provenance()
+
+    def _collect_exe_provenance(self):
+        """
+        Coleta a proveniencia do executavel a partir de /proc/PID/exe.
+
+        O kernel acrescenta o sufixo " (deleted)" ao alvo do link quando o
+        binario e apagado enquanto ainda executa, e usa "/memfd:" quando o
+        codigo roda apenas em memoria. As duas situacoes sao classicas de
+        anti-forense e de malware fileless: o artefato some do disco, mas o
+        processo continua vivo. Nao basta olhar a linha de comando, que nao
+        carrega essa informacao.
+
+        Guarda tambem os MAC times e o tamanho do binario, que sustentam a
+        analise temporal (quando o arquivo foi criado/alterado/acessado).
+        """
         try:
-            exe = os.path.realpath(f"/proc/{self.pid}/exe")
+            link = os.readlink(f"/proc/{self.pid}/exe")
+        except Exception:
+            self.md5 = "N/A"
+            return
+
+        exe = link
+        if link.endswith(" (deleted)"):
+            self.exe_deleted = True
+            exe = link[:-len(" (deleted)")]
+        if exe.startswith("/memfd:"):
+            self.exe_memfd = True
+
+        self.exe_path = exe
+
+        if self.exe_deleted:
+            self.detection_reasons.append(
+                f"Executable deleted from disk while running: {exe} [+{SCORE_DELETED}]")
+            if "DELETED" not in self.context_tags:
+                self.context_tags.append("DELETED")
+
+        if self.exe_memfd:
+            self.detection_reasons.append(
+                f"Fileless execution from memory: {exe} [+{SCORE_MALWARE}]")
+            if "DELETED" not in self.context_tags:
+                self.context_tags.append("DELETED")
+
+        if exe.startswith(("/tmp", "/dev/shm", "/var/tmp")):
+            self.detection_reasons.append(
+                f"Binary executed from unsafe path: {exe} [+{SCORE_MALWARE}]")
+            if "UNSAFE" not in self.context_tags:
+                self.context_tags.append("UNSAFE")
+
+        try:
             if os.path.exists(exe):
                 self.md5 = calculate_md5(exe)
-                if exe.startswith(("/tmp", "/dev/shm")):
-                    self.detection_reasons.append(f"Binary executed from unsafe path: {exe} [+{SCORE_MALWARE}]")
-                    if "UNSAFE" not in self.context_tags: self.context_tags.append("UNSAFE")
-        except:
+                st = os.stat(exe)
+                self.exe_size = st.st_size
+                self.exe_mtime = st.st_mtime
+                self.exe_ctime = st.st_ctime
+                self.exe_atime = st.st_atime
+            else:
+                # Binario ausente do disco (apagado ou apenas em memoria).
+                self.md5 = "N/A (not on disk)"
+        except Exception:
             self.md5 = "N/A"
 
 

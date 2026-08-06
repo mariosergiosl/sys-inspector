@@ -15,6 +15,7 @@
 
 # import os
 import re
+import datetime
 import html as html_lib
 from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, JS_BLOCK, LEGEND_HTML
 from src.core.findings import (SEV_INFO, SEV_LOW, SEV_MEDIUM, SEV_HIGH,
@@ -352,7 +353,92 @@ def _render_badges(node, tree=None):
     return " ".join(badges)
 
 
-def _get_details_html(node, mounts):
+def _fmt_epoch(value):
+    """Formata um timestamp epoch para leitura no laudo; '-' se ausente."""
+    if not value:
+        return "-"
+    try:
+        return datetime.datetime.fromtimestamp(float(value)).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return "-"
+
+
+def _render_ancestry(node, tree):
+    """
+    Monta a cadeia de ancestrais do processo (do mais antigo ate ele).
+
+    Responde a pergunta forense "como este processo chegou aqui": um shell
+    filho de um servidor web, ou um binario de /tmp lancado por cron, contam a
+    historia da intrusao melhor do que o processo isolado.
+    """
+    if not tree:
+        return ""
+
+    chain = []
+    seen = set()
+    current = node
+    # Sobe ate PID 1 (ou ate um ciclo/ausencia), limitando a profundidade.
+    while current is not None and len(chain) < 32:
+        if current.pid in seen:
+            break
+        seen.add(current.pid)
+        chain.append(current)
+        parent = tree.get(getattr(current, "ppid", 0)) if hasattr(tree, "get") else None
+        if parent is None or parent.pid == current.pid:
+            break
+        current = parent
+
+    if len(chain) < 2:
+        return ""
+
+    chain.reverse()
+    parts = []
+    for depth, item in enumerate(chain):
+        is_self = (item.pid == node.pid)
+        style = ("color:var(--acc); font-weight:bold"
+                 if is_self else "color:#bbb")
+        arrow = "" if depth == 0 else "<span style='color:#555'> &rarr; </span>"
+        parts.append(f"{arrow}<span style='{style}' title='PID {item.pid}'>"
+                     f"{_esc(item.cmd[:60])} <span style='color:#666'>[{item.pid}]</span></span>")
+
+    return ("<div class='det-blk'><span class='det-title'>Process Ancestry</span>"
+            "<div class='list-box' style='line-height:1.8'>" + "".join(parts) + "</div></div>")
+
+
+def _render_exe_provenance(node):
+    """
+    Bloco de proveniencia do executavel: caminho real, se foi apagado do disco
+    ou roda apenas em memoria, MAC times e tamanho. Um binario apagado em
+    execucao e um dos indicadores mais fortes de anti-forense.
+    """
+    exe_path = getattr(node, "exe_path", "") or ""
+    if not exe_path:
+        return ""
+
+    flags = []
+    if getattr(node, "exe_deleted", False):
+        flags.append("<span class='tag t-unsafe'>DELETED FROM DISK</span>")
+    if getattr(node, "exe_memfd", False):
+        flags.append("<span class='tag t-unsafe'>FILELESS (memfd)</span>")
+    flag_html = (" ".join(flags)) if flags else ""
+
+    size = getattr(node, "exe_size", 0)
+    rows = [
+        ("Path", f"{_esc(exe_path)} {flag_html}"),
+        ("Size", format_bytes(size) if size else "-"),
+        ("Modified (mtime)", _fmt_epoch(getattr(node, "exe_mtime", 0))),
+        ("Changed (ctime)", _fmt_epoch(getattr(node, "exe_ctime", 0))),
+        ("Accessed (atime)", _fmt_epoch(getattr(node, "exe_atime", 0))),
+    ]
+    body = "".join(
+        f"<tr><td class='ctx-lbl'>{lbl}:</td><td class='ctx-val'>{val}</td></tr>"
+        for lbl, val in rows)
+
+    return ("<div class='det-blk'><span class='det-title'>Executable Provenance</span>"
+            f"<table class='ctx-tbl'>{body}</table></div>")
+
+
+def _get_details_html(node, mounts, tree=None):
     """Builds the hidden detail row content."""
     html = "<div class='det-grid'><div><table class='ctx-tbl'>"
     html += f"<tr><td class='ctx-lbl'>Full Command:</td><td class='ctx-val'>{_esc(node.cmd)}</td></tr>"
@@ -451,6 +537,11 @@ def _get_details_html(node, mounts):
         html += "</div></div>"
 
     html += "</div></div>"
+
+    # Proveniencia do binario e cadeia de ancestrais: o "de onde veio" e o
+    # "como chegou aqui", que a linha do processo sozinha nao conta.
+    html += _render_exe_provenance(node)
+    html += _render_ancestry(node, tree)
 
     reasons = _get_anomaly_reasons(node)
     if reasons:
@@ -671,7 +762,7 @@ def render_process_rows(tree, mounts):
             <td>{alerts_html}</td>
         </tr>"""
 
-        det_content = _get_details_html(node, mounts)
+        det_content = _get_details_html(node, mounts, tree)
         rows_html += f"""<tr id="d-{node.pid}" class="det-row"><td colspan="12" class="det-cell">{det_content}</td></tr>"""
 
         for child in children:
