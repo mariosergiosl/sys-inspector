@@ -17,6 +17,8 @@
 import re
 import html as html_lib
 from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, JS_BLOCK, LEGEND_HTML
+from src.core.findings import (SEV_INFO, SEV_LOW, SEV_MEDIUM, SEV_HIGH,
+                               SEV_CRITICAL, SEVERITY_ORDER)
 
 
 # ------------------------------------------------------------------------------
@@ -245,16 +247,27 @@ def _esc(value):
 # ------------------------------------------------------------------------------
 # SEVERITY
 # ------------------------------------------------------------------------------
-# Faixas provisorias de severidade a partir do anomaly_score (bitfield/soma dos
-# SCORE_* em process_tree). Elas substituem a exibicao do numero cru no badge de
-# alerta, que era confuso: o valor mostrado era o tree_max_score (maximo da
-# subarvore), entao TODO ancestral do pior processo exibia o mesmo numero (ex.:
-# 64 = SCORE_NET_ISSUE), dando a falsa impressao de contagem global. Uma palavra
-# de severidade herdada por um ancestral ("o pior filho e High") le-se de forma
-# intuitiva. NOTA: mapeamento numerico e provisorio; a normalizacao definitiva
-# (deteccao -> severidade, nao score -> severidade) vem na aba Findings.
+# Escala UNICA do produto, compartilhada com src/core/findings.py: a arvore de
+# processos e a aba Findings falam a mesma lingua e usam a mesma cor. Antes o
+# badge exibia o numero cru do tree_max_score (maximo da subarvore), entao TODO
+# ancestral do pior processo mostrava o mesmo valor (ex.: 64 = SCORE_NET_ISSUE),
+# dando falsa impressao de contagem.
+#
+# O mapeamento numerico abaixo continua sendo uma aproximacao: converte o
+# anomaly_score (bitfield/soma dos SCORE_* de process_tree) para a escala. A
+# normalizacao definitiva por tipo de deteccao acontece quando as heuristicas de
+# runtime virarem Findings proprios.
+SEVERITY_COLORS = {
+    SEV_CRITICAL: "#ff4d4d",
+    SEV_HIGH: "#ff8c42",
+    SEV_MEDIUM: "#ffd166",
+    SEV_LOW: "#6bcB77",
+    SEV_INFO: "#7fb3d5",
+}
+
+
 def _severity_label(score):
-    """Traduz um anomaly_score inteiro em rotulo de severidade (ou None se 0)."""
+    """Traduz um anomaly_score inteiro na escala unica (ou None se 0)."""
     try:
         score = int(score or 0)
     except (TypeError, ValueError):
@@ -262,12 +275,12 @@ def _severity_label(score):
     if score <= 0:
         return None
     if score >= 128:
-        return "Critical"
+        return SEV_CRITICAL
     if score >= 32:
-        return "High"
+        return SEV_HIGH
     if score >= 8:
-        return "Medium"
-    return "Low"
+        return SEV_MEDIUM
+    return SEV_LOW
 
 
 # ------------------------------------------------------------------------------
@@ -674,6 +687,89 @@ def render_process_rows(tree, mounts):
 # ------------------------------------------------------------------------------
 # ENTRY POINTS
 # ------------------------------------------------------------------------------
+def render_findings_panel(findings):
+    """
+    Monta a aba Findings: resumo por severidade e a lista ranqueada de achados.
+
+    Recebe a lista ja serializada (dicts de Finding.to_dict), que e o formato
+    que viaja no payload da captura. Cada item mostra o que foi encontrado, o
+    quanto e grave, QUEM encontrou (source) e a evidencia bruta que sustenta a
+    conclusao, para o analista poder refazer o raciocinio.
+    """
+    if not findings:
+        return ("<div class='fnd-empty'>No findings were produced for this "
+                "capture.</div>")
+
+    # Resumo por severidade, do mais grave para o menos grave.
+    counts = {}
+    for f in findings:
+        sev = f.get("severity", SEV_INFO)
+        counts[sev] = counts.get(sev, 0) + 1
+
+    chips = []
+    for sev in sorted(SEVERITY_ORDER, key=lambda s: -SEVERITY_ORDER[s]):
+        qty = counts.get(sev, 0)
+        cls = "fnd-chip" + ("" if qty else " fnd-chip-zero")
+        chips.append(
+            f"<span class='{cls}' data-sev='{_esc(sev)}' onclick=\"filterFindings('{_esc(sev)}')\" "
+            f"style='border-color:{SEVERITY_COLORS.get(sev, '#888')}'>"
+            f"<b style='color:{SEVERITY_COLORS.get(sev, '#888')}'>{qty}</b> {_esc(sev)}</span>")
+
+    head = ("<div class='fnd-summary'>" + "".join(chips) +
+            "<span class='fnd-chip fnd-chip-all' onclick=\"filterFindings('')\">Show all</span></div>")
+
+    # Lista ordenada: mais grave primeiro (rank), depois titulo, para ser estavel.
+    ordered = sorted(findings,
+                     key=lambda f: (-int(f.get("rank", 0) or 0), str(f.get("title", ""))))
+
+    items = []
+    for idx, f in enumerate(ordered):
+        sev = f.get("severity", SEV_INFO)
+        color = SEVERITY_COLORS.get(sev, "#888")
+        technique = f.get("technique") or ""
+        tech_html = (f"<span class='fnd-tech' title='MITRE ATT&amp;CK technique'>{_esc(technique)}</span>"
+                     if technique else "")
+
+        # Evidencia bruta, exibida sob demanda (chave: valor).
+        ev_rows = []
+        for key, value in (f.get("evidence") or {}).items():
+            text = value if isinstance(value, str) else repr(value)
+            if len(text) > 2000:
+                text = text[:2000] + " ... [truncated]"
+            ev_rows.append(f"<div class='fnd-ev-row'><span class='fnd-ev-k'>{_esc(key)}</span>"
+                           f"<pre class='fnd-ev-v'>{_esc(text)}</pre></div>")
+        ev_html = ("".join(ev_rows) if ev_rows
+                   else "<div class='d-na'>No raw evidence attached.</div>")
+
+        rec = f.get("recommendation") or ""
+        rec_html = (f"<div class='fnd-rec'><b>Recommended action:</b> {_esc(rec)}</div>"
+                    if rec else "")
+
+        refs = f.get("references") or []
+        refs_html = (f"<div class='fnd-refs'><b>References:</b> {_esc(', '.join(str(r) for r in refs))}</div>"
+                     if refs else "")
+
+        items.append(f"""
+        <div class="fnd-item" data-sev="{_esc(sev)}" data-source="{_esc(f.get('source', ''))}">
+            <div class="fnd-head" onclick="toggleFinding({idx})">
+                <span class="fnd-sev" style="background:{color}">{_esc(sev)}</span>
+                <span class="fnd-title">{_esc(f.get('title', ''))}</span>
+                {tech_html}
+                <span class="fnd-src" title="Which collector produced this finding">{_esc(f.get('source', ''))}</span>
+            </div>
+            <div class="fnd-target">{_esc(f.get('target', ''))}</div>
+            <div class="fnd-det" id="fnd-{idx}">
+                <div class="fnd-desc">{_esc(f.get('description', ''))}</div>
+                {rec_html}
+                {refs_html}
+                <div class="fnd-ev-title">Evidence</div>
+                {ev_html}
+            </div>
+        </div>""")
+
+    return head + "<div class='fnd-list'>" + "".join(items) + "</div>"
+
+
 def generate_report(inventory, process_tree, output_file, version):
     """Full Static HTML Generator."""
     try:
@@ -682,6 +778,14 @@ def generate_report(inventory, process_tree, output_file, version):
         disk_c = render_disk_block(inventory['storage'])
         mounts = inventory['storage'].get('mounts', {})
         rows = render_process_rows(process_tree, mounts)
+
+        # Achados normalizados capturados junto com a arvore (persistencia hoje,
+        # demais fontes conforme forem implementadas).
+        findings = inventory.get('findings', []) or []
+        findings_html = render_findings_panel(findings)
+        # Contagem de achados que exigem atencao, exibida na propria aba.
+        actionable = sum(1 for f in findings if f.get('severity') != SEV_INFO)
+        findings_badge = (f"<span class='tab-count'>{actionable}</span>" if actionable else "")
 
         html = HTML_TEMPLATE.format(
             VERSION=version,
@@ -693,6 +797,8 @@ def generate_report(inventory, process_tree, output_file, version):
             OS_CONTENT=os_c,
             DISK_CONTENT=disk_c,
             NET_CONTENT=net_c,
+            FINDINGS_CONTENT=findings_html,
+            FINDINGS_BADGE=findings_badge,
             TABLE_ROWS=rows
         )
         with open(output_file, "w", encoding="utf-8") as f:

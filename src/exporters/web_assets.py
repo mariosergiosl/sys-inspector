@@ -246,6 +246,64 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
 .score-tooltip table { width: 100%; border-collapse: collapse; }
 .score-tooltip td { padding: 3px 0; border-bottom: 1px solid #333; color: #ccc; font-size: 11px; }
 .score-tooltip td:first-child { color: var(--red); font-weight: bold; text-align: right; padding-right: 10px; width: 40px; }
+
+/* --- TABS (Findings / Processes) --- */
+.tabbar { display: flex; gap: 4px; padding: 0 10px; border-bottom: 2px solid #444; }
+.tab {
+    padding: 8px 18px; cursor: pointer; font-size: 12px; font-weight: bold;
+    text-transform: uppercase; letter-spacing: 0.5px; color: #888;
+    border: 1px solid transparent; border-bottom: none; border-radius: 4px 4px 0 0;
+    user-select: none;
+}
+.tab:hover { color: #ddd; background: #2a2d2e; }
+.tab-active { color: var(--acc); background: #252526; border-color: #444; margin-bottom: -2px; }
+.tab-count {
+    display: inline-block; min-width: 16px; padding: 1px 5px; margin-left: 5px;
+    background: var(--red); color: #fff; border-radius: 8px; font-size: 10px;
+}
+
+/* --- FINDINGS PANEL --- */
+.findings-container { padding: 12px 16px 40px 16px; }
+.fnd-empty { color: #777; font-style: italic; padding: 20px; }
+.fnd-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.fnd-chip {
+    padding: 5px 12px; border: 1px solid #555; border-radius: 14px;
+    font-size: 11px; color: #ccc; cursor: pointer; user-select: none;
+}
+.fnd-chip:hover { background: #2a2d2e; }
+.fnd-chip b { margin-right: 4px; font-size: 13px; }
+.fnd-chip-zero { opacity: 0.4; }
+.fnd-chip-all { border-style: dashed; }
+.fnd-list { display: flex; flex-direction: column; gap: 8px; }
+.fnd-item { background: #252526; border-left: 4px solid #444; border-radius: 3px; padding: 8px 12px; }
+.fnd-item:hover { background: #2a2d2e; }
+.fnd-head { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.fnd-sev {
+    color: #1e1e1e; font-weight: bold; font-size: 10px; text-transform: uppercase;
+    padding: 2px 8px; border-radius: 3px; min-width: 60px; text-align: center;
+}
+.fnd-title { font-weight: bold; color: #eee; flex: 1; }
+.fnd-tech {
+    font-family: monospace; font-size: 10px; color: var(--yel);
+    border: 1px solid #555; padding: 1px 6px; border-radius: 3px;
+}
+.fnd-src {
+    font-size: 10px; color: #888; text-transform: uppercase;
+    border: 1px dashed #555; padding: 1px 6px; border-radius: 3px;
+}
+.fnd-target { font-family: monospace; font-size: 11px; color: #999; margin: 4px 0 0 70px; word-break: break-all; }
+.fnd-det { display: none; margin: 8px 0 4px 70px; padding-top: 8px; border-top: 1px dashed #444; }
+.fnd-desc { color: #bbb; font-size: 12px; margin-bottom: 6px; }
+.fnd-rec { color: var(--grn); font-size: 12px; margin-bottom: 6px; }
+.fnd-refs { color: #999; font-size: 11px; margin-bottom: 6px; }
+.fnd-ev-title { color: var(--acc); font-size: 10px; text-transform: uppercase; font-weight: bold; margin: 8px 0 4px 0; }
+.fnd-ev-row { display: flex; gap: 8px; margin-bottom: 3px; align-items: flex-start; }
+.fnd-ev-k { color: #888; font-size: 11px; min-width: 90px; font-family: monospace; }
+.fnd-ev-v {
+    margin: 0; color: #ccc; font-size: 11px; font-family: monospace;
+    white-space: pre-wrap; word-break: break-all; flex: 1;
+    background: #1e1e1e; padding: 4px 6px; border-radius: 3px; max-height: 220px; overflow: auto;
+}
 """
 
 # ------------------------------------------------------------------------------
@@ -442,6 +500,42 @@ JS_BLOCK = r"""
         win.document.close();
         win.print();
     }
+
+    // --- TABS ---
+    // Alterna os paineis por data-panel. A arvore de processos e seus controles
+    // sao preservados integralmente: apenas mudam de visibilidade.
+    function showTab(name, el) {
+        var panels = document.querySelectorAll('[data-panel]');
+        for (var i = 0; i < panels.length; i++) {
+            var p = panels[i];
+            p.style.display = (p.getAttribute('data-panel') === name) ? '' : 'none';
+        }
+        var tabs = document.querySelectorAll('.tab');
+        for (var j = 0; j < tabs.length; j++) {
+            tabs[j].classList.remove('tab-active');
+        }
+        if (el) { el.classList.add('tab-active'); }
+    }
+
+    // Expande/recolhe a evidencia de um achado.
+    function toggleFinding(idx) {
+        var d = document.getElementById('fnd-' + idx);
+        if (!d) { return; }
+        d.style.display = (d.style.display === 'block') ? 'none' : 'block';
+    }
+
+    // Filtra a lista de achados por severidade ('' mostra todos).
+    function filterFindings(sev) {
+        var items = document.querySelectorAll('.fnd-item');
+        for (var i = 0; i < items.length; i++) {
+            var match = (!sev || items[i].getAttribute('data-sev') === sev);
+            items[i].style.display = match ? '' : 'none';
+        }
+        var chips = document.querySelectorAll('.fnd-chip');
+        for (var k = 0; k < chips.length; k++) {
+            chips[k].style.background = (sev && chips[k].getAttribute('data-sev') === sev) ? '#333' : '';
+        }
+    }
 """
 
 # ------------------------------------------------------------------------------
@@ -491,7 +585,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             </div>
         </div>
 
-        <div class="controls">
+        <div class="tabbar">
+            <span class="tab tab-active" data-tab="findings" onclick="showTab('findings', this)">Findings {FINDINGS_BADGE}</span>
+            <span class="tab" data-tab="processes" onclick="showTab('processes', this)">Processes</span>
+        </div>
+
+        <div class="controls" data-panel="processes" style="display:none">
             <div class="legend">
                 <div class="leg-grp">
                     <span class="leg-lbl">Priority</span> <div class="bar grad-prio"></div>
@@ -533,7 +632,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <input type="text" id="search" placeholder="Filter processes (PID, User, Disk, Alert)..." onkeyup="filterTable()">
         </div>
 
-        <div class="tbl-hdr" style="display:flex; border-bottom:2px solid #444; font-weight:bold; color:#aaa; text-transform:uppercase; padding:8px 5px; font-size:11px;">
+        <div class="tbl-hdr" data-panel="processes" style="display:none; border-bottom:2px solid #444; font-weight:bold; color:#aaa; text-transform:uppercase; padding:8px 5px; font-size:11px;">
              <div style="width:20%">Command Tree</div>
              <div style="width:60px">PID</div>
              <div style="width:90px">Duration</div>
@@ -549,7 +648,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         </div>
     </div>
 
-    <div class="table-container">
+    <div class="findings-container" data-panel="findings">
+        {FINDINGS_CONTENT}
+    </div>
+
+    <div class="table-container" data-panel="processes" style="display:none">
         <table>
             <colgroup>
                 <col width="20%">
