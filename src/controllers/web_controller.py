@@ -69,6 +69,43 @@ FLEET_TEMPLATE = """
 
         .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:20px; }
 
+        /* Triagem da frota: a tabela e o padrao operacional porque permite
+           ordenar por risco; os cartoes seguem disponiveis e sao melhores para
+           poucos agentes. */
+        .viewbar { display:flex; gap:8px; align-items:center; margin-bottom:16px; flex-wrap:wrap; }
+        .viewbtn { padding:6px 14px; border:1px solid #444; border-radius:4px; cursor:pointer;
+                   font-size:12px; color:#aaa; user-select:none; }
+        .viewbtn:hover { background:#252526; color:#ddd; }
+        .viewbtn.on { color:var(--acc); border-color:var(--acc); background:#1b2735; }
+        .fleet-search { flex:1; min-width:200px; background:#1a1a1a; border:1px solid #333;
+                        color:#ddd; padding:6px 10px; border-radius:4px; font-size:12px; }
+
+        table.fleet { width:100%; border-collapse:collapse; font-size:12px; }
+        table.fleet th { text-align:left; padding:8px; border-bottom:2px solid #444; color:#888;
+                         text-transform:uppercase; font-size:11px; cursor:pointer; white-space:nowrap; }
+        table.fleet th:hover { color:var(--acc); }
+        table.fleet td { padding:8px; border-bottom:1px solid #2a2a2a; }
+        table.fleet tr.host:hover { background:#252526; cursor:pointer; }
+        .sev { display:inline-block; min-width:22px; text-align:center; padding:1px 6px;
+               border-radius:3px; font-weight:bold; font-size:11px; color:#1e1e1e; }
+        .sev-critical { background:#ff4d4d; }
+        .sev-high { background:#ff8c42; }
+        .sev-medium { background:#ffd166; }
+        .sev-low { background:#6bcB77; }
+        .sev-zero { background:#2a2a2a; color:#555; }
+        .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+        .dot-on { background:var(--grn); }
+        .dot-off { background:var(--red); }
+
+        /* Heatmap: frota x severidade, para enxergar padrao de ataque em massa. */
+        .heat { border-collapse:collapse; font-size:11px; margin-top:10px; }
+        .heat th { padding:6px 10px; color:#888; text-transform:uppercase; font-size:10px; }
+        .heat td { padding:0; }
+        .heat .cell { width:54px; height:30px; display:flex; align-items:center;
+                      justify-content:center; color:#1e1e1e; font-weight:bold;
+                      border:1px solid #121212; }
+        .heat .host-label { color:#ccc; padding-right:12px; text-align:right; white-space:nowrap; }
+
         .agent-card {
             background:var(--card); border:1px solid #333; border-radius:4px; padding:20px;
             transition:0.2s; cursor:pointer; position:relative; overflow:hidden;
@@ -101,7 +138,40 @@ FLEET_TEMPLATE = """
         </div>
     </div>
 
-    <div class="grid" id="agent-grid">
+    <div class="viewbar">
+        <span class="viewbtn on" id="btn-table" onclick="setView('table')">Table</span>
+        <span class="viewbtn" id="btn-heat" onclick="setView('heat')">Heatmap</span>
+        <span class="viewbtn" id="btn-cards" onclick="setView('cards')">Cards</span>
+        <input class="fleet-search" id="fleet-search" placeholder="Filter by host, IP or OS..."
+               onkeyup="renderFleet()">
+    </div>
+
+    <div id="view-table">
+        <table class="fleet">
+            <thead>
+                <tr>
+                    <th onclick="sortFleet('risk')">Risk</th>
+                    <th onclick="sortFleet('hostname')">Host</th>
+                    <th onclick="sortFleet('ip_address')">IP</th>
+                    <th onclick="sortFleet('os_info')">OS</th>
+                    <th onclick="sortFleet('critical')">Critical</th>
+                    <th onclick="sortFleet('high')">High</th>
+                    <th onclick="sortFleet('medium')">Medium</th>
+                    <th onclick="sortFleet('low')">Low</th>
+                    <th onclick="sortFleet('alert_score')">Score</th>
+                    <th onclick="sortFleet('last_seen')">Last seen</th>
+                    <th onclick="sortFleet('online')">Status</th>
+                </tr>
+            </thead>
+            <tbody id="fleet-body">
+                <tr><td colspan="11" style="color:#666; padding:20px;">Loading fleet status...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div id="view-heat" style="display:none"></div>
+
+    <div class="grid" id="agent-grid" style="display:none">
         <div style="color:#666; padding:20px;">Loading fleet status...</div>
     </div>
 
@@ -114,10 +184,156 @@ FLEET_TEMPLATE = """
             return div.innerHTML;
         }
 
+        // --- TRIAGE STATE ---
+        // A tabela e o padrao: com dezenas de hosts o analista precisa ordenar
+        // por gravidade, nao percorrer cartoes.
+        var fleetData = [];
+        var currentView = 'table';
+        var sortKey = 'risk';
+        var sortDesc = true;
+
+        var SEV_ORDER = ['Critical', 'High', 'Medium', 'Low', 'Info'];
+        var SEV_WEIGHT = {Critical: 1000, High: 100, Medium: 10, Low: 1, Info: 0};
+
+        function sevCount(agent, level) {
+            return (agent.findings || {})[level] || 0;
+        }
+
+        function riskOf(agent) {
+            // Peso por gravidade: um Critical nunca fica atras de muitos Low.
+            var total = 0;
+            SEV_ORDER.forEach(function (level) {
+                total += sevCount(agent, level) * (SEV_WEIGHT[level] || 0);
+            });
+            return total + (agent.alert_score || 0) / 1000.0;
+        }
+
+        function isOnline(agent) {
+            if (!agent.last_seen) { return false; }
+            var diff = (new Date() - new Date(agent.last_seen + 'Z')) / 1000;
+            return diff < 90;
+        }
+
+        function setView(view) {
+            currentView = view;
+            document.getElementById('view-table').style.display = (view === 'table') ? '' : 'none';
+            document.getElementById('view-heat').style.display = (view === 'heat') ? '' : 'none';
+            document.getElementById('agent-grid').style.display = (view === 'cards') ? 'grid' : 'none';
+            ['table', 'heat', 'cards'].forEach(function (v) {
+                var b = document.getElementById('btn-' + v);
+                if (b) { b.classList.toggle('on', v === view); }
+            });
+            renderFleet();
+        }
+
+        function sortFleet(key) {
+            if (sortKey === key) { sortDesc = !sortDesc; }
+            else { sortKey = key; sortDesc = true; }
+            renderFleet();
+        }
+
+        function sortedFleet() {
+            var term = (document.getElementById('fleet-search').value || '').toLowerCase();
+            var list = fleetData.filter(function (a) {
+                if (!term) { return true; }
+                return [a.hostname, a.ip_address, a.os_info, a.uuid]
+                    .join(' ').toLowerCase().indexOf(term) > -1;
+            });
+            return list.sort(function (x, y) {
+                var vx, vy;
+                if (sortKey === 'risk') { vx = riskOf(x); vy = riskOf(y); }
+                else if (sortKey === 'online') { vx = isOnline(x) ? 1 : 0; vy = isOnline(y) ? 1 : 0; }
+                else if (['critical', 'high', 'medium', 'low'].indexOf(sortKey) > -1) {
+                    var lvl = sortKey.charAt(0).toUpperCase() + sortKey.slice(1);
+                    vx = sevCount(x, lvl); vy = sevCount(y, lvl);
+                } else {
+                    vx = x[sortKey] || ''; vy = y[sortKey] || '';
+                }
+                if (vx < vy) { return sortDesc ? 1 : -1; }
+                if (vx > vy) { return sortDesc ? -1 : 1; }
+                return 0;
+            });
+        }
+
+        function sevCell(qty, level) {
+            var cls = qty ? ('sev sev-' + level.toLowerCase()) : 'sev sev-zero';
+            return '<span class="' + cls + '">' + qty + '</span>';
+        }
+
+        function renderTable(list) {
+            var body = document.getElementById('fleet-body');
+            if (!list.length) {
+                body.innerHTML = '<tr><td colspan="11" style="color:#555; padding:30px; text-align:center">No agents match.</td></tr>';
+                return;
+            }
+            body.innerHTML = list.map(function (a) {
+                var on = isOnline(a);
+                var worst = 'sev-zero';
+                for (var i = 0; i < SEV_ORDER.length; i++) {
+                    if (sevCount(a, SEV_ORDER[i])) { worst = 'sev-' + SEV_ORDER[i].toLowerCase(); break; }
+                }
+                return '<tr class="host" onclick="location.href=\\'/inspector/' + encodeURIComponent(a.uuid) + '\\'">'
+                    + '<td><span class="sev ' + worst + '">&nbsp;</span></td>'
+                    + '<td>' + (esc(a.hostname) || 'Unknown') + '</td>'
+                    + '<td>' + (esc(a.ip_address) || '-') + '</td>'
+                    + '<td style="color:#999">' + (esc(a.os_info) || '-') + '</td>'
+                    + '<td>' + sevCell(sevCount(a, 'Critical'), 'Critical') + '</td>'
+                    + '<td>' + sevCell(sevCount(a, 'High'), 'High') + '</td>'
+                    + '<td>' + sevCell(sevCount(a, 'Medium'), 'Medium') + '</td>'
+                    + '<td>' + sevCell(sevCount(a, 'Low'), 'Low') + '</td>'
+                    + '<td style="color:#bbb">' + (a.alert_score || 0) + '</td>'
+                    + '<td style="color:#888">' + esc(a.last_seen || '-') + '</td>'
+                    + '<td><span class="dot ' + (on ? 'dot-on' : 'dot-off') + '"></span>'
+                    + (on ? 'Online' : 'Offline') + '</td></tr>';
+            }).join('');
+        }
+
+        function renderHeat(list) {
+            var box = document.getElementById('view-heat');
+            if (!list.length) {
+                box.innerHTML = '<div style="color:#555; padding:30px">No agents match.</div>';
+                return;
+            }
+            // Intensidade proporcional ao maior valor da matriz, para o padrao
+            // aparecer mesmo quando os numeros absolutos sao pequenos.
+            var max = 1;
+            list.forEach(function (a) {
+                SEV_ORDER.forEach(function (s) { max = Math.max(max, sevCount(a, s)); });
+            });
+            var head = '<tr><th></th>' + SEV_ORDER.map(function (s) {
+                return '<th>' + s + '</th>'; }).join('') + '</tr>';
+            var rows = list.map(function (a) {
+                var cells = SEV_ORDER.map(function (s) {
+                    var qty = sevCount(a, s);
+                    var alpha = qty ? (0.25 + 0.75 * (qty / max)) : 0;
+                    var color = qty ? 'rgba(255,77,77,' + alpha.toFixed(2) + ')' : '#1a1a1a';
+                    var text = qty ? qty : '';
+                    return '<td><div class="cell" style="background:' + color + '">' + text + '</div></td>';
+                }).join('');
+                return '<tr><td class="host-label">' + (esc(a.hostname) || esc(a.uuid).substring(0, 8)) + '</td>' + cells + '</tr>';
+            }).join('');
+            box.innerHTML = '<table class="heat">' + head + rows + '</table>';
+        }
+
+        function renderFleet() {
+            var list = sortedFleet();
+            if (currentView === 'table') { renderTable(list); }
+            else if (currentView === 'heat') { renderHeat(list); }
+            else { renderCards(list); }
+        }
+
         async function loadFleet() {
             try {
-                const res = await fetch('/api/agents');
-                const agents = await res.json();
+                const res = await fetch('/api/fleet');
+                fleetData = await res.json();
+                renderFleet();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function renderCards(agents) {
+            try {
                 const grid = document.getElementById('agent-grid');
                 grid.innerHTML = '';
 
@@ -292,6 +508,19 @@ class WebController:
         @self.app.route('/')
         def fleet_view():
             return render_template_string(FLEET_TEMPLATE)
+
+        @self.app.route('/api/fleet')
+        def api_fleet():
+            """
+            Situacao de risco da frota: metadados do agente somados as metricas
+            e a contagem de achados da ultima captura, tudo de colunas em
+            claro, para triar muitos hosts sem descriptografar.
+            """
+            try:
+                return jsonify(self.db.get_fleet_status())
+            except Exception as e:
+                self.logger.error(f"Fleet API error: {e}")
+                return jsonify([])
 
         @self.app.route('/api/agents')
         def api_list_agents():

@@ -130,7 +130,13 @@ class DatabaseManager:
                 # ganham as colunas sem perder os dados ja coletados.
                 for column, ctype in (("digest", "TEXT"),
                                       ("previous_digest", "TEXT"),
-                                      ("custody", "TEXT")):
+                                      ("custody", "TEXT"),
+                                      # Contagem de achados por severidade, em
+                                      # claro: permite triar a frota inteira
+                                      # ("qual host esta pior?") sem
+                                      # descriptografar captura por captura.
+                                      # Guarda numeros, nunca o conteudo.
+                                      ("findings_summary", "TEXT")):
                     try:
                         conn.execute("ALTER TABLE snapshots ADD COLUMN %s %s"
                                      % (column, ctype))
@@ -182,7 +188,7 @@ class DatabaseManager:
             return []
 
     def insert_snapshot(self, encrypted_bundle, agent_uuid="local", metrics=None,
-                        custody=None):
+                        custody=None, findings_summary=None):
         if metrics is None: metrics = {}
 
         # Prepare JSON before lock
@@ -204,8 +210,9 @@ class DatabaseManager:
                     INSERT INTO snapshots (
                         agent_uuid, timestamp,
                         cpu_avg, mem_used_mb, pids_count, alert_score, is_alert,
-                        json_blob, synced, digest, previous_digest, custody
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                        json_blob, synced, digest, previous_digest, custody,
+                        findings_summary
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
                 """, (
                     agent_uuid,
                     time.time(),
@@ -217,7 +224,8 @@ class DatabaseManager:
                     blob_json,
                     (custody or {}).get('digest'),
                     (custody or {}).get('previous_digest'),
-                    json.dumps(custody) if custody else None
+                    json.dumps(custody) if custody else None,
+                    json.dumps(findings_summary) if findings_summary else None
                 ))
                 # Guarda o id da linha recem-inserida para retorno ao chamador
                 # (antes retornava True, o que fazia o log exibir "ID: True").
@@ -336,6 +344,45 @@ class DatabaseManager:
                 return json.loads(row[0]) if row else None
         except Exception:
             return None
+
+    def get_fleet_status(self):
+        """
+        Situacao de risco de cada agente, para a triagem da frota.
+
+        Junta os metadados do agente com a ULTIMA captura dele, usando apenas
+        colunas em claro. Assim o analista consegue ordenar dezenas ou centenas
+        de hosts por gravidade ("qual esta pior?") sem descriptografar nada, que
+        seria caro e exporia conteudo desnecessariamente.
+        """
+        try:
+            with closing(self._get_conn()) as conn:
+                cursor = conn.execute("""
+                    SELECT a.uuid, a.hostname, a.ip_address, a.os_info,
+                           a.status, a.last_seen,
+                           s.timestamp AS last_capture,
+                           s.alert_score, s.is_alert, s.cpu_avg,
+                           s.mem_used_mb, s.pids_count, s.findings_summary
+                    FROM agents a
+                    LEFT JOIN snapshots s ON s.id = (
+                        SELECT id FROM snapshots
+                        WHERE agent_uuid = a.uuid
+                        ORDER BY id DESC LIMIT 1
+                    )
+                    ORDER BY a.last_seen DESC
+                """)
+                fleet = []
+                for row in cursor:
+                    item = dict(row)
+                    raw = item.pop("findings_summary", None)
+                    try:
+                        item["findings"] = json.loads(raw) if raw else {}
+                    except Exception:
+                        item["findings"] = {}
+                    fleet.append(item)
+                return fleet
+        except Exception as e:
+            self.logger.error(f"Get Fleet Status Failed: {e}")
+            return []
 
     def get_agents(self):
         try:
