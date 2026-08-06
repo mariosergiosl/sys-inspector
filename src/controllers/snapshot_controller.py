@@ -30,7 +30,9 @@ from src.exporters.html_report import generate_report
 from src.collectors.process_tree import ProcessNode  # Needed for rehydration
 
 # v0.70 Security Modules
-from src.core.crypto import load_public_key, load_private_key, encrypt_data, decrypt_data
+from src.core.crypto import (load_public_key, load_private_key, encrypt_data,
+                             decrypt_data, ensure_agent_identity, sign_bytes)
+from src.core.custody import build_record
 
 
 class SnapshotController:
@@ -93,6 +95,48 @@ class SnapshotController:
 
         return tree
 
+    def _build_custody(self, payload):
+        """
+        Monta o registro de custodia da captura: digest do conteudo, elo com a
+        anterior e assinatura feita com a identidade do proprio agente.
+
+        A assinatura usa um par de chaves do AGENTE, distinto do par usado para
+        cifrar: a cifra emprega a chave publica do analista, que o agente nao
+        poderia usar para assinar. Falhar aqui nao pode custar a captura, entao
+        o erro e registrado e a coleta segue sem assinatura.
+        """
+        sec = self.config.get('security', {})
+        base = os.path.dirname(self.priv_key_path) or "."
+        agent_priv = sec.get('agent_private_key_path',
+                             os.path.join(base, "agent_private_key.pem"))
+        agent_pub = sec.get('agent_public_key_path',
+                            os.path.join(base, "agent_public_key.pem"))
+
+        signer = None
+        try:
+            ensure_agent_identity(agent_priv, agent_pub)
+            agent_key = load_private_key(agent_priv)
+            signer = lambda data: sign_bytes(data, agent_key)
+        except Exception as e:
+            self.logger.error(f"[CUSTODY] Agent identity unavailable: {e}")
+
+        agent_uuid = getattr(self.db, 'agent_id', 'local')
+        try:
+            previous = self.db.get_last_digest(agent_uuid)
+        except Exception:
+            previous = None
+
+        forensic = self.config.get('forensics', {}) or {}
+        return build_record(
+            payload,
+            agent_uuid=agent_uuid,
+            collector_version=self.config.get('general', {}).get('version', '0.91.0'),
+            previous_digest=previous,
+            case_id=forensic.get('case_id', ''),
+            operator=forensic.get('operator', ''),
+            signer=signer,
+        )
+
     def run(self, duration=30):
         """
         Executes the Secure Capture Workflow.
@@ -119,7 +163,20 @@ class SnapshotController:
             # Save the BLOB to SQLite, com as metricas quentes resumidas
             # (antes iam sempre zeradas por falta do argumento metrics).
             metrics = summarize_metrics(full_data.get('processes', {}))
-            row_id = self.db.insert_snapshot(encrypted_bundle, metrics=metrics)
+
+            # Cadeia de custodia: digest do conteudo em claro, assinatura do
+            # agente e elo com a captura anterior. Fica ao lado do blob cifrado
+            # para permitir verificar integridade e continuidade da serie sem
+            # precisar da chave do analista.
+            custody = self._build_custody(full_data)
+
+            # O agent_uuid precisa ser o MESMO usado para buscar o elo anterior
+            # em _build_custody; do contrario cada captura pareceria a primeira
+            # da serie e a cadeia nunca se formaria.
+            row_id = self.db.insert_snapshot(encrypted_bundle,
+                                             agent_uuid=getattr(self.db, 'agent_id', 'local'),
+                                             metrics=metrics,
+                                             custody=custody)
             if row_id:
                 self.logger.info(f"[CORE] Encrypted Snapshot saved to DB (ID: {row_id}).")
             else:
