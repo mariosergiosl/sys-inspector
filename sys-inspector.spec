@@ -5,11 +5,12 @@
 # ==============================================================================
 
 Name:           sys-inspector
-Version:        0.90.16
+Version:        0.91.0
 Release:        1%{?dist}
-Summary:        eBPF-based System Inspector and Forensic Tool (Multi-Agent/Web)
+Summary:        System inspector and forensic tool using eBPF (Multi-Agent/Web)
 
-License:        GPL-3.0-only
+Group:          System/Monitoring
+License:        AGPL-3.0-only
 URL:            https://github.com/mariosergiosl/sys-inspector
 Source0:        %{name}-%{version}.tar.gz
 
@@ -44,8 +45,8 @@ It provides real-time analysis of:
 - Security Contexts (SSH Origin, Sudo, AppArmor)
 - Multi-Agent Fleet Monitoring (Web Dashboard)
 - Forensic Time Machine (Historical Snapshots)
-Version 0.90.12 introduces Multi-Agent Architecture, Fleet View, FHS compliance,
-and native systemd integration.
+It ships a Multi-Agent architecture, Fleet View, FHS compliant paths and
+native systemd integration.
 Designed for SREs and Forensic Analysts.
 
 %prep
@@ -68,6 +69,10 @@ mkdir -p %{buildroot}%{_unitdir}
 if [ -f %{buildroot}/etc/systemd/system/sys-inspector.service ]; then
     mv %{buildroot}/etc/systemd/system/sys-inspector.service %{buildroot}%{_unitdir}/
 fi
+# SUSE convention: rc symlink for the service (rcsys-inspector -> service),
+# fixes rpmlint suse-missing-rclink.
+mkdir -p %{buildroot}%{_sbindir}
+ln -sf %{_sbindir}/service %{buildroot}%{_sbindir}/rc%{name}
 
 %pre
 %service_add_pre sys-inspector.service
@@ -92,6 +97,7 @@ fi
 %{_bindir}/install_deps.sh
 %{_bindir}/install_service.bash
 %{_bindir}/generate_keys.py
+%{_sbindir}/rcsys-inspector
 %{python3_sitelib}/*
 
 # ==============================================================================
@@ -108,7 +114,12 @@ fi
 %dir %attr(0750,root,root) /var/log/sys-inspector/reports
 
 %changelog
-* Sun Jul 12 2026 Mario Luz <mario.mssl@gmail.com> - 0.90.16
+* Thu Aug 06 2026 Mario Luz <mario.mssl@gmail.com> - 0.91.0-1
+- Added: normalized Finding entity (single severity scale, explicit source, MITRE ATT&CK technique, attached evidence) and a persistence collector covering systemd units, cron/at, startup scripts, ld.so.preload, kernel module autoload, udev rules, PAM stacks and per-user authorized_keys.
+- Added: first automated test suite (pytest) wired into CI.
+- Changed: all execution modes unified on a single encrypted storage model and data shape; live and server modes restored.
+- Fixed: snapshot hot columns were always zero; alert badge showed a raw score; host-controlled data was not escaped in the HTML report; rpmlint findings in the package.
+* Sun Jul 12 2026 Mario Luz <mario.mssl@gmail.com> - 0.90.16-1
 - Security: optional dashboard HTTP Basic Auth and HTTPS (self-signed auto-generation), XSS prevention in the Fleet/Inspector views, and setup-script PATH hardening.
 - Fixed: pyproject/setup packaging conflict, honor general.log_level, leaf-node expander literal, duplicate EDR-WAIT badge, WARN score tooltip, and false-positive NET ERR on kernel threads.
 - Changed: toolbar active-state indicator and symmetric Process By / Filters icons.

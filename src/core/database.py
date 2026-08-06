@@ -43,7 +43,35 @@ class DatabaseManager:
                 self.logger.critical(f"Permission denied creating directory: {db_dir}")
                 raise
 
+        # Identidade estavel do agente local, compartilhada por todos os modos
+        # (snapshot/daemon/live/server) que recebem este DatabaseManager.
+        self.agent_id = self._load_or_create_agent_id()
+
         self._init_db()
+
+    def _load_or_create_agent_id(self):
+        """
+        Le (ou cria e persiste) um UUID estavel do agente, gravado ao lado do
+        arquivo de banco. Mantem a identidade entre reinicios e unifica o
+        agent_uuid usado por todos os modos.
+        """
+        import uuid
+        id_dir = os.path.dirname(self.db_path) or "."
+        id_file = os.path.join(id_dir, ".agent_id")
+        try:
+            if os.path.exists(id_file):
+                with open(id_file, "r") as f:
+                    existing = f.read().strip()
+                    if existing:
+                        return existing
+            new_id = str(uuid.uuid4())
+            with open(id_file, "w") as f:
+                f.write(new_id)
+            return new_id
+        except Exception as e:
+            # Fallback: id efemero se nao for possivel persistir.
+            self.logger.warning(f"Could not persist .agent_id: {e}")
+            return str(uuid.uuid4())
 
     def _get_conn(self):
         """Creates a database connection with Row factory enabled."""
@@ -125,7 +153,7 @@ class DatabaseManager:
                 """, (agent_uuid, "unknown"))
 
                 # 2. Insert Snapshot
-                conn.execute("""
+                cur = conn.execute("""
                     INSERT INTO snapshots (
                         agent_uuid, timestamp,
                         cpu_avg, mem_used_mb, pids_count, alert_score, is_alert,
@@ -141,6 +169,9 @@ class DatabaseManager:
                     1 if metrics.get('score', 0) > 0 else 0,
                     blob_json
                 ))
+                # Guarda o id da linha recem-inserida para retorno ao chamador
+                # (antes retornava True, o que fazia o log exibir "ID: True").
+                snap_id = cur.lastrowid
 
                 # 3. Enforce Retention
                 conn.execute("""
@@ -154,10 +185,10 @@ class DatabaseManager:
                 """, (agent_uuid, self.max_snapshots))
 
                 conn.commit()
-                return True
+                return snap_id
         except Exception as e:
             self.logger.error(f"Insert Failed: {e}")
-            return False
+            return None
 
     def mark_as_synced(self, snapshot_ids):
         if not snapshot_ids: return

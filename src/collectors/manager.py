@@ -13,10 +13,72 @@
 # VERSION: v0.90.16
 # ==============================================================================
 
+import os
 import time
 import logging
 from src.core.engine import SysInspectorEngine
 from src.collectors.system_inventory import collect_full_inventory
+from src.collectors.persistence import collect_persistence
+from src.core.findings import sort_findings, dedupe_findings, summarize_by_severity
+
+
+def summarize_metrics(processes):
+    """
+    Resume as metricas quentes de uma captura a partir da arvore ja agregada
+    (aggregate_stats roda em engine.stop). Alimenta as colunas estruturadas da
+    tabela 'snapshots' (cpu_avg, mem_used_mb, pids_count, alert_score), usadas
+    para timeline e ordenacao por alerta sem descriptografar o blob. Helper
+    compartilhado por snapshot e daemon para manter um unico modelo.
+
+    PARAMETER processes: dict pid -> dados do processo (data['processes']).
+    Retorna dict com chaves cpu, mem, pids, score.
+    """
+    nodes = list(processes.values()) if processes else []
+
+    pids = len(nodes)
+
+    # CPU: utilizacao media por core no periodo. cpu_usage_pct ja vem calculado
+    # na janela de captura; somamos por processo e dividimos pelo numero de
+    # cores para obter um percentual medio de ocupacao.
+    total_cpu = sum(float(p.get("cpu_usage_pct", 0.0) or 0.0) for p in nodes)
+    ncpu = os.cpu_count() or 1
+    cpu_avg = round(total_cpu / ncpu, 1)
+
+    # Score de alerta: pico de anomaly_score na arvore (processo mais suspeito).
+    score = max((int(p.get("anomaly_score", 0) or 0) for p in nodes), default=0)
+
+    # Memoria usada (MB) via /proc/meminfo: MemTotal - MemAvailable.
+    mem_used = 0
+    try:
+        info = {}
+        with open("/proc/meminfo", "r") as f:
+            for line in f:
+                parts = line.split(":")
+                if len(parts) == 2:
+                    info[parts[0].strip()] = int(parts[1].strip().split()[0])
+        if "MemTotal" in info and "MemAvailable" in info:
+            mem_used = int((info["MemTotal"] - info["MemAvailable"]) / 1024)
+    except Exception:
+        mem_used = 0
+
+    return {"cpu": cpu_avg, "mem": mem_used, "pids": pids, "score": score}
+
+
+def collect_findings():
+    """
+    Executa os coletores de achados estaticos e devolve a lista normalizada,
+    deduplicada e ordenada por severidade (mais grave primeiro).
+
+    Hoje cobre a enumeracao de persistencia; novas fontes (integridade, SCAP)
+    entram aqui e herdam automaticamente a deduplicacao e a ordenacao, mantendo
+    um unico ponto de composicao de Findings.
+    """
+    findings = []
+    try:
+        findings.extend(collect_persistence())
+    except Exception as exc:
+        logging.getLogger("CollectorMgr").error(f"[COLLECT] Persistence failed: {exc}")
+    return sort_findings(dedupe_findings(findings))
 
 
 class CollectionManager:
@@ -64,11 +126,19 @@ class CollectionManager:
             # This calls the updated ProcessTree logic (Duration, EDR Wchan, etc.)
             full_data['processes'] = self.engine.tree.to_json()
 
-            # 6. Metadata
+            # 6. Static forensic findings (persistence mechanisms).
+            # Roda depois da janela eBPF para nao competir com a captura.
+            self.logger.info("[COLLECT] Enumerating persistence mechanisms...")
+            findings = collect_findings()
+            full_data['findings'] = [f.to_dict() for f in findings]
+            full_data['findings_summary'] = summarize_by_severity(findings)
+
+            # 7. Metadata
             full_data['capture_duration'] = duration
             full_data['mode'] = self.config.get('general', {}).get('mode', 'unknown')
 
-            self.logger.info(f"[COLLECT] Capture complete. {len(full_data['processes'])} processes tracked.")
+            self.logger.info(f"[COLLECT] Capture complete. {len(full_data['processes'])} processes tracked, "
+                             f"{len(findings)} findings.")
             return full_data
 
         except Exception as e:

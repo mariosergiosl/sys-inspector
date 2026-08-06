@@ -26,8 +26,12 @@ from socketserver import ThreadingMixIn
 # Internal Modules
 from src.core.engine import SysInspectorEngine
 from src.collectors.system_inventory import collect_full_inventory
+from src.collectors.manager import summarize_metrics, collect_findings
+from src.core.findings import summarize_by_severity
 from src.exporters.html_report import generate_report, generate_table_fragment
 from src.collectors.process_tree import ProcessTree, ProcessNode
+from src.core.crypto import (load_public_key, load_private_key,
+                             encrypt_data, decrypt_data)
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -83,7 +87,8 @@ class LiveHTTPHandler(BaseHTTPRequestHandler):
             history = controller.db.get_history(0, time.time())
             if history:
                 latest_id = history[0]['id']
-                full_data = controller.db.get_snapshot_details(latest_id)
+                # get_snapshot_details devolve o bundle cifrado; descriptografa.
+                full_data = controller.decrypt(controller.db.get_snapshot_details(latest_id))
                 if full_data:
                     tree = self._rehydrate_tree(full_data)
                     html_fragment = generate_table_fragment(full_data, tree)
@@ -99,7 +104,8 @@ class LiveHTTPHandler(BaseHTTPRequestHandler):
         if self.path == '/':
             snap = controller.db.get_history(0, time.time())
             if snap:
-                data = controller.db.get_snapshot_details(snap[0]['id'])
+                data = controller.decrypt(controller.db.get_snapshot_details(snap[0]['id']))
+            if snap and data:
                 tree = self._rehydrate_tree(data)
 
                 # Generate Full HTML to Temp
@@ -143,6 +149,39 @@ class LiveController:
         self.logger = logging.getLogger("LiveCtrl")
         self.update_count = 0
 
+        # Modelo unico: live tambem cifra (custo desprezivel, sigilo forense).
+        # Carrega a chave publica para cifrar na coleta e a privada para
+        # descriptografar ao renderizar o dashboard local.
+        self.pub_key = None
+        self.priv_key = None
+        sec = config.get('security', {})
+        try:
+            self.pub_key = load_public_key(sec.get('public_key_path', 'conf/public_key.pem'))
+        except Exception as e:
+            self.logger.critical(f"[SECURITY] Failed to load Public Key: {e}")
+            raise
+        priv_path = sec.get('private_key_path', 'conf/private_key.pem')
+        if os.path.exists(priv_path):
+            try:
+                self.priv_key = load_private_key(priv_path)
+            except Exception as e:
+                self.logger.error(f"[SECURITY] Failed to load Private Key: {e}")
+        else:
+            self.logger.warning("[SECURITY] Private Key not found; live dashboard cannot render until it exists.")
+
+    def decrypt(self, bundle):
+        """
+        Descriptografa um bundle armazenado (get_snapshot_details retorna o dado
+        cifrado). Retorna o dict em claro ou None se nao houver chave/falhar.
+        """
+        if not self.priv_key or not bundle:
+            return None
+        try:
+            return decrypt_data(bundle, self.priv_key)
+        except Exception as e:
+            self.logger.error(f"[SECURITY] Decryption failed: {e}")
+            return None
+
     def _collection_loop(self):
         """Background thread to capture data."""
         interval = self.config['collection']['interval']
@@ -154,13 +193,22 @@ class LiveController:
                 # 1. Capture (Short duration for responsiveness, e.g., 5s fixed or dynamic)
                 self.engine.run_snapshot(duration=5, output_file=None)
 
-                # 2. Package
+                # 2. Package (modelo unico: processos no topo em 'processes')
                 full_inv = collect_full_inventory()
                 full_inv['processes'] = self.engine.tree.to_json()
                 full_inv['agent_uuid'] = self.db.agent_id
+                full_inv['mode'] = 'live'
 
-                # 3. Save
-                if self.db.save_snapshot(full_inv):
+                # Achados estaticos (persistencia), mesmo conjunto dos demais modos.
+                findings = collect_findings()
+                full_inv['findings'] = [f.to_dict() for f in findings]
+                full_inv['findings_summary'] = summarize_by_severity(findings)
+
+                # 3. Encrypt + Save (cifrado como os demais modos, com as
+                # colunas quentes preenchidas via helper compartilhado).
+                metrics = summarize_metrics(full_inv['processes'])
+                bundle = encrypt_data(full_inv, self.pub_key)
+                if self.db.insert_snapshot(bundle, agent_uuid=self.db.agent_id, metrics=metrics):
                     self.update_count += 1
                     self.logger.info(f"[CORE] Snapshot {self.update_count} persisted.")
             except Exception as e:

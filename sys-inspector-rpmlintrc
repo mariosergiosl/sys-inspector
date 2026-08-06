@@ -1,0 +1,21 @@
+# rpmlint configuration for sys-inspector (OBS/openSUSE).
+#
+# O eBPF (BCC) precisa do fonte C em tempo de execucao: base_trace.c e
+# compilado no host alvo pelo LLVM/clang embarcado no BCC, entao ele e
+# instalado junto com o pacote Python. Por isso o .c fica num pacote
+# "nao-devel" de proposito, e o aviso devel-file-in-non-devel-package e um
+# falso-positivo neste caso especifico.
+addFilter(r"devel-file-in-non-devel-package.*base_trace\.c")
+
+# kernel-devel e dependencia de RUNTIME aqui: o BCC compila os fontes eBPF
+# no host alvo usando os headers do kernel, entao precisa deles instalados.
+addFilter(r"devel-dependency kernel-devel")
+
+# Os diretorios de estado e de relatorios sao 0750 de proposito (privacidade
+# forense: dados e laudos nao devem ser legiveis por outros usuarios locais).
+addFilter(r"non-standard-dir-perm /var/(lib|log)/sys-inspector.* 750")
+
+# rc-link no padrao SUSE: /usr/sbin/service e provido por outro pacote em
+# tempo de execucao (systemd/sysvinit-tools), entao o link "pendente" no lint
+# e esperado e nao um defeito.
+addFilter(r"dangling-symlink /usr/sbin/rcsys-inspector")

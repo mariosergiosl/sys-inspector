@@ -25,7 +25,7 @@ import logging
 # import json
 
 # Internal Modules
-from src.collectors.manager import CollectionManager
+from src.collectors.manager import CollectionManager, summarize_metrics
 from src.exporters.html_report import generate_report
 from src.collectors.process_tree import ProcessNode  # Needed for rehydration
 
@@ -116,8 +116,10 @@ class SnapshotController:
             encrypted_bundle = encrypt_data(full_data, pub_key)
 
             # 3. PERSISTENCE (Store-and-Forward)
-            # Save the BLOB to SQLite
-            row_id = self.db.insert_snapshot(encrypted_bundle)
+            # Save the BLOB to SQLite, com as metricas quentes resumidas
+            # (antes iam sempre zeradas por falta do argumento metrics).
+            metrics = summarize_metrics(full_data.get('processes', {}))
+            row_id = self.db.insert_snapshot(encrypted_bundle, metrics=metrics)
             if row_id:
                 self.logger.info(f"[CORE] Encrypted Snapshot saved to DB (ID: {row_id}).")
             else:
