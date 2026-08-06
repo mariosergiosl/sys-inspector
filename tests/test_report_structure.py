@@ -15,9 +15,13 @@ from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, JS_BLOCK
 # Preservacao da arvore de processos
 # ------------------------------------------------------------------------------
 def test_process_table_and_controls_are_preserved():
-    """A tabela, os controles e o cabecalho de colunas continuam no template."""
-    for marker in ('class="table-container"', 'class="controls"',
-                   'class="tbl-hdr"', "{TABLE_ROWS}", 'id="search"'):
+    """
+    A tabela, os controles e o cabecalho de colunas continuam no template.
+    Verifica o nome da classe, nao o atributo inteiro, para nao quebrar quando
+    uma classe auxiliar (ex.: panel-hidden) e acrescentada ao elemento.
+    """
+    for marker in ('class="table-container', 'class="controls',
+                   'class="tbl-hdr', "{TABLE_ROWS}", 'id="search"'):
         assert marker in HTML_TEMPLATE, marker
 
 
@@ -57,6 +61,35 @@ def test_process_elements_are_grouped_in_one_panel():
     juntos e a arvore nunca aparecer pela metade.
     """
     assert HTML_TEMPLATE.count('data-panel="processes"') == 3
+
+
+def test_table_header_keeps_its_flex_layout():
+    """
+    O cabecalho de colunas depende de display:flex inline. Se a alternancia de
+    aba zerar esse inline, ele volta para block e as colunas empilham na
+    vertical (regressao observada em 2026-08-06).
+    """
+    idx = HTML_TEMPLATE.index('class="tbl-hdr')
+    trecho = HTML_TEMPLATE[idx:idx + 260]
+    assert "display:flex" in trecho
+    assert "display:none" not in trecho
+
+
+def test_panels_toggle_by_class_not_inline_style():
+    """A troca de aba usa a classe panel-hidden, preservando os estilos inline."""
+    assert ".panel-hidden" in CSS_BASE
+    assert "classList.add('panel-hidden')" in JS_BLOCK
+    assert "classList.remove('panel-hidden')" in JS_BLOCK
+    # Nenhum painel pode nascer com display:none inline.
+    for marker in ('data-panel="processes"', 'data-panel="findings"'):
+        pos = 0
+        while True:
+            pos = HTML_TEMPLATE.find(marker, pos)
+            if pos == -1:
+                break
+            fim = HTML_TEMPLATE.find(">", pos)
+            assert "display:none" not in HTML_TEMPLATE[pos:fim], marker
+            pos = fim
 
 
 def test_findings_panel_slot_exists():

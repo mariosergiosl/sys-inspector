@@ -248,6 +248,10 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
 .score-tooltip td:first-child { color: var(--red); font-weight: bold; text-align: right; padding-right: 10px; width: 40px; }
 
 /* --- TABS (Findings / Processes) --- */
+/* A troca de aba usa esta classe, nunca o estilo inline: o cabecalho da tabela
+   declara display:flex inline, e zerar o inline o faria voltar para block,
+   empilhando as colunas na vertical. */
+.panel-hidden { display: none !important; }
 .tabbar { display: flex; gap: 4px; padding: 0 10px; border-bottom: 2px solid #444; }
 .tab {
     padding: 8px 18px; cursor: pointer; font-size: 12px; font-weight: bold;
@@ -508,7 +512,13 @@ JS_BLOCK = r"""
         var panels = document.querySelectorAll('[data-panel]');
         for (var i = 0; i < panels.length; i++) {
             var p = panels[i];
-            p.style.display = (p.getAttribute('data-panel') === name) ? '' : 'none';
+            // Alterna pela classe: mexer em style.display apagaria o display
+            // inline original (o cabecalho da tabela e flex) e quebraria o layout.
+            if (p.getAttribute('data-panel') === name) {
+                p.classList.remove('panel-hidden');
+            } else {
+                p.classList.add('panel-hidden');
+            }
         }
         var tabs = document.querySelectorAll('.tab');
         for (var j = 0; j < tabs.length; j++) {
@@ -590,7 +600,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <span class="tab" data-tab="processes" onclick="showTab('processes', this)">Processes</span>
         </div>
 
-        <div class="controls" data-panel="processes" style="display:none">
+        <div class="controls panel-hidden" data-panel="processes">
             <div class="legend">
                 <div class="leg-grp">
                     <span class="leg-lbl">Priority</span> <div class="bar grad-prio"></div>
@@ -632,7 +642,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <input type="text" id="search" placeholder="Filter processes (PID, User, Disk, Alert)..." onkeyup="filterTable()">
         </div>
 
-        <div class="tbl-hdr" data-panel="processes" style="display:none; border-bottom:2px solid #444; font-weight:bold; color:#aaa; text-transform:uppercase; padding:8px 5px; font-size:11px;">
+        <div class="tbl-hdr panel-hidden" data-panel="processes" style="display:flex; border-bottom:2px solid #444; font-weight:bold; color:#aaa; text-transform:uppercase; padding:8px 5px; font-size:11px;">
              <div style="width:20%">Command Tree</div>
              <div style="width:60px">PID</div>
              <div style="width:90px">Duration</div>
@@ -652,7 +662,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         {FINDINGS_CONTENT}
     </div>
 
-    <div class="table-container" data-panel="processes" style="display:none">
+    <div class="table-container panel-hidden" data-panel="processes">
         <table>
             <colgroup>
                 <col width="20%">
