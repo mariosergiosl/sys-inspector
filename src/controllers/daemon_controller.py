@@ -24,7 +24,8 @@ import logging
 from src.core.engine import SysInspectorEngine
 # [FIXED] Importing the function directly, not a non-existent class
 from src.collectors.system_inventory import collect_full_inventory
-from src.collectors.manager import summarize_metrics
+from src.collectors.manager import summarize_metrics, collect_findings
+from src.core.findings import summarize_by_severity
 # from src.core.database import DatabaseManager
 from src.core.crypto import load_public_key, encrypt_data
 
@@ -136,6 +137,11 @@ class DaemonController:
         full_data['mode'] = 'daemon'
         full_data['agent_uuid'] = self.agent_uuid
         full_data['cycle'] = cycle_id
+
+        # Achados estaticos (persistencia), mesmo conjunto dos demais modos.
+        findings = collect_findings()
+        full_data['findings'] = [f.to_dict() for f in findings]
+        full_data['findings_summary'] = summarize_by_severity(findings)
 
         # D. Metricas quentes (mesmo helper compartilhado do snapshot).
         metrics = summarize_metrics(full_data['processes'])
