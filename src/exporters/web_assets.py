@@ -570,45 +570,58 @@ JS_BLOCK = r"""
         var targetPid = pids[0];
 
         // 1. Vai para a aba Processes.
-        var procTab = document.querySelector('.tab[data-tab="processes"]');
-        showTab('processes', procTab);
+        showTab('processes', document.querySelector('.tab[data-tab="processes"]'));
 
-        // 2. Sobe pelos data-ppid revelando cada ancestral, para o alvo nao
-        //    ficar escondido dentro de um ramo recolhido.
+        // 2. Limpa qualquer filtro ativo ANTES de expandir. Com filtro ligado a
+        //    arvore desabilita os botoes de ramo e esconde o que nao casa, entao
+        //    o alvo poderia ficar invisivel e os controles travados.
+        setFilter('');
+
         var row = document.querySelector('tr[data-pid="' + targetPid + '"]');
         if (!row) { return; }
 
-        var guard = 0;
+        // 3. Monta a cadeia de ancestrais subindo por data-ppid.
+        var chain = [];
         var current = row;
+        var guard = 0;
         while (current && guard < 64) {
             guard++;
-            current.classList.remove('hidden');
-            current.style.display = '';
             var ppid = current.getAttribute('data-ppid');
             if (!ppid || ppid === '0') { break; }
             var parent = document.querySelector('tr[data-pid="' + ppid + '"]');
             if (!parent || parent === current) { break; }
-            // Marca o pai como expandido, se tiver botao de expansao.
-            var btn = document.getElementById('b-' + ppid);
-            if (btn) { btn.innerText = '-'; }
+            chain.push(ppid);
             current = parent;
         }
 
-        // 3. Destaca os demais processos correlacionados, se houver.
-        for (var i = 1; i < pids.length; i++) {
-            var extra = document.querySelector('tr[data-pid="' + pids[i] + '"]');
-            if (extra) {
-                extra.classList.remove('hidden');
-                extra.style.display = '';
-                extra.classList.add('pivot-target');
+        // 4. Expande da raiz para baixo usando a funcao da PROPRIA arvore, para
+        //    o estado (botoes +/- e state.expandedPids) continuar coerente e a
+        //    navegacao seguir funcionando depois do pivo.
+        chain.reverse();
+        for (var i = 0; i < chain.length; i++) {
+            var btn = document.getElementById('b-' + chain[i]);
+            if (btn && btn.innerText === '+' && !btn.classList.contains('disabled')) {
+                toggleBranch(chain[i]);
             }
         }
 
-        // 4. Rola ate o alvo e pisca para o olho encontrar.
-        row.scrollIntoView({behavior: 'smooth', block: 'center'});
-        row.classList.remove('pivot-target');
+        // 5. Rola descontando o cabecalho fixo; sem isso a linha para embaixo
+        //    dele e parece que o pivo nao chegou a lugar nenhum.
+        var sticky = document.querySelector('.sticky-wrapper');
+        var offset = sticky ? sticky.getBoundingClientRect().height + 20 : 20;
+        var y = row.getBoundingClientRect().top + window.pageYOffset - offset;
+        window.scrollTo({top: y > 0 ? y : 0, behavior: 'smooth'});
+
+        // 6. Destaca o alvo e os demais processos correlacionados.
+        document.querySelectorAll('.pivot-target').forEach(function (e) {
+            e.classList.remove('pivot-target');
+        });
         void row.offsetWidth;  // reinicia a animacao
         row.classList.add('pivot-target');
+        for (var k = 1; k < pids.length; k++) {
+            var extra = document.querySelector('tr[data-pid="' + pids[k] + '"]');
+            if (extra) { extra.classList.add('pivot-target'); }
+        }
     }
 
     // Filtra a lista de achados por severidade ('' mostra todos).
