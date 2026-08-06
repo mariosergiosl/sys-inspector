@@ -26,6 +26,73 @@ from cryptography.hazmat.backends import default_backend
 
 
 # ------------------------------------------------------------------------------
+# AGENT IDENTITY AND SIGNING
+# ------------------------------------------------------------------------------
+# A cifra usa a chave PUBLICA do analista: o agente consegue proteger o dado,
+# mas nao consegue assinar com uma chave que nao possui. Para atestar a origem
+# da captura o agente precisa de identidade propria, que e este par de chaves,
+# separado do par usado para confidencialidade.
+def ensure_agent_identity(private_path, public_path):
+    """
+    Garante o par de chaves de identidade do agente, criando na primeira
+    execucao. A chave privada fica legivel apenas pelo dono (0600).
+    """
+    if os.path.exists(private_path) and os.path.exists(public_path):
+        return
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=3072,
+                                   backend=default_backend())
+
+    for path in (private_path, public_path):
+        directory = os.path.dirname(path)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
+
+    with open(private_path, "wb") as handle:
+        handle.write(key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()))
+    try:
+        os.chmod(private_path, 0o600)
+    except Exception:
+        pass
+
+    with open(public_path, "wb") as handle:
+        handle.write(key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo))
+
+
+def sign_bytes(data, private_key):
+    """
+    Assina bytes com RSA-PSS/SHA-256, o esquema recomendado para assinaturas
+    RSA novas. Devolve a assinatura em bytes.
+    """
+    return private_key.sign(
+        data,
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256())
+
+
+def verify_bytes(data, signature, public_key):
+    """
+    Confere a assinatura. Retorna True se valida, False caso contrario, sem
+    levantar excecao: uma assinatura invalida e um resultado, nao um erro.
+    """
+    try:
+        public_key.verify(
+            signature, data,
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                        salt_length=padding.PSS.MAX_LENGTH),
+            hashes.SHA256())
+        return True
+    except Exception:
+        return False
+
+
+# ------------------------------------------------------------------------------
 # KEY MANAGEMENT
 # ------------------------------------------------------------------------------
 def generate_key_pair(private_key_path="private_key.pem", public_key_path="public_key.pem"):

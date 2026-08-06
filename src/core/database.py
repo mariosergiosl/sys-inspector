@@ -123,6 +123,20 @@ class DatabaseManager:
                     )
                 """)
 
+                # 2.1 Cadeia de custodia: digest da captura e do antecessor,
+                # em claro de proposito, para verificar a integridade e a
+                # continuidade da serie sem precisar descriptografar nada.
+                # ALTER guardado por try: bancos criados antes desta versao
+                # ganham as colunas sem perder os dados ja coletados.
+                for column, ctype in (("digest", "TEXT"),
+                                      ("previous_digest", "TEXT"),
+                                      ("custody", "TEXT")):
+                    try:
+                        conn.execute("ALTER TABLE snapshots ADD COLUMN %s %s"
+                                     % (column, ctype))
+                    except Exception:
+                        pass  # ja existe
+
                 # 3. Indexes
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_snap_synced ON snapshots(synced)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_snap_agent_ts ON snapshots(agent_uuid, timestamp)")
@@ -135,7 +149,40 @@ class DatabaseManager:
     # --------------------------------------------------------------------------
     # WRITE OPERATIONS
     # --------------------------------------------------------------------------
-    def insert_snapshot(self, encrypted_bundle, agent_uuid="local", metrics=None):
+    def get_last_digest(self, agent_uuid="local"):
+        """
+        Digest da ultima captura deste agente, que sera o elo anterior da
+        proxima. None quando ainda nao ha antecessor.
+        """
+        try:
+            with closing(self._get_conn()) as conn:
+                cursor = conn.execute(
+                    "SELECT digest FROM snapshots WHERE agent_uuid = ? "
+                    "AND digest IS NOT NULL ORDER BY id DESC LIMIT 1",
+                    (agent_uuid,))
+                row = cursor.fetchone()
+                return row[0] if row else None
+        except Exception as e:
+            self.logger.error(f"Get Last Digest Failed: {e}")
+            return None
+
+    def get_custody_chain(self, agent_uuid="local"):
+        """
+        Serie de registros de custodia do agente, em ordem cronologica, para
+        verificar se alguma captura foi removida ou reordenada.
+        """
+        try:
+            with closing(self._get_conn()) as conn:
+                cursor = conn.execute(
+                    "SELECT custody FROM snapshots WHERE agent_uuid = ? "
+                    "AND custody IS NOT NULL ORDER BY id ASC", (agent_uuid,))
+                return [json.loads(r[0]) for r in cursor if r[0]]
+        except Exception as e:
+            self.logger.error(f"Get Custody Chain Failed: {e}")
+            return []
+
+    def insert_snapshot(self, encrypted_bundle, agent_uuid="local", metrics=None,
+                        custody=None):
         if metrics is None: metrics = {}
 
         # Prepare JSON before lock
@@ -157,8 +204,8 @@ class DatabaseManager:
                     INSERT INTO snapshots (
                         agent_uuid, timestamp,
                         cpu_avg, mem_used_mb, pids_count, alert_score, is_alert,
-                        json_blob, synced
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                        json_blob, synced, digest, previous_digest, custody
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
                 """, (
                     agent_uuid,
                     time.time(),
@@ -167,7 +214,10 @@ class DatabaseManager:
                     metrics.get('pids', 0),
                     metrics.get('score', 0),
                     1 if metrics.get('score', 0) > 0 else 0,
-                    blob_json
+                    blob_json,
+                    (custody or {}).get('digest'),
+                    (custody or {}).get('previous_digest'),
+                    json.dumps(custody) if custody else None
                 ))
                 # Guarda o id da linha recem-inserida para retorno ao chamador
                 # (antes retornava True, o que fazia o log exibir "ID: True").
