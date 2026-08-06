@@ -42,7 +42,8 @@ try:
         render_os_block,
         render_net_block,
         render_disk_block,
-        render_process_rows
+        render_process_rows,
+        render_findings_panel
     )
 except ImportError as e:
     print(f"[CRITICAL] Import Error in WebController: {e}")
@@ -353,6 +354,12 @@ class WebController:
                     }};
                 """
 
+                # Achados normalizados da captura, na mesma aba Findings do
+                # relatorio estatico (o template exige os dois placeholders).
+                findings = inv.get('findings', []) or []
+                findings_html = render_findings_panel(findings)
+                actionable = sum(1 for f in findings if f.get('severity') != 'Info')
+
                 return HTML_TEMPLATE.format(
                     VERSION="0.90 (Live)",
                     HOSTNAME=escape(inv.get('os', {}).get('hostname', 'Unknown')),
@@ -363,6 +370,8 @@ class WebController:
                     OS_CONTENT=os_html,
                     DISK_CONTENT=disk_html,
                     NET_CONTENT=net_html,
+                    FINDINGS_CONTENT=findings_html,
+                    FINDINGS_BADGE=(f"<span class='tab-count'>{actionable}</span>" if actionable else ""),
                     TABLE_ROWS=rows_html
                 )
             except Exception as e:
