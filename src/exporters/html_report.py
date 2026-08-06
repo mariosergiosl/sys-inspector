@@ -15,6 +15,7 @@
 
 # import os
 import re
+import html as html_lib
 from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, JS_BLOCK, LEGEND_HTML
 
 
@@ -212,15 +213,33 @@ def _process_cgroups_block(raw_cgroups):
     for path, data in grouped.items():
         ctrl_tags = ""
         for c in sorted(data["ctrls"]):
-            ctrl_tags += f"<span style='background:#333; color:#aaa; border:1px solid #555; padding:2px 4px; font-size:10px; border-radius:3px; margin-right:4px; display:inline-block;'>{c}</span>"
+            ctrl_tags += f"<span style='background:#333; color:#aaa; border:1px solid #555; padding:2px 4px; font-size:10px; border-radius:3px; margin-right:4px; display:inline-block;'>{_esc(c)}</span>"
 
         final_html += f"<div style='margin-bottom:6px; border-bottom:1px dashed #333; padding-bottom:4px'>"
         final_html += f"<div>{data['html']}</div>"
         final_html += f"<div style='margin-top:4px'>{ctrl_tags} {data['ver_html']}</div>"
-        final_html += f"<div style='font-size:9px; color:#555; margin-top:2px; word-break:break-all'>{path}</div>"
+        final_html += f"<div style='font-size:9px; color:#555; margin-top:2px; word-break:break-all'>{_esc(path)}</div>"
         final_html += "</div>"
 
     return final_html
+
+
+# ------------------------------------------------------------------------------
+# HTML SAFETY
+# ------------------------------------------------------------------------------
+def _esc(value):
+    """
+    Escapa um valor para insercao segura no relatorio (texto ou atributo).
+
+    Necessario porque o conteudo capturado e controlado por quem esta no host
+    analisado: linha de comando, caminhos de arquivo e bibliotecas podem conter
+    aspas, '<' ou '&'. Sem escapar, uma aspa numa cmdline fecha o atributo
+    title="..." e o restante do texto vaza para a pagina; um processo nomeado
+    com marcacao poderia ainda injetar HTML no laudo lido pelo analista.
+
+    Aplicar SEMPRE ao dado, nunca ao HTML montado pelo proprio renderizador.
+    """
+    return html_lib.escape("" if value is None else str(value), quote=True)
 
 
 # ------------------------------------------------------------------------------
@@ -284,7 +303,9 @@ def _render_badges(node, tree=None):
                     tooltip += f"\nWaiting for Parent PID: {node.ppid}\nParent Cmd: {parent_node.cmd}\nParent User: {parent_node.username}"
                 else:
                     tooltip += f"\nParent PID {node.ppid} not found in tree."
-            badges.append(f'<span class="tag {cls}" data-filter="{tag}" title="{tooltip}">{icon}<span class="visually-hidden">{tag}</span></span>')
+            # A cmdline do processo pai entra aqui; sem escapar, uma aspa nela
+            # fecha o atributo title="..." e o resto do texto vaza para a pagina.
+            badges.append(f'<span class="tag {cls}" data-filter="{tag}" title="{_esc(tooltip)}">{icon}<span class="visually-hidden">{tag}</span></span>')
             seen.add(tag)
 
     tree_drops = getattr(node, 'tree_tcp_drops', 0)
@@ -307,10 +328,9 @@ def _render_badges(node, tree=None):
                 tooltip = f"Severity {severity} (score {score_to_show}).\nBreakdown:\n- {breakdown}"
         else:
             tooltip = f"Severity {severity}: aggregated from child processes (open the subtree for details)."
-        # Escape for safe use inside the title="" attribute.
-        tooltip = (tooltip.replace('&', '&amp;').replace('"', '&quot;')
-                   .replace('<', '&lt;').replace('>', '&gt;'))
-        badges.append(f'<b class="tag t-warn" data-filter="WARN" title="{tooltip}">⚠️ {severity}<span class="visually-hidden">WARN severity {severity}</span></b>')
+        # Escape for safe use inside the title="" attribute (as razoes incluem
+        # a cmdline do processo).
+        badges.append(f'<b class="tag t-warn" data-filter="WARN" title="{_esc(tooltip)}">⚠️ {severity}<span class="visually-hidden">WARN severity {severity}</span></b>')
 
     # [FIX] EDR-WAIT is already emitted by the context_tags loop above (it is in
     # tag_map), so the previous dedicated block here produced a duplicate badge.
@@ -322,13 +342,13 @@ def _render_badges(node, tree=None):
 def _get_details_html(node, mounts):
     """Builds the hidden detail row content."""
     html = "<div class='det-grid'><div><table class='ctx-tbl'>"
-    html += f"<tr><td class='ctx-lbl'>Full Command:</td><td class='ctx-val'>{node.cmd}</td></tr>"
-    html += f"<tr><td class='ctx-lbl'>MD5:</td><td class='ctx-val'>{node.md5}</td></tr>"
+    html += f"<tr><td class='ctx-lbl'>Full Command:</td><td class='ctx-val'>{_esc(node.cmd)}</td></tr>"
+    html += f"<tr><td class='ctx-lbl'>MD5:</td><td class='ctx-val'>{_esc(node.md5)}</td></tr>"
 
-    user_display = f"{node.username} ({node.uid})"
+    user_display = f"{_esc(node.username)} ({node.uid})"
     login_user = getattr(node, 'loginuser', None)
     if login_user and login_user != "unset" and login_user != node.username:
-        user_display += f" <span style='color:var(--yel); font-weight:bold; margin-left:5px'>&larr; via {login_user}</span>"
+        user_display += f" <span style='color:var(--yel); font-weight:bold; margin-left:5px'>&larr; via {_esc(login_user)}</span>"
     html += f"<tr><td class='ctx-lbl'>User/UID:</td><td class='ctx-val'>{user_display}</td></tr>"
 
     raw_sec = getattr(node, 'security_context', 'N/A')
@@ -351,7 +371,7 @@ def _get_details_html(node, mounts):
     role_tooltip = "Standard: Normal application.\nInspector: Security tool monitoring other processes via Fanotify."
     html += f"<tr><td class='ctx-lbl' style='{role_style}' title='{role_tooltip}'>Process Role <span style='cursor:help;font-size:10px;border:1px solid #555;border-radius:50%;width:12px;height:12px;display:inline-flex;align-items:center;justify-content:center'>?</span>:</td><td class='ctx-val' style='{role_style}'>{role_val}</td></tr>"
 
-    c_id = node.container_id or 'Host'
+    c_id = _esc(node.container_id or 'Host')
     html += f"<tr><td class='ctx-lbl'>Container:</td><td class='ctx-val'>{c_id}</td></tr>"
 
     if hasattr(node, 'cgroups') and node.cgroups:
@@ -388,7 +408,7 @@ def _get_details_html(node, mounts):
     html += "<div style='font-size:10px; font-weight:bold; color:#777; margin-bottom:2px; text-transform:uppercase'>Active Connections:</div>"
     if node.connections:
         for c in node.connections:
-            html += f"<div class='mono' style='color:#bbb; font-size:11px'>{c}</div>"
+            html += f"<div class='mono' style='color:#bbb; font-size:11px'>{_esc(c)}</div>"
     else:
         html += "<div class='d-na' style='margin-left:10px'>No active connections</div>"
 
@@ -410,7 +430,7 @@ def _get_details_html(node, mounts):
 
         html += "<div class='list-box' style='max-height:150px; margin-top:5px'>"
         for pair, count in display_items:
-            html += f"<div class='mono' style='color:#ff6b6b; font-size:11px; margin-left:5px'>{pair} <span style='color:#fff;font-weight:bold'>[x{count}]</span></div>"
+            html += f"<div class='mono' style='color:#ff6b6b; font-size:11px; margin-left:5px'>{_esc(pair)} <span style='color:#fff;font-weight:bold'>[x{count}]</span></div>"
 
         if remainder > 0:
             html += f"<div style='color:#777; font-style:italic; margin-left:5px; margin-top:2px'>... and {remainder} more unique blocked targets.</div>"
@@ -423,7 +443,7 @@ def _get_details_html(node, mounts):
     if reasons:
         html += "<div class='det-blk'><span class='det-title' style='color:var(--red)'>Security Forensics</span>"
         for r in reasons:
-            html += f"<div style='color:#ff6b6b; margin-left:10px; font-weight:bold;'>&bull; {r}</div>"
+            html += f"<div style='color:#ff6b6b; margin-left:10px; font-weight:bold;'>&bull; {_esc(r)}</div>"
         html += "</div>"
 
     html += "<div class='det-blk'><span class='det-title'>Loaded Libraries</span>"
@@ -432,9 +452,10 @@ def _get_details_html(node, mounts):
         is_cont = (node.container_id is not None)
         for lib in sorted(node.libs):
             dstr = build_disk_string(lib, mounts, is_cont)
-            safe_lib = lib
+            # Escapa o caminho ANTES de envolver na marcacao de destaque.
+            safe_lib = _esc(lib)
             if is_suspicious_lib(lib):
-                safe_lib = f"<span style='color:var(--red);font-weight:bold'>{lib} <span class='tag t-unsafe'>[UNSAFE]</span></span>"
+                safe_lib = f"<span style='color:var(--red);font-weight:bold'>{_esc(lib)} <span class='tag t-unsafe'>[UNSAFE]</span></span>"
             ls_html.append(f"<div>{safe_lib} {dstr}</div>")
 
         libs_content = '\n'.join(ls_html)
@@ -453,9 +474,9 @@ def _get_details_html(node, mounts):
             if hasattr(node, 'file_metadata') and f in node.file_metadata:
                 m_str = node.file_metadata[f]
                 if m_str:
-                    meta = f"<span style='color:#aaa;font-size:0.9em;margin-right:5px'>[{m_str}]</span>"
+                    meta = f"<span style='color:#aaa;font-size:0.9em;margin-right:5px'>[{_esc(m_str)}]</span>"
 
-            ls_files.append(f"<div style='font-family:monospace; font-size:11px'>{f} {meta} {dstr}</div>")
+            ls_files.append(f"<div style='font-family:monospace; font-size:11px'>{_esc(f)} {meta} {dstr}</div>")
 
         files_content = '\n'.join(ls_files)
         html += f"<div class='list-box'>{files_content}</div>"
@@ -623,10 +644,10 @@ def render_process_rows(tree, mounts):
         data_attrs = f'data-pid="{node.pid}" data-prio="{-nice_val}" data-cpu="{node.cpu_usage_pct}" data-mem="{node.rss}" data-io="{total_io}" data-net="{own_net_total}"'
 
         rows_html += f"""<tr class="{row_cls}" {data_attrs} onclick="toggleDet({node.pid})">
-            <td width="20%" style="{cmd_style}">{indent}{expander} {node.cmd}</td>
+            <td width="20%" style="{cmd_style}">{indent}{expander} {_esc(node.cmd)}</td>
             <td width="60" style="{pid_style}">{node.pid}</td>
-            <td width="90">{getattr(node, 'duration_str', 'N/A')}</td>
-            <td width="90">{node.username}</td>
+            <td width="90">{_esc(getattr(node, 'duration_str', 'N/A'))}</td>
+            <td width="90">{_esc(node.username)}</td>
             <td width="50" style="color:{prio_color}">{nice_val}</td>
             <td width="60" class="{cpu_style}">{node.cpu_usage_pct:.1f}%</td>
             <td width="80">{format_bytes(node.rss)}</td>
