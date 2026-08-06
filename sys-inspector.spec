@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           sys-inspector
-Version:        0.90.16
+Version:        0.91.0
 Release:        1%{?dist}
 Summary:        System inspector and forensic tool using eBPF (Multi-Agent/Web)
 
@@ -114,6 +114,11 @@ ln -sf %{_sbindir}/service %{buildroot}%{_sbindir}/rc%{name}
 %dir %attr(0750,root,root) /var/log/sys-inspector/reports
 
 %changelog
+* Thu Aug 06 2026 Mario Luz <mario.mssl@gmail.com> - 0.91.0-1
+- Added: normalized Finding entity (single severity scale, explicit source, MITRE ATT&CK technique, attached evidence) and a persistence collector covering systemd units, cron/at, startup scripts, ld.so.preload, kernel module autoload, udev rules, PAM stacks and per-user authorized_keys.
+- Added: first automated test suite (pytest) wired into CI.
+- Changed: all execution modes unified on a single encrypted storage model and data shape; live and server modes restored.
+- Fixed: snapshot hot columns were always zero; alert badge showed a raw score; host-controlled data was not escaped in the HTML report; rpmlint findings in the package.
 * Sun Jul 12 2026 Mario Luz <mario.mssl@gmail.com> - 0.90.16-1
 - Security: optional dashboard HTTP Basic Auth and HTTPS (self-signed auto-generation), XSS prevention in the Fleet/Inspector views, and setup-script PATH hardening.
 - Fixed: pyproject/setup packaging conflict, honor general.log_level, leaf-node expander literal, duplicate EDR-WAIT badge, WARN score tooltip, and false-positive NET ERR on kernel threads.

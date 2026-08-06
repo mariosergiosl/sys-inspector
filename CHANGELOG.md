@@ -5,6 +5,28 @@ All notable changes to the **Sys-Inspector** project will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.91.0] - 2026-08-06
+
+### Added
+
+- **Finding entity**: a normalized unit of evidence shared by every collector, with a single severity scale (Info to Critical), an explicit `source` so the analyst can tell a runtime observation from a static check, the MITRE ATT&CK technique, the raw evidence attached, and a stable fingerprint for cross-capture deduplication.
+- **Persistence enumeration**: systemd units, cron/at entries, `rc.local` and profile scripts, `/etc/ld.so.preload`, kernel module autoload, udev rules, PAM stacks and per-user `authorized_keys`. Baseline items are reported as informational; severity is raised only on real indicators (execution from user-writable paths, world-writable files, hidden names, recent modification).
+- Findings are collected by the snapshot, daemon and live modes and travel inside the encrypted payload.
+- First automated test suite (pytest), wired into the CI workflow alongside flake8 and pylint.
+
+### Changed
+
+- All execution modes now share a single storage layer, a single data shape and a single behavior: captures are always encrypted, including in live mode.
+- Agent identity is stable and shared across modes.
+
+### Fixed
+
+- Snapshot hot columns (CPU, memory, PID count, alert score) were always stored as zero, which defeated timeline and alert sorting; `insert_snapshot` also returned `True` instead of the row id.
+- The alert badge rendered a raw score number that repeated on every ancestor of the worst process; it now shows a severity level.
+- Host-controlled data (command lines, file and library paths, usernames, cgroup paths) was interpolated into the HTML report without escaping, so a quote in a command line could break out of a tooltip attribute and leak text into the report. Evidence text is still shown faithfully, but is now inert.
+- Live and server modes were calling a storage API that did not exist and could not render captures; both work again.
+- Packaging issues reported by rpmlint (script shebangs, line endings, summary, SUSE rc link).
+
 ## [Unreleased]
 
 ### Documentation
