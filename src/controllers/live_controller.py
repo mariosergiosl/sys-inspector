@@ -26,7 +26,8 @@ from socketserver import ThreadingMixIn
 # Internal Modules
 from src.core.engine import SysInspectorEngine
 from src.collectors.system_inventory import collect_full_inventory
-from src.collectors.manager import summarize_metrics
+from src.collectors.manager import summarize_metrics, collect_findings
+from src.core.findings import summarize_by_severity
 from src.exporters.html_report import generate_report, generate_table_fragment
 from src.collectors.process_tree import ProcessTree, ProcessNode
 from src.core.crypto import (load_public_key, load_private_key,
@@ -197,6 +198,11 @@ class LiveController:
                 full_inv['processes'] = self.engine.tree.to_json()
                 full_inv['agent_uuid'] = self.db.agent_id
                 full_inv['mode'] = 'live'
+
+                # Achados estaticos (persistencia), mesmo conjunto dos demais modos.
+                findings = collect_findings()
+                full_inv['findings'] = [f.to_dict() for f in findings]
+                full_inv['findings_summary'] = summarize_by_severity(findings)
 
                 # 3. Encrypt + Save (cifrado como os demais modos, com as
                 # colunas quentes preenchidas via helper compartilhado).
