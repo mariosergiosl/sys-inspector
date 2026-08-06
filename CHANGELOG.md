@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.91.0] - 2026-08-06
 
+### Changed - License
+
+- **Relicensed from GPL-3.0-only to AGPL-3.0-only.** Sys-Inspector can be operated as a network service (multi-agent server and web dashboard), and the AGPL extends the copyleft to that case: anyone who runs a modified version and offers it to users over a network must make the corresponding source of their modified version available to those users. Under GPL alone, a modified version could be offered as a hosted service without ever sharing the changes. Relicensed by the sole copyright holder; the trademark policy in TRADEMARK.md is unaffected.
+
 ### Added
 
 - **Finding entity**: a normalized unit of evidence shared by every collector, with a single severity scale (Info to Critical), an explicit `source` so the analyst can tell a runtime observation from a static check, the MITRE ATT&CK technique, the raw evidence attached, and a stable fingerprint for cross-capture deduplication.

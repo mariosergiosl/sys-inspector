@@ -27,7 +27,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name='sys-inspector',
     version='0.91.0',
-    license='GPLv3',
+    license='AGPLv3',
     author='Mario Luz',
     author_email='mario.mssl[at]gmail.com',
     description='eBPF-based System Inspector and Forensic Tool (Multi-Agent/Web)',
@@ -69,7 +69,7 @@ setup(
 
     classifiers=[
         "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+        "License :: OSI Approved :: GNU Affero General Public License v3",
         "Operating System :: POSIX :: Linux",
         "Topic :: System :: Systems Administration",
     ],

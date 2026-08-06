@@ -4,7 +4,7 @@
 
 [![OBS Build Status](https://build.opensuse.org/projects/home:mariosergiosl:sys-inspector/packages/sys-inspector/badge.svg)](https://build.opensuse.org/package/show/home:mariosergiosl:sys-inspector/sys-inspector)
 [![PyPI version](https://img.shields.io/pypi/v/sys-inspector.svg)](https://pypi.org/project/sys-inspector/)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform: Linux](https://img.shields.io/badge/platform-linux-green.svg?logo=linux&logoColor=white)](https://www.kernel.org/)
 [![GitHub Release](https://img.shields.io/github/v/release/mariosergiosl/sys-inspector)](https://github.com/mariosergiosl/sys-inspector/releases)
@@ -13,7 +13,10 @@ O **Sys-Inspector** é uma ferramenta avançada de observabilidade e forense mov
 
 Diferente das ferramentas tradicionais que consultam o `/proc` periodicamente, o Sys-Inspector se conecta diretamente ao Kernel do Linux para capturar eventos (execução de processos, I/O de arquivos, conexões de rede) em tempo real.
 
-## Funcionalidades (v0.90.16)
+## Funcionalidades (v0.91.0)
+
+* **Achados forenses (Findings):** Todo coletor emite achados normalizados numa escala única de severidade (Info a Crítico), cada um informando a fonte que o produziu, a técnica MITRE ATT&CK, a evidência bruta e a ação recomendada.
+* **Enumeração de persistência:** Responde à primeira pergunta diante de suspeita de comprometimento, como um invasor sobreviveria a um reboot: units systemd, tarefas cron/at, scripts de inicialização e de perfil, `/etc/ld.so.preload`, autoload de módulos de kernel, regras udev, pilhas PAM e `authorized_keys` por usuário. Itens de baseline permanecem informativos; a severidade só sobe diante de indicadores reais, como execução a partir de diretórios graváveis por usuário, arquivos graváveis por todos, nomes ocultos ou alteração recente.
 
 * **Painel Fleet View:** Monitora vários nós da infraestrutura a partir de uma interface web centralizada.
 * **Time Machine Forense:** Pausa a execução ao vivo e volta no tempo para inspecionar snapshots históricos armazenados em SQLite.
@@ -194,6 +197,21 @@ Para parar: pressione Ctrl+C. O script captura o sinal e limpa automaticamente a
     │   ├── probes/            # Código-fonte C do eBPF
     │   ├── storage/           # Interface e handlers de armazenamento
     │   └── utils/             # Carregadores de configuração
+    ├── tests/                 # Suíte de testes automatizados (pytest)
     ├── tools/                 # Ferramentas operacionais (chaos_maker, setup_env, geração de chaves/senha)
     └── main.py                # Ponto de Entrada Unificado
 ```
+
+## Licença
+
+O Sys-Inspector é software livre distribuído sob a **GNU Affero General Public
+License v3.0 only (AGPL-3.0-only)**. O texto completo está em [LICENSE.md](LICENSE.md).
+
+A AGPL foi escolhida porque o Sys-Inspector pode ser operado como serviço de rede
+(servidor multiagente e painel web). Quem executar uma versão modificada e
+disponibilizá-la a usuários pela rede precisa oferecer a esses usuários o código
+correspondente da versão modificada.
+
+A licença cobre apenas o código-fonte. **"Sys-Inspector" e seu logotipo são
+marcas** e não são licenciados junto com o código; veja [TRADEMARK.md](TRADEMARK.md)
+e [NOTICE](NOTICE).

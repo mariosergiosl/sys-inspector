@@ -10,7 +10,7 @@ Release:        1%{?dist}
 Summary:        System inspector and forensic tool using eBPF (Multi-Agent/Web)
 
 Group:          System/Monitoring
-License:        GPL-3.0-only
+License:        AGPL-3.0-only
 URL:            https://github.com/mariosergiosl/sys-inspector
 Source0:        %{name}-%{version}.tar.gz
 

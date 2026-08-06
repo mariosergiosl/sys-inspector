@@ -1,9 +1,15 @@
 Sys-Inspector
 Copyright (C) 2025-2026 Mario Luz (Mario Sergio)
 
-This program is free software licensed under the GNU General Public License
-version 3.0 only (GPL-3.0-only). See LICENSE.md for the full license text.
+This program is free software licensed under the GNU Affero General Public
+License version 3.0 only (AGPL-3.0-only). See LICENSE.md for the full license
+text.
+
+Because Sys-Inspector can be operated as a network service (multi-agent server
+and web dashboard), the AGPL applies: anyone who runs a modified version and
+makes it available to users over a network must offer those users the
+corresponding source of their modified version.
 
 "Sys-Inspector" and its logo are trademarks of Mario Luz. The software license
-(GPL-3.0) covers the source code only; it does not grant any right to use the
+(AGPL-3.0) covers the source code only; it does not grant any right to use the
 "Sys-Inspector" name or logo. See TRADEMARK.md.
