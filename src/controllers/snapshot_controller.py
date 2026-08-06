@@ -176,7 +176,8 @@ class SnapshotController:
             row_id = self.db.insert_snapshot(encrypted_bundle,
                                              agent_uuid=getattr(self.db, 'agent_id', 'local'),
                                              metrics=metrics,
-                                             custody=custody)
+                                             custody=custody,
+                                             findings_summary=full_data.get('findings_summary'))
             if row_id:
                 self.logger.info(f"[CORE] Encrypted Snapshot saved to DB (ID: {row_id}).")
             else:
