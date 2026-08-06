@@ -33,8 +33,13 @@ import logging
 
 from src.core.findings import (Finding, SEV_INFO, SEV_LOW, SEV_MEDIUM,
                                SEV_HIGH, SEV_CRITICAL, SRC_PERSISTENCE)
+from src.collectors.integrity import describe_provenance
 
 LOG = logging.getLogger("Persistence")
+
+# Peso das severidades, para comparar sem depender da ordem de importacao.
+SEVERITY_RANK = {SEV_INFO: 0, SEV_LOW: 1, SEV_MEDIUM: 2,
+                 SEV_HIGH: 3, SEV_CRITICAL: 4}
 
 # Diretorios de onde um binario legitimo de sistema normalmente NAO e executado.
 # Persistencia apontando para ca e um indicador forte de comprometimento.
@@ -124,6 +129,45 @@ def _has_unsafe_path(text):
         if match:
             return match.group(0)
     return None
+
+
+def _apply_provenance(finding, path):
+    """
+    Ajusta o achado conforme a proveniencia do arquivo e anexa a evidencia.
+
+    Um mecanismo de persistencia que PERTENCE a um pacote e software de sistema
+    esperado, e nao deve gritar como comprometimento; um que nao pertence a
+    pacote nenhum foi colocado ali por alguem, e esse e o sinal que interessa.
+    Um arquivo empacotado que nao confere mais com o pacote de origem e o pior
+    caso: sistema adulterado.
+
+    Devolve o proprio achado, ja ajustado.
+    """
+    prov = describe_provenance(path)
+    finding.evidence["provenance"] = prov
+
+    if prov.get("packaged"):
+        if prov.get("verified") is False:
+            # Adulteracao de arquivo de sistema: eleva ao maximo.
+            finding.severity = SEV_CRITICAL
+            finding.description += (
+                " This file belongs to package %s but no longer matches what "
+                "the package installed (%s), which indicates tampering."
+                % (prov.get("package"), ", ".join(prov.get("issues") or [])))
+        else:
+            # Pertence a pacote e integro: comportamento esperado do sistema.
+            if SEVERITY_RANK.get(finding.severity, 0) > SEVERITY_RANK[SEV_LOW]:
+                finding.severity = SEV_LOW
+            finding.description += (
+                " This artifact belongs to the installed package %s and matches "
+                "what the package shipped, so it is expected system software."
+                % prov.get("package"))
+    elif prov.get("package") is None and finding.severity != SEV_INFO:
+        finding.description += (
+            " This artifact does not belong to any installed package, so it was "
+            "placed on the system outside package management.")
+
+    return finding
 
 
 def _escalate(meta, base=SEV_LOW):
@@ -217,7 +261,7 @@ def _collect_systemd_units():
                 severity, reasons = SEV_INFO, []
 
             if unsafe:
-                findings.append(Finding(
+                finding = Finding(
                     title="systemd unit executes from an unsafe path",
                     severity=SEV_CRITICAL,
                     source=SRC_PERSISTENCE,
@@ -229,7 +273,8 @@ def _collect_systemd_units():
                     evidence={"reference": unsafe, "content": content, "meta": meta},
                     technique="T1543.002",
                     recommendation="Inspect the referenced binary and the unit origin.",
-                ))
+                )
+                findings.append(_apply_provenance(finding, path))
             elif severity in (SEV_MEDIUM, SEV_HIGH):
                 findings.append(Finding(
                     title="systemd unit with suspicious attributes",
@@ -284,7 +329,7 @@ def _collect_cron():
             severity, reasons = _escalate(meta, base=SEV_INFO)
 
             if unsafe:
-                findings.append(Finding(
+                finding = Finding(
                     title="Scheduled task runs from an unsafe path",
                     severity=SEV_CRITICAL,
                     source=SRC_PERSISTENCE,
@@ -296,7 +341,8 @@ def _collect_cron():
                     evidence={"reference": unsafe, "content": content, "meta": meta},
                     technique="T1053.003",
                     recommendation="Verify the scheduled command and who installed it.",
-                ))
+                )
+                findings.append(_apply_provenance(finding, path))
             elif severity in (SEV_MEDIUM, SEV_HIGH):
                 findings.append(Finding(
                     title="Scheduled task with suspicious attributes",
