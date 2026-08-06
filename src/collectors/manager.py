@@ -37,15 +37,28 @@ def summarize_metrics(processes):
 
     pids = len(nodes)
 
+    def _number(value, cast):
+        """
+        Converte um valor da captura, tolerando dado ausente ou malformado.
+
+        Este resumo roda em TODA captura: deixar uma excecao escapar por causa
+        de um unico processo com valor estranho custaria a coleta inteira, que
+        e justamente o que nao se pode perder numa pericia.
+        """
+        try:
+            return cast(value or 0)
+        except (TypeError, ValueError):
+            return cast(0)
+
     # CPU: utilizacao media por core no periodo. cpu_usage_pct ja vem calculado
     # na janela de captura; somamos por processo e dividimos pelo numero de
     # cores para obter um percentual medio de ocupacao.
-    total_cpu = sum(float(p.get("cpu_usage_pct", 0.0) or 0.0) for p in nodes)
+    total_cpu = sum(_number(p.get("cpu_usage_pct"), float) for p in nodes)
     ncpu = os.cpu_count() or 1
     cpu_avg = round(total_cpu / ncpu, 1)
 
     # Score de alerta: pico de anomaly_score na arvore (processo mais suspeito).
-    score = max((int(p.get("anomaly_score", 0) or 0) for p in nodes), default=0)
+    score = max((_number(p.get("anomaly_score"), int) for p in nodes), default=0)
 
     # Memoria usada (MB) via /proc/meminfo: MemTotal - MemAvailable.
     mem_used = 0
