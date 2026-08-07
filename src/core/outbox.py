@@ -120,8 +120,6 @@ class Outbox(object):
     def _register_success(self):
         self._failures = 0
         self._next_attempt = 0.0
-        # Ordens trazidas pelo ultimo check-in.
-        self.pending_commands = []
 
     # --------------------------------------------------------------------------
     # TRANSPORTE
@@ -206,7 +204,13 @@ class Outbox(object):
         # A MESMA ida e volta ja traz o que o analista pediu. Perguntar por
         # comandos numa requisicao separada dobraria o trafego e criaria dois
         # relogios diferentes para a mesma conversa com o servidor.
-        self.pending_commands = answer.get("commands", []) or []
+        #
+        # ACUMULA, nunca substitui. O servidor entrega cada comando UMA UNICA
+        # vez: qualquer resposta sobrescrita aqui significa um pedido perdido em
+        # silencio, com o painel exibindo "entregue" para algo que nao rodou.
+        # Entrega e check-in fazem esta mesma chamada no mesmo ciclo, entao a
+        # lista so pode ser esvaziada por quem for de fato executa-la.
+        self.pending_commands.extend(answer.get("commands", []) or [])
         if not answer.get("granted", True):
             return 0, int(answer.get("retry_after", BACKOFF_BASE) or BACKOFF_BASE)
         return int(answer.get("slots", self.batch_size) or self.batch_size), 0
@@ -227,7 +231,6 @@ class Outbox(object):
         """
         if not self.enabled or self._should_wait():
             return []
-        self.pending_commands = []
         try:
             pendentes = len(self.db.get_pending_snapshots(limit=self.batch_size))
         except Exception:
@@ -238,7 +241,16 @@ class Outbox(object):
         except Exception as exc:
             LOG.debug("[OUTBOX] Check-in failed: %s", exc)
             self._register_failure()
-        return self.pending_commands
+
+        # Entrega para quem vai executar e esvazia: como o servidor nao repete um
+        # comando ja entregue, deixa-lo na lista o executaria de novo a cada
+        # ciclo, e nao o remover perderia o pedido.
+        recolhidos = self.pending_commands
+        self.pending_commands = []
+        if recolhidos:
+            LOG.info("[OUTBOX] %d command(s) received from the server",
+                     len(recolhidos))
+        return recolhidos
 
     def report_command(self, command_id, ok, result=""):
         """Devolve ao servidor o desfecho de um comando executado."""
