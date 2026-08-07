@@ -90,6 +90,10 @@ def load_config(config_path):
 
         # Merge with defaults to guarantee structure
         final_config = _merge_defaults(user_config, DEFAULT_CONFIG)
+        # Guarda a origem para que um processo de longa duracao consiga reler o
+        # proprio arquivo. Sem isso, so um restart aplicaria qualquer ajuste, e
+        # reiniciar um agente descarta a janela de captura em andamento.
+        final_config['_source_path'] = os.path.abspath(config_path)
         return final_config
 
     except yaml.YAMLError as exc:

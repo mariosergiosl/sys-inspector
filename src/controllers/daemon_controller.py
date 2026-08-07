@@ -15,6 +15,7 @@
 # VERSION: v0.90.16
 # ==============================================================================
 
+import os
 import time
 import logging
 # import threading
@@ -74,6 +75,73 @@ class DaemonController:
             self.logger.info("[OUTBOX] Forwarding captures to %s",
                              self.outbox._base_url())
 
+        # Origem da configuracao e a marca de tempo do arquivo, para reler o que
+        # o operador mudar sem exigir restart.
+        self.config_path = config.get('_source_path')
+        self._config_mtime = self._mtime_config()
+
+    # --------------------------------------------------------------------------
+    # CONFIGURACAO EM TEMPO DE EXECUCAO
+    # --------------------------------------------------------------------------
+    def _mtime_config(self):
+        try:
+            return os.path.getmtime(self.config_path) if self.config_path else 0
+        except OSError:
+            return 0
+
+    def reload_config_if_changed(self):
+        """
+        Rele o arquivo de configuracao quando ele muda no disco.
+
+        Sem isso, ajustar o destino ou o intervalo exigia reiniciar o agente, e
+        reiniciar descarta a janela de captura em andamento. Pior: uma troca de
+        transporte passava a falhar em silencio, com o agente tentando o
+        endereco antigo em backoff enquanto o arquivo ja dizia outra coisa.
+
+        Nem tudo pode mudar a quente. As chaves criptograficas e o modo de
+        operacao continuam presos ao processo: troca-los no meio do caminho
+        deixaria capturas da mesma sessao com identidades diferentes, e um laudo
+        precisa ser coerente do inicio ao fim.
+        """
+        atual = self._mtime_config()
+        if not atual or atual == self._config_mtime:
+            return False
+
+        try:
+            from src.utils.config_loader import load_config
+            novo = load_config(self.config_path)
+        except (Exception, SystemExit) as exc:
+            # Arquivo invalido nao pode derrubar a coleta: segue com o que ja
+            # estava valendo e avisa.
+            #
+            # SystemExit entra na lista de proposito: load_config encerra o
+            # processo quando o YAML nao parseia, o que e correto na partida,
+            # mas fatal num agente em operacao. Um erro de digitacao do operador
+            # mataria a coleta de um host sob investigacao.
+            self.logger.error("[CONFIG] Reload failed, keeping previous: %s", exc)
+            self._config_mtime = atual
+            return False
+
+        self._config_mtime = atual
+        self.config = novo
+
+        antes = self.outbox._base_url() if self.outbox.enabled else "local only"
+        self.interval = novo['daemon'].get('interval', self.interval)
+        self.capture_duration = novo['daemon'].get('capture_duration',
+                                                   self.capture_duration)
+        # Substitui o transmissor inteiro em vez de remendar campo por campo:
+        # um estado de backoff herdado do destino antigo atrasaria a primeira
+        # tentativa contra o destino novo.
+        self.outbox = Outbox(self.db, novo)
+        depois = self.outbox._base_url() if self.outbox.enabled else "local only"
+
+        self.logger.info("[CONFIG] Reloaded: capture=%ss sleep=%ss transport=%s",
+                         self.capture_duration, self.interval, depois)
+        if antes != depois:
+            self.logger.warning("[CONFIG] Transport changed: %s -> %s",
+                                antes, depois)
+        return True
+
     def run(self):
         """
         Main Execution Loop.
@@ -96,6 +164,10 @@ class DaemonController:
         # 2. Main Loop
         while not self.shutdown_event.is_set():
             cycle_count += 1
+
+            # Antes de capturar: se o operador ajustou o arquivo, este ciclo ja
+            # roda com o valor novo.
+            self.reload_config_if_changed()
 
             try:
                 # Delegate collection logic, passing the persistent engine
