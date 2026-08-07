@@ -167,6 +167,46 @@ def _cabecalho_identidade(direita=""):
             % (__version__, direita))
 
 
+def _identifica_agente(info, uuid=""):
+    """
+    Um agente identificado por nome, e nao por oito digitos de UUID.
+
+    O UUID e a identidade tecnica correta e continua na tela, mas ele nao
+    responde a pergunta que se faz lendo um registro de comandos: em QUAL
+    maquina isso aconteceu. Um pedaco de UUID obriga a ir procurar em outra
+    tela, e num laudo obriga o leitor a fazer a correspondencia sozinho.
+
+    Os tres nomes aparecem juntos de proposito: o mesmo host aparece com nomes
+    diferentes em sistemas diferentes, e o endereco muda sem o host mudar.
+
+    PARAMETER info: dict do agente vindo da frota (pode ser None se ainda nao
+                    reportou; nesse caso so o UUID e conhecido, e a tela diz
+                    isso em vez de deixar a celula vazia).
+    """
+    info = info or {}
+    uuid = info.get("uuid") or uuid or ""
+    host = info.get("hostname")
+    fqdn = info.get("fqdn")
+    ip = info.get("ip_address")
+
+    if not host:
+        return ("<span style='color:#888'>agente ainda nao identificado</span>"
+                "<div style='color:#666;font-family:monospace;font-size:10px'>"
+                "%s</div>" % _esc(uuid))
+
+    detalhe = []
+    if fqdn and fqdn != host:
+        detalhe.append(_esc(fqdn))
+    if ip:
+        detalhe.append(_esc(ip))
+
+    return ("<b style='color:#4ec9b0'>%s</b>"
+            "<div style='color:#888;font-size:10px'>%s</div>"
+            "<div style='color:#555;font-family:monospace;font-size:10px'>%s"
+            "</div>"
+            % (_esc(host), " &middot; ".join(detalhe) or "&mdash;", _esc(uuid)))
+
+
 def _legenda_risco():
     """
     O que a escala de risco significa, escrita a partir da propria tabela.
@@ -260,7 +300,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             self._serve_dashboard(controller.db, controller.commands)
 
         elif self.path == '/log':
-            self._serve_command_log(controller.commands)
+            self._serve_command_log(controller)
 
         elif self.path.startswith('/timeline'):
             self._serve_timeline(controller)
@@ -542,16 +582,21 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
     # --------------------------------------------------------------------------
     # HISTORICO E COMPARACAO
     # --------------------------------------------------------------------------
-    def _pagina(self, titulo, corpo, voltar="/"):
+    def _pagina(self, titulo, corpo, voltar="/", refresh=0):
         """
         Moldura comum das telas auxiliares, na identidade do laudo.
 
         Titulo, subtitulo, versao e paleta sao os mesmos que o relatorio exibe,
         porque sao o mesmo produto: o analista transita entre as telas o tempo
         todo e nao deveria precisar reconhecer onde esta pela cor do fundo.
+
+        PARAMETER refresh: segundos para recarregar sozinha; 0 desliga. So as
+                           telas que acompanham algo em andamento usam.
         """
+        atualiza = ("<meta http-equiv='refresh' content='%d'>" % refresh
+                    ) if refresh else ""
         return ("<html><head><meta charset='UTF-8'><title>"
-                "Sys-Inspector v%s | %s</title>"
+                "Sys-Inspector v%s | %s</title>{ATUALIZA}"
                 "<style>%s"
                 "table{width:100%%;border-collapse:separate;border-spacing:0 6px}"
                 "th{text-align:left;color:#777;text-transform:uppercase;"
@@ -567,7 +612,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 "<h2 style='margin-top:16px'>%s</h2>%s</div></body></html>"
                 % (__version__, titulo, _CSS_IDENTIDADE,
                    _cabecalho_identidade(_barra_navegacao(self.path.split("?")[0])),
-                   voltar, titulo, corpo))
+                   voltar, titulo, corpo)).replace("{ATUALIZA}", atualiza)
 
     # Quantas capturas a linha do tempo percorre. Cada uma exige decifrar um
     # laudo inteiro, entao a janela e curta de proposito: cobre o passado
@@ -1237,18 +1282,17 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                            "style='margin-left:4px;padding:3px 8px;%s'>%s</a>"
                            % (uuid, valor, titulo, ativo, rotulo))
 
-            linhas += ("<tr class='item'><td>%s</td>"
-                       "<td style='color:#666;font-family:monospace;font-size:10px'>%s</td>"
+            linhas += ("<tr class='item'><td style='width:240px'>%s</td>"
                        "<td style='color:%s;font-weight:bold'>%s</td>"
                        "<td>%s</td><td>%s</td></tr>"
-                       % (_esc(a.get("hostname") or "?"), _esc(uuid[:8]),
+                       % (_identifica_agente(a, uuid),
                           "#ffd166" if pendentes else "#666", pendentes,
                           prioridade, botoes))
 
         corpo = ("<p style='color:#777;font-size:12px'>Aguardando: <b>%d</b> "
                  "&nbsp;|&nbsp; processadas: %d &nbsp;|&nbsp; com falha: %d<br>"
                  "Numero menor e atendido primeiro. O padrao e 50.</p>"
-                 "<table><thead><tr><th>Agente</th><th>UUID</th>"
+                 "<table><thead><tr><th>Agente</th>"
                  "<th>Na fila</th><th>Prioridade</th><th>Ordem</th></tr></thead>"
                  "<tbody>%s</tbody></table>"
                  % (stats["pending"], stats["done"], stats["failed"], linhas))
@@ -1256,7 +1300,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         self._set_headers()
         self.wfile.write(self._pagina("Fila de ingestao", corpo).encode("utf-8"))
 
-    def _serve_command_log(self, commands):
+    def _serve_command_log(self, controller):
         """
         Registro de todos os pedidos feitos aos agentes.
 
@@ -1265,8 +1309,14 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         foi o resultado. Sem isso nao ha como responder "esse comando chegou a
         rodar?", que foi exatamente a duvida que motivou esta tela.
         """
+        commands = controller.commands
         commands.expire_stuck()
         registros = commands.list_for(limit=200)
+
+        # Identidade legivel de cada agente, buscada uma vez.
+        frota = {}
+        for a in (controller.db.get_fleet_status() or []):
+            frota[a.get("uuid")] = a
 
         cores = {"PENDING": "#7fb3d5", "SENT": "#ffd166",
                  "DONE": "#6bcB77", "FAILED": "#ff4d4d"}
@@ -1285,15 +1335,17 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             espera = "-"
             if r.get("delivered_at"):
                 espera = "%ds" % int(r["delivered_at"] - r["created_at"])
-            linhas += ("<tr style='background:#252526; border-bottom:1px solid #333'>"
-                       "<td style='color:#777'>%s</td>"
-                       "<td style='color:#4ec9b0'>%s</td>"
-                       "<td style='font-family:monospace; font-size:11px; color:#999'>%s</td>"
-                       "<td style='color:%s; font-weight:bold'>%s</td>"
+            linhas += ("<tr class='item'>"
+                       "<td style='color:#777;width:40px'>%s</td>"
+                       "<td style='color:#4ec9b0;width:80px'>%s</td>"
+                       "<td style='width:220px'>%s</td>"
+                       "<td style='color:%s; font-weight:bold;width:80px'>%s</td>"
                        "<td>%s</td><td>%s</td><td>%s</td>"
                        "<td style='color:#888'>%s</td>"
                        "<td style='color:#aaa; font-size:11px'>%s</td></tr>"
-                       % (r["id"], r["command"], (r["agent_uuid"] or "")[:8],
+                       % (r["id"], r["command"],
+                          _identifica_agente(frota.get(r["agent_uuid"]),
+                                             r["agent_uuid"]),
                           cor, r["status"], _hora(r["created_at"]),
                           espera, duracao, r.get("requested_by") or "-",
                           (r.get("result") or "")[:90]))
@@ -1302,23 +1354,16 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             linhas = ("<tr><td colspan='9' style='color:#555; padding:30px; "
                       "text-align:center'>Nenhum pedido registrado.</td></tr>")
 
-        html = ("<html><head><meta charset='UTF-8'><title>Command log</title>"
-                "<meta http-equiv='refresh' content='15'>"
-                "<style>body{background:#121212;color:#e0e0e0;"
-                "font-family:'Segoe UI',sans-serif;padding:30px}"
-                "table{width:100%;border-collapse:separate;border-spacing:0 6px}"
-                "th{text-align:left;color:#777;text-transform:uppercase;"
-                "font-size:10px;padding:0 10px 8px}td{padding:8px 10px}"
-                "a{color:#4ec9b0;text-decoration:none;border:1px solid #4ec9b0;"
-                "border-radius:4px;padding:5px 14px;font-size:12px}</style></head>"
-                "<body><a href='/'>&larr; Fleet</a>"
-                "<h2 style='font-weight:300'>Command log</h2>"
-                "<p style='color:#777;font-size:12px'>Espera = tempo ate o agente "
-                "recolher o pedido. Duracao = tempo de execucao no agente.</p>"
-                "<table><thead><tr><th>#</th><th>Acao</th><th>Agente</th>"
-                "<th>Estado</th><th>Pedido</th><th>Espera</th><th>Duracao</th>"
-                "<th>Solicitante</th><th>Resultado</th></tr></thead><tbody>"
-                + linhas + "</tbody></table></body></html>")
+        corpo = ("<p style='color:#777;font-size:12px'>Espera = tempo ate o "
+                 "agente recolher o pedido. Duracao = tempo de execucao no "
+                 "agente.</p>"
+                 "<table><thead><tr><th>#</th><th>Acao</th><th>Agente</th>"
+                 "<th>Estado</th><th>Pedido</th><th>Espera</th><th>Duracao</th>"
+                 "<th>Solicitante</th><th>Resultado</th></tr></thead><tbody>"
+                 + linhas + "</tbody></table>")
+        # Esta era a ultima tela com folha de estilo propria, e por isso a unica
+        # sem cabecalho, sem versao e sem a barra de navegacao.
+        html = self._pagina("Registro de comandos", corpo, refresh=15)
         self._set_headers()
         self.wfile.write(html.encode("utf-8"))
 

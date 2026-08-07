@@ -94,9 +94,17 @@ def test_panel_escapes_agent_names(codigo):
     """
     Hostname vem do host inspecionado, que pode estar comprometido. Sem escapar,
     ele injetaria HTML na tela de quem investiga.
+
+    A identificacao do agente (nome, FQDN, IP e UUID) passou a ser feita por
+    `_identifica_agente`, entao e la que o escape precisa estar; a tela so o
+    chama. O teste confere os dois lados para o escape nao se perder na mudanca.
     """
     bloco = codigo.split("def _serve_queue")[1].split("def _serve_command_log")[0]
-    assert "_esc(a.get(\"hostname\")" in bloco
+    assert "_identifica_agente(" in bloco
+
+    helper = codigo.split("def _identifica_agente")[1].split("def _legenda_risco")[0]
+    for campo in ("host", "fqdn", "ip", "uuid"):
+        assert "_esc(%s)" % campo in helper
 
 
 def test_queue_is_reachable_from_the_fleet(codigo):
