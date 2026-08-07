@@ -36,7 +36,8 @@ from src.core.ingest import IngestQueue, process_batch
 from src.core.commands import CommandQueue, ALLOWED
 from src.core.tls import ensure_self_signed_cert
 from src.core.outbox import PATH_SLOT, PATH_INGEST, PATH_COMMAND_RESULT
-from src.core.snapshot_diff import diff_snapshots, has_changes
+from src.core.snapshot_diff import (diff_snapshots, has_changes, classify,
+                                    summarize_risk, build_timeline)
 from src.exporters.html_report import _esc
 
 
@@ -358,6 +359,81 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 "<a class='btn' href='%s'>&larr; Voltar</a>"
                 "<h2>%s</h2>%s</body></html>" % (titulo, voltar, titulo, corpo))
 
+    # Quantas capturas a linha do tempo percorre. Cada uma exige decifrar um
+    # laudo inteiro, entao a janela e curta de proposito: cobre o passado
+    # recente, que e onde a investigacao olha, sem transformar a abertura da
+    # pagina em trabalho pesado no servidor.
+    JANELA_TIMELINE = 12
+
+    def _render_timeline(self, controller, capturas):
+        """
+        Comportamento ao longo do tempo, e nao o retrato de um instante.
+
+        Uma captura responde "isto estava rodando". A pergunta que decide a
+        resposta a um incidente e outra: "isto rodou UMA vez ou roda SEMPRE?".
+        Um artefato que reaparece a cada poucos minutos tem persistencia ativa e
+        vai voltar depois de morto; um que apareceu uma unica vez pode ter sido
+        acao manual. Sao incidentes diferentes, com respostas diferentes, e a
+        diferenca so aparece olhando varias capturas juntas.
+        """
+        recentes = list(reversed(capturas[:self.JANELA_TIMELINE]))
+        if len(recentes) < 2:
+            return ""
+
+        payloads = []
+        for c in recentes:
+            dados = controller.decrypt(controller.db.get_snapshot_details(c["id"]))
+            if dados:
+                payloads.append(dados)
+
+        linhas_tl = build_timeline(payloads)
+        # So o que merece atencao: listar tudo que repete transformaria a tela
+        # num inventario do sistema, e o ruido esconderia o sinal.
+        linhas_tl = [r for r in linhas_tl if r["max_score"] > 0][:25]
+        if not linhas_tl:
+            return ""
+
+        total = len(payloads)
+        linhas = ""
+        for r in linhas_tl:
+            # Faixa visual: uma marca por captura em que o comando apareceu.
+            faixa = ""
+            presentes = set(r["captures"])
+            for i in range(total):
+                presente = i in presentes
+                faixa += ("<span title='captura %d' style='display:inline-block;"
+                          "width:11px;height:16px;margin-right:2px;background:%s;"
+                          "border-radius:2px'></span>"
+                          % (i + 1,
+                             ("#ff4d4d" if r["max_score"] >= 70 else "#ffd166")
+                             if presente else "#2a2a2a"))
+
+            constante = r["count"] == total
+            leitura = ("presente em TODAS as %d capturas" % total if constante
+                       else "visto em %d de %d capturas" % (r["count"], total))
+
+            linhas += ("<tr class='item'><td style='width:230px'>%s"
+                       "<div style='color:#777;font-size:10px;margin-top:3px'>%s"
+                       "</div></td>"
+                       "<td style='width:60px;text-align:center;color:%s;"
+                       "font-weight:bold'>%s</td>"
+                       "<td><code>%s</code></td></tr>"
+                       % (faixa, leitura,
+                          "#ff4d4d" if r["max_score"] >= 70 else "#ffd166",
+                          r["max_score"], _esc(r["cmd"][:150])))
+
+        return ("<h3 style='font-weight:300;color:#4ec9b0;margin-bottom:2px'>"
+                "Comportamento ao longo do tempo</h3>"
+                "<p style='color:#777;font-size:11px;margin:0 0 10px'>"
+                "As %d capturas mais recentes, da mais antiga (esquerda) para a "
+                "mais nova (direita). Cada marca e uma captura em que o comando "
+                "estava presente. Reaparecer sempre indica persistencia ativa: o "
+                "artefato volta depois de morto. Aparecer uma vez so sugere acao "
+                "pontual. Sao incidentes diferentes.</p>"
+                "<table><tbody>%s</tbody></table>"
+                "<hr style='border:none;border-top:1px solid #2a2a2a;margin:26px 0'>"
+                % (total, linhas))
+
     def _serve_history(self, controller, agent_uuid):
         """
         Capturas de um agente, para escolher duas e compara-las.
@@ -389,7 +465,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                           "#ff4d4d" if c.get("is_alert") else "#6bcB77",
                           c.get("alert_score") or 0, botao))
 
-        corpo = ("<p style='color:#777;font-size:12px'>%d capturas. "
+        corpo = (self._render_timeline(controller, capturas)
+                 + "<p style='color:#777;font-size:12px'>%d capturas. "
                  "A comparacao roda no servidor: o laudo completo passa de 10MB "
                  "e nao caberia no navegador.</p>"
                  "<table><thead><tr><th>#</th><th>Momento</th><th>CPU</th>"
@@ -430,15 +507,49 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         resultado = diff_snapshots(antes, depois)
         resumo = resultado["summary"]
 
-        def _linha_proc(p, cor):
+        # Linha de comando do pai, para responder "nasceu de onde". Um processo
+        # novo importa menos por si do que por quem o criou: um shell nascido de
+        # um servidor web nao e o mesmo que um shell nascido de um login.
+        def _mapa_pais(payload):
+            return dict((pr.get("pid"), pr.get("cmd") or "")
+                        for pr in ((payload or {}).get("processes") or {}).values()
+                        if isinstance(pr, dict))
+
+        pais_depois = _mapa_pais(depois)
+        pais_antes = _mapa_pais(antes)
+
+        def _linha_proc(p, cor, pais=None):
             """
             Uma linha de processo com o que basta para julgar sem abrir o laudo.
 
             A primeira versao mostrava so o PID. Um numero sozinho nao diz nada:
             o analista precisava voltar ao relatorio completo para descobrir de
-            que processo se tratava, o que anula a razao de existir desta tela.
+            que processo se tratava, e uma lista desses numeros nao e analise.
+            Agora cada linha responde tres perguntas de imediato: o que e, se
+            merece atencao e de onde veio.
             """
-            motivos = ""
+            selos = ""
+            for nome_r, icone, explicacao in classify(p):
+                selos += ("<span title='%s' style='margin-right:5px;"
+                          "font-size:13px'>%s</span>" % (explicacao, icone))
+
+            pai = (pais or {}).get(p.get("ppid"))
+            origem = ""
+            if pai:
+                origem = ("<div style='color:#6a9955;font-size:11px'>"
+                          "&#8627; criado por [%s] <code>%s</code></div>"
+                          % (p.get("ppid"), _esc(pai[:110])))
+            elif p.get("ppid"):
+                origem = ("<div style='color:#a06;font-size:11px'>"
+                          "&#8627; pai [%s] nao esta nesta captura: a origem se "
+                          "perdeu</div>" % p.get("ppid"))
+
+            conexoes = ""
+            for c in (p.get("connections") or []):
+                conexoes += ("<div style='color:#4ec9b0;font-size:11px'>"
+                             "&#127760; %s</div>" % _esc(c))
+
+            motivos = origem + conexoes
             for r in (p.get("reasons") or []):
                 motivos += ("<div style='color:#a06; font-size:11px'>&bull; %s</div>"
                             % _esc(r))
@@ -455,16 +566,17 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
             return ("<tr class='item'>"
                     "<td style='color:%s;font-weight:bold;width:70px'>%s</td>"
-                    "<td style='color:#888;width:90px'>%s</td>"
+                    "<td style='width:110px'>%s</td>"
+                    "<td style='color:#888;width:80px'>%s</td>"
                     "<td style='color:#888;width:70px'>%s</td>"
                     "<td><code>%s</code>%s</td>"
                     "<td style='width:60px;text-align:right'>%s</td></tr>"
-                    % (cor, p.get("pid"), _esc(p.get("user") or "-"),
+                    % (cor, p.get("pid"), selos, _esc(p.get("user") or "-"),
                        _esc(p.get("duration") or "-"),
                        _esc(p.get("cmd") or "(sem linha de comando)"),
                        motivos, selo))
 
-        def _secao(titulo, explicacao, itens, cor, render):
+        def _secao(titulo, explicacao, itens, cor, render, pais=None):
             """
             Uma secao SEMPRE aparece, mesmo vazia.
 
@@ -473,8 +585,13 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             forense, "verifiquei e nao ha" e uma resposta diferente de silencio.
             """
             if itens:
-                corpo = "<table><tbody>%s</tbody></table>" % "".join(
-                    render(i, cor) for i in itens[:300])
+                criticos = summarize_risk(itens)
+                aviso = ("<p style='color:#ff4d4d;font-size:12px;margin:0 0 8px'>"
+                         "&#128308; %d com risco alto.</p>" % criticos
+                         ) if criticos else ""
+                corpo = aviso + "<table><tbody>%s</tbody></table>" % "".join(
+                    render(i, cor, pais) if pais is not None else render(i, cor)
+                    for i in itens[:300])
                 if len(itens) > 300:
                     corpo += ("<p style='color:#666;font-size:11px'>Exibindo 300 "
                               "de %d.</p>" % len(itens))
@@ -520,18 +637,21 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                  + _secao("Processos que apareceram",
                           "Nao existiam na captura anterior. Um processo novo com "
                           "risco alto e o ponto de partida usual da investigacao.",
-                          resultado["processes"]["appeared"], "#ffd166", _linha_proc)
+                          resultado["processes"]["appeared"], "#ffd166",
+                          _linha_proc, pais_depois)
                  + _secao("Processos alterados",
                           "Continuaram vivos, mas algo mudo neles: executavel, "
                           "dono, processo pai ou linha de comando. Uso de CPU e "
                           "memoria sao ignorados de proposito, porque oscilam a "
                           "cada ciclo e afogariam o que importa.",
-                          resultado["processes"]["changed"], "#7fb3d5", _linha_proc)
+                          resultado["processes"]["changed"], "#7fb3d5",
+                          _linha_proc, pais_depois)
                  + _secao("Processos que sumiram",
                           "Existiam antes e nao existem mais. Importa tanto quanto "
                           "o que surgiu: pode ser o artefato que se apagou depois "
                           "de agir.",
-                          resultado["processes"]["disappeared"], "#888", _linha_proc)
+                          resultado["processes"]["disappeared"], "#888",
+                          _linha_proc, pais_antes)
                  + _secao("Achados que deixaram de aparecer",
                           "Sumir nao significa resolvido: o artefato pode ter sido "
                           "removido para encobrir rastro. O fato e relatado; a "

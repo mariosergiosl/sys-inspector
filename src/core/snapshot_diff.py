@@ -66,6 +66,7 @@ def _resumo(proc):
             "duration": proc.get("duration_str") or "",
             "started": proc.get("start_ts_abs") or "",
             "reasons": (proc.get("detection_reasons") or [])[:6],
+            "connections": list(proc.get("connections") or [])[:5],
             "alert_score": proc.get("anomaly_score") or 0}
 
 
@@ -150,6 +151,106 @@ def diff_snapshots(anterior, atual):
                     "total_before": len(antes),
                     "total_after": len(depois)},
     }
+
+
+# ------------------------------------------------------------------------------
+# LEITURA DO QUE MUDOU
+# ------------------------------------------------------------------------------
+# Uma lista de PIDs nao e analise. O operador precisa saber, sem abrir o laudo,
+# se algo do que mudou merece atencao e POR QUE. Os rotulos abaixo respondem a
+# perguntas concretas, e cada um so aparece quando ha evidencia que o sustente.
+ROTULO_CRITICO = ("critico", "&#128308;",
+                  "Risco alto o bastante para ser examinado primeiro")
+ROTULO_REDE = ("rede", "&#127760;",
+               "Tinha conexao de rede ativa no momento da captura")
+ROTULO_CAMINHO = ("caminho suspeito", "&#9888;",
+                  "Executa a partir de diretorio gravavel por qualquer um")
+ROTULO_ROOT = ("root", "&#128081;",
+               "Rodava como root: o alcance de um comprometimento e total")
+ROTULO_EFEMERO = ("efemero", "&#9201;",
+                  "Viveu menos que o intervalo entre capturas: so foi visto "
+                  "porque a captura estava aberta")
+ROTULO_ORFAO = ("reparentado", "&#128128;",
+                "Pai e o init: perdeu o processo que o criou, o que apaga a "
+                "origem")
+
+LIMIAR_CRITICO = 70
+
+
+def classify(proc):
+    """
+    Devolve os rotulos que se aplicam a um processo que apareceu ou sumiu.
+
+    Sao afirmacoes verificaveis sobre a evidencia coletada, nao conclusoes: cada
+    rotulo diz o que foi observado e deixa o julgamento com o analista.
+    """
+    rotulos = []
+
+    if (proc.get("alert_score") or 0) >= LIMIAR_CRITICO:
+        rotulos.append(ROTULO_CRITICO)
+
+    if proc.get("connections"):
+        rotulos.append(ROTULO_REDE)
+
+    motivos = " ".join(proc.get("reasons") or []).lower()
+    if "unsafe" in motivos or "/tmp" in motivos or "/dev/shm" in motivos:
+        rotulos.append(ROTULO_CAMINHO)
+
+    if proc.get("uid") == 0:
+        rotulos.append(ROTULO_ROOT)
+
+    # Um processo cujo pai e o init nasceu de alguem que ja morreu. Numa
+    # investigacao isso importa: a cadeia que explicaria a origem se perdeu.
+    if proc.get("ppid") == 1 and proc.get("pid") != 1:
+        rotulos.append(ROTULO_ORFAO)
+
+    return rotulos
+
+
+def summarize_risk(itens):
+    """Conta quantos dos processos listados merecem atencao imediata."""
+    return sum(1 for p in itens
+               if (p.get("alert_score") or 0) >= LIMIAR_CRITICO)
+
+
+def build_timeline(capturas, minimo=2):
+    """
+    Quantas vezes cada linha de comando apareceu ao longo das capturas.
+
+    Responde a pergunta que uma captura isolada nao alcanca: "isso rodou uma vez
+    ou roda sempre?". Um artefato que reaparece a cada poucos minutos tem
+    persistencia ativa; um que apareceu uma unica vez pode ter sido acao manual.
+    A diferenca muda a resposta ao incidente.
+
+    PARAMETER capturas: lista de payloads decifrados, do mais antigo ao mais novo.
+    PARAMETER minimo: ignora o que apareceu menos vezes que isto, para a tela nao
+                      virar um inventario do sistema inteiro.
+    """
+    ocorrencias = {}
+    for indice, payload in enumerate(capturas):
+        vistos = set()
+        for proc in ((payload or {}).get("processes") or {}).values():
+            if not isinstance(proc, dict):
+                continue
+            cmd = (proc.get("cmd") or "").strip()
+            if not cmd or cmd in vistos:
+                continue
+            vistos.add(cmd)
+            registro = ocorrencias.setdefault(
+                cmd, {"cmd": cmd, "count": 0, "captures": [],
+                      "max_score": 0, "pids": []})
+            registro["count"] += 1
+            registro["captures"].append(indice)
+            registro["max_score"] = max(registro["max_score"],
+                                        proc.get("anomaly_score") or 0)
+            if len(registro["pids"]) < 12:
+                registro["pids"].append(proc.get("pid"))
+
+    resultado = [r for r in ocorrencias.values() if r["count"] >= minimo]
+    # O que reaparece muito e com risco alto vem primeiro: e a combinacao que
+    # descreve persistencia ativa.
+    resultado.sort(key=lambda r: (-r["max_score"], -r["count"]))
+    return resultado
 
 
 def has_changes(resultado):
