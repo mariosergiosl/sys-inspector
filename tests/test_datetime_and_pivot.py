@@ -148,6 +148,22 @@ def test_o_preload_global_nao_aponta_para_tmp():
     assert 'SYS_LIB_DIR="/usr/local/lib"' in texto
 
 
+def test_run_chaos_procura_o_maker_em_varios_caminhos():
+    """
+    O chaos_maker nao esta no mesmo lugar em todo host: deploy de fonte poe em
+    /opt/sys-inspector/tools, RPM expoe /usr/bin/chaos_maker.sh, e o lab pode
+    largar em /tmp. Fixar um caminho so fazia o cenario PULAR o chaos de runtime
+    em silencio nos hosts que usam outro (foi o que aconteceu em 168 e 200).
+    """
+    texto = io.open(CHAOS, encoding="utf-8").read()
+    assert "find_chaos_maker" in texto
+    for caminho in ("/usr/bin/chaos_maker.sh", "/tmp/chaos_maker.sh"):
+        assert caminho in texto
+    # Deixa marca no log para distinguir "rodou e terminou" de "nunca rodou".
+    assert "CHAOS_MAKER_START" in texto
+    assert "CHAOS_MAKER_NOT_FOUND" in texto
+
+
 def test_apenas_um_processo_carrega_lib_de_local_estranho():
     """
     So o processo plantado carrega a lib de /dev/shm, via seu proprio ambiente.

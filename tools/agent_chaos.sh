@@ -162,20 +162,50 @@ launch_tainted_process() {
 }
 
 #=== FUNCTION ==========================================================================
+# NAME:         find_chaos_maker
+# DESCRIPTION:  Locate chaos_maker.sh wherever the install put it. The path is not
+#               the same across hosts: a source deploy has it under
+#               /opt/sys-inspector/tools, an RPM install exposes it as
+#               /usr/bin/chaos_maker.sh, and the lab may have dropped it in /tmp.
+#               Hardcoding one path made the scenario silently skip the runtime
+#               chaos on the hosts that use another, which is exactly the kind of
+#               "it ran" that turns out to be false.
+# RETURNS:      prints the path on stdout, empty if not found.
+#=======================================================================================
+find_chaos_maker() {
+    local c
+    for c in /usr/bin/chaos_maker.sh \
+             "${CHAOS_HOME}/tools/chaos_maker.sh" \
+             /tmp/chaos_maker.sh \
+             /usr/lib/python3.6/site-packages/tools/chaos_maker.sh; do
+        [ -f "${c}" ] && { echo "${c}"; return 0; }
+    done
+    echo ""
+}
+
+#=== FUNCTION ==========================================================================
 # NAME:         run_chaos
 # DESCRIPTION:  Launch chaos_maker for the requested duration, so the runtime
-#               detectors have live activity to capture.
+#               detectors have live activity to capture. Writes a start marker to
+#               the log so a later check can tell "launched and finished" apart
+#               from "never launched".
 # PARAMETER 1:  duration in seconds
 #=======================================================================================
 run_chaos() {
     local dur="$1"
-    if [ -d "${CHAOS_HOME}" ]; then
-        cd "${CHAOS_HOME}" || return 0
-        setsid nohup bash tools/chaos_maker.sh --all --duration "${dur}" \
-            >/tmp/chaos.log 2>&1 </dev/null &
-    else
-        echo "--- ${CHAOS_HOME} absent: chaos_maker not launched ---"
+    local maker
+    maker="$(find_chaos_maker)"
+    if [ -z "${maker}" ]; then
+        echo "--- chaos_maker.sh not found on this host: runtime chaos NOT launched ---"
+        echo "CHAOS_MAKER_NOT_FOUND $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/chaos.log
+        return 0
     fi
+    echo "--- Launching chaos_maker from ${maker} for ${dur}s ---"
+    {
+        echo "CHAOS_MAKER_START $(date -u +%Y-%m-%dT%H:%M:%SZ) using ${maker} dur=${dur}"
+    } > /tmp/chaos.log
+    setsid nohup bash "${maker}" --all --duration "${dur}" \
+        >>/tmp/chaos.log 2>&1 </dev/null &
 }
 
 # --------------------------------------------------------------------------------------
