@@ -332,6 +332,12 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
     100% { background: transparent; }
 }
 .pivot-target { animation: pivotPulse 2.5s ease-out; }
+.aviso-pivo {
+    display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 3000; background: #2a2a1a; border: 1px solid var(--yel);
+    color: var(--yel); padding: 10px 18px; border-radius: 4px; font-size: 12px;
+    max-width: 70%; box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+}
 
 /* --- ATT&CK REFERENCE --- */
 .atk-intro { color: #aaa; font-size: 12px; margin-bottom: 14px; max-width: 900px; line-height: 1.5; }
@@ -619,6 +625,33 @@ JS_BLOCK = r"""
         d.style.display = (d.style.display === 'block') ? 'none' : 'block';
     }
 
+    // Aviso curto no topo da tela, para o pivo nunca falhar em silencio.
+    function avisaPivo(texto) {
+        var caixa = document.getElementById('aviso-pivo');
+        if (!caixa) {
+            caixa = document.createElement('div');
+            caixa.id = 'aviso-pivo';
+            caixa.className = 'aviso-pivo';
+            document.body.appendChild(caixa);
+        }
+        caixa.innerText = texto;
+        caixa.style.display = 'block';
+        clearTimeout(window.__avisoPivoTimer);
+        window.__avisoPivoTimer = setTimeout(function () {
+            caixa.style.display = 'none';
+        }, 9000);
+    }
+
+    // Entrada vinda de FORA do laudo: a linha do tempo do servidor aponta um
+    // processo com /agent/<uuid>#pid=1234. Sem isto, cruzar o evento com a
+    // arvore era copiar um PID a mao e procurar na lista.
+    window.addEventListener('load', function () {
+        var m = /(?:^|[#&])pid=(\d+)/.exec(window.location.hash || '');
+        if (!m) { return; }
+        // Espera a arvore terminar de montar antes de pivotar.
+        setTimeout(function () { pivotToProcess(m[1]); }, 80);
+    });
+
     // Pivo: leva da aba Findings ate o processo que executa o caminho
     // denunciado pelo achado, revelando toda a cadeia de ancestrais.
     function pivotToProcess(pidList) {
@@ -634,7 +667,17 @@ JS_BLOCK = r"""
         setFilter('');
 
         var row = document.querySelector('tr[data-pid="' + targetPid + '"]');
-        if (!row) { return; }
+        if (!row) {
+            // O processo NAO esta nesta captura. Sair em silencio faria a tela
+            // parecer quebrada, e pior: quem veio da linha do tempo concluiria
+            // que o pivo nao funciona, quando a resposta correta e que aquele
+            // processo ja nao existia quando esta captura foi feita, o que e
+            // informacao, e nao falha.
+            avisaPivo('Processo ' + targetPid + ' nao esta nesta captura. Ele '
+                      + 'pode ter terminado antes dela: procure-o no historico '
+                      + 'de capturas deste agente.');
+            return;
+        }
 
         // 3. Monta a cadeia de ancestrais subindo por data-ppid.
         var chain = [];

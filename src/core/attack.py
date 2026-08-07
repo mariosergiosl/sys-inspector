@@ -17,6 +17,36 @@
 
 # id -> (nome, tatica, descricao curta em uma frase)
 TECHNIQUES = {
+    "T1014": (
+        "Rootkit",
+        "Defense Evasion",
+        "Code that hides processes, files or connections from the tools an "
+        "administrator would use, so the system misreports its own state."),
+    "T1036": (
+        "Masquerading",
+        "Defense Evasion",
+        "The artifact takes the name or location of legitimate software so it "
+        "survives a casual look at the process list."),
+    "T1053": (
+        "Scheduled Task/Job",
+        "Execution, Persistence, Privilege Escalation",
+        "A scheduling mechanism re-launches the payload on its own, which is "
+        "what turns a one-off execution into something that comes back."),
+    "T1055": (
+        "Process Injection",
+        "Defense Evasion, Privilege Escalation",
+        "Attacker code runs inside a legitimate process, inheriting its "
+        "identity and privileges and leaving no separate process to spot."),
+    "T1071": (
+        "Application Layer Protocol",
+        "Command and Control",
+        "Command and control traffic hides inside an ordinary protocol, so the "
+        "connection looks like normal application use."),
+    "T1078": (
+        "Valid Accounts",
+        "Defense Evasion, Persistence, Privilege Escalation, Initial Access",
+        "Legitimate credentials are used instead of malware, which is why the "
+        "activity passes every check that asks whether the user is allowed."),
     "T1037": (
         "Boot or Logon Initialization Scripts",
         "Persistence, Privilege Escalation",

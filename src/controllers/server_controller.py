@@ -37,9 +37,10 @@ from src.core.notify import Notifier
 from src.core.capabilities import summarize, missing_for_scenarios
 from src.core.events import EventStore, events_from_capture
 from src.core import risk
+from src.core.attack import describe, technique_url
 from src.version import __version__
 from src.core.correlation import correlate
-from src.core.commands import CommandQueue, ALLOWED
+from src.core.commands import CommandQueue, ALLOWED, STUCK_LIMIT
 from src.core.tls import ensure_self_signed_cert
 from src.core.outbox import PATH_SLOT, PATH_INGEST, PATH_COMMAND_RESULT
 from src.core.snapshot_diff import (diff_snapshots, has_changes, classify,
@@ -129,7 +130,32 @@ _CSS_IDENTIDADE = _PALETA + (
     "border-radius:4px;padding:4px 10px;margin-left:8px;font-size:11px;"
     "white-space:nowrap}"
     ".navlink:hover{border-color:var(--cyn);background:#222}"
-    ".conteudo{padding:24px 30px}")
+    ".conteudo{padding:24px 30px}"
+    # Barra de controles no mesmo desenho da aba Processes do laudo: o analista
+    # alterna entre as telas o tempo todo, e um controle que muda de forma a
+    # cada tela obriga a reaprender onde clicar.
+    ".controles{display:flex;align-items:center;flex-wrap:wrap;gap:6px;"
+    "background:var(--drk);border:1px solid #444;border-radius:4px;"
+    "padding:8px 12px;margin-bottom:10px}"
+    ".controles .rotulo{color:#777;font-size:10px;text-transform:uppercase;"
+    "letter-spacing:1px;margin-right:4px}"
+    ".sep{color:#444;margin:0 6px}"
+    # Bolha de ajuda, igual a do "?" na arvore de processos.
+    ".ajuda{position:relative;display:inline-block}"
+    ".ajuda>.icone{cursor:help;border:1px solid #555;border-radius:50%;"
+    "width:18px;height:18px;display:inline-flex;align-items:center;"
+    "justify-content:center;color:#aaa;font-size:11px;background:#222}"
+    ".ajuda>.balao{display:none;position:absolute;right:0;top:24px;z-index:50;"
+    "background:#1a1a1a;border:1px solid #555;border-radius:4px;padding:12px;"
+    "width:520px;box-shadow:0 8px 24px rgba(0,0,0,.6);text-align:left}"
+    ".ajuda:hover>.balao{display:block}"
+    ".ajuda table{width:100%;border-spacing:0}"
+    ".ajuda td{padding:2px 6px;font-size:11px}"
+    # Selo de tecnica ATT&CK, com a mesma forma em toda tela.
+    ".attck{font-family:monospace;font-size:10px;color:var(--yel);"
+    "border:1px solid #555;padding:1px 6px;border-radius:3px;"
+    "text-decoration:none;white-space:nowrap}"
+    ".attck:hover{border-color:var(--yel);background:#222}")
 
 # Barra de navegacao entre as telas do servidor, uma so definicao para todas.
 _NAVEGACAO = (("&#127968;", "/", "Frota"),
@@ -165,6 +191,39 @@ def _cabecalho_identidade(direita=""):
             "<div class='subtitle'>OBSERVABILITY SUITE - Enterprise Forensic "
             "Report</div></div><div class='meta'>%s</div></div>"
             % (__version__, direita))
+
+
+def _selo_attck(tecnica, texto=None):
+    """
+    Tecnica ATT&CK como selo clicavel, com nome e tatica no tooltip.
+
+    Um identificador como "T1574.006" nao diz nada sozinho, e era exatamente
+    assim que ele aparecia fora da aba ATT&CK do laudo. Aqui ele leva o nome da
+    tecnica, a tatica a que pertence e uma frase do que ela significa, alem do
+    link para o MITRE para quem tiver conectividade. O catalogo e local, entao a
+    leitura funciona em rede isolada.
+    """
+    if not tecnica:
+        return ""
+    dados = describe(tecnica)
+    if dados:
+        nome, tatica, resumo = dados
+        titulo = "%s\nTatica: %s\n\n%s" % (nome, tatica, resumo)
+    else:
+        # Tecnica sem verbete: aparece assim mesmo, e o tooltip diz por que.
+        titulo = ("Tecnica ainda sem verbete no catalogo local desta versao. O "
+                  "identificador e valido; o que falta e a legenda.")
+    return ("<a class='attck' target='_blank' rel='noopener' href='%s' "
+            "title='%s'>%s</a>"
+            % (technique_url(tecnica), _esc(titulo), _esc(texto or tecnica)))
+
+
+def _bolha_ajuda(titulo, conteudo):
+    """Bolha de ajuda no mesmo desenho do "?" da arvore de processos."""
+    return ("<span class='ajuda'><span class='icone'>?</span>"
+            "<span class='balao'>"
+            "<b style='color:#4ec9b0;font-size:11px'>%s</b>%s</span></span>"
+            % (_esc(titulo), conteudo))
 
 
 def _identifica_agente(info, uuid=""):
@@ -227,17 +286,20 @@ def _legenda_risco():
                   % (risk.CORES.get(severidade, "#888"), _esc(severidade),
                      _esc(rotulo), _esc(explicacao)))
 
-    return ("<details style='margin-top:18px'>"
-            "<summary style='color:#777;font-size:11px;cursor:pointer'>"
-            "O que a coluna de risco mede</summary>"
-            "<div style='background:#1a1a1a;border-left:3px solid #333;"
+    return ("<div style='background:#1a1a1a;border-left:3px solid #333;"
             "padding:12px 16px;margin-top:8px'>"
             "<p style='color:#777;font-size:11px;margin:0 0 10px'>"
             "O numero ao lado do rotulo e um campo de bits: cada bit e um sinal "
             "observado, e o valor em si nao mede gravidade. O nivel exibido e o "
             "maior entre os sinais presentes, elevado um degrau quando dois ou "
             "mais sinais de peso coincidem no mesmo processo.</p>%s</div>"
-            "</details>" % itens)
+            % itens)
+
+
+def _ajuda_risco():
+    """A legenda de risco na bolha "?", do mesmo jeito que a arvore explica."""
+    return _bolha_ajuda("Sinais do anomaly score (campo de bits)",
+                        _legenda_risco())
 
 
 def _human_age(seconds):
@@ -744,8 +806,23 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                   "<th>Risco (pior processo)</th><th>Comparar</th></tr></thead>"
                   "<tbody>%s</tbody></table>" % (len(capturas), linhas))
 
-        corpo = (self._render_timeline(controller, capturas)
-                 + tabela + _legenda_risco())
+        barra = ("<div class='controles'>"
+                 "<span class='rotulo'>Agente</span>%s"
+                 "<span class='sep'>|</span>"
+                 "<a class='btn' href='/timeline?min=360&agent=%s' "
+                 "style='padding:3px 10px' title='Ver os eventos deste agente "
+                 "em ordem, junto com os dos demais hosts'>&#128337; linha do "
+                 "tempo deste agente</a>"
+                 "<a class='btn' href='/agent/%s' style='padding:3px 10px;"
+                 "margin-left:6px' title='Abrir o laudo da captura mais "
+                 "recente'>&#128269; laudo atual</a>"
+                 "<span style='margin-left:auto'>%s</span></div>"
+                 % (_identifica_agente(
+                     next((a for a in (controller.db.get_fleet_status() or [])
+                           if a.get("uuid") == agent_uuid), None), agent_uuid),
+                    agent_uuid, agent_uuid, _ajuda_risco()))
+
+        corpo = barra + self._render_timeline(controller, capturas) + tabela
         self._set_headers()
         self.wfile.write(self._pagina("Historico do agente", corpo).encode("utf-8"))
 
@@ -1009,13 +1086,22 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         if conclusoes:
             itens = ""
             for c in conclusoes[:10]:
+                # A conclusao carrega severidade e tecnica; exibi-las aqui evita
+                # que o analista precise abrir o laudo so para saber o peso e a
+                # que tecnica a leitura corresponde.
+                selos = ("<span style='background:%s;color:#000;"
+                         "border-radius:3px;padding:1px 7px;font-size:10px;"
+                         "font-weight:bold;margin-right:6px'>%s</span>"
+                         % (risk.CORES.get(c.severity, "#888"), _esc(c.severity)))
+                selos += _selo_attck(c.technique)
                 itens += ("<div style='background:#2a1a1a;border-left:3px solid "
                           "#ff4d4d;padding:10px 14px;margin-bottom:8px'>"
+                          "<div style='float:right'>%s</div>"
                           "<b style='color:#ff4d4d'>%s</b>"
                           "<div style='color:#bbb;font-size:12px;margin-top:4px'>%s</div>"
                           "<div style='color:#6a9955;font-size:11px;margin-top:6px'>"
                           "&#8627; %s</div></div>"
-                          % (_esc(c.title), _esc(c.description),
+                          % (selos, _esc(c.title), _esc(c.description),
                              _esc(c.recommendation)))
             topo = ("<h3 style='font-weight:300;color:#ff4d4d;margin-bottom:2px'>"
                     "Leitura da sequencia</h3>"
@@ -1067,25 +1153,64 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             else:
                 risco = _selo_risco(detalhe.get("score"))
 
+            # QUEM executou e A PARTIR DE ONDE, sob a linha de comando. A
+            # sequencia so vira reconstituicao quando cada passo diz de quem
+            # partiu; ate aqui a coluna trazia a linha de comando sozinha, que
+            # nao distingue um processo de root de um de usuario comum.
+            contexto = ""
+            if detalhe.get("user") or detalhe.get("pid"):
+                partes = []
+                if detalhe.get("user"):
+                    partes.append("usuario <b>%s</b>" % _esc(detalhe["user"]))
+                if detalhe.get("pid"):
+                    partes.append("PID %s" % _esc(detalhe["pid"]))
+                if detalhe.get("ppid"):
+                    partes.append("filho de %s" % _esc(detalhe["ppid"]))
+                contexto = ("<div style='color:#6a9955;font-size:10px'>%s</div>"
+                            % " &middot; ".join(partes))
+            if detalhe.get("signals"):
+                contexto += ("<div style='color:#a06;font-size:10px'>&bull; %s"
+                             "</div>" % _esc(detalhe["signals"]))
+            if detalhe.get("target"):
+                contexto += ("<div style='color:#888;font-size:10px'>"
+                             "&#8627; <code>%s</code></div>"
+                             % _esc(str(detalhe["target"])[:160]))
+
+            # PIVO PARA A ARVORE. Um evento aponta um processo; a arvore mostra
+            # de onde ele veio. Sem esse caminho, cruzar as duas telas era
+            # trabalho manual de copiar um PID e procurar.
+            pivo = ""
+            if detalhe.get("pid") and ev.get("agent_uuid"):
+                pivo = ("<a href='/agent/%s#pid=%s' title='Abrir este processo "
+                        "na arvore do laudo mais recente deste agente. Se o "
+                        "processo ja nao existir na captura atual, a propria "
+                        "tela avisa.' style='color:#4ec9b0;text-decoration:none;"
+                        "font-size:11px'>&#8631;</a>"
+                        % (ev["agent_uuid"], detalhe["pid"]))
+
+            attck = _selo_attck(detalhe.get("technique"))
+
             linhas += ("<tr class='item'>"
                        "<td style='width:90px;color:#888'>%s %s</td>"
                        "<td style='width:30px;color:%s' title='%s'>%s</td>"
-                       "<td style='width:120px;color:#4ec9b0;font-size:11px'>%s</td>"
-                       "<td><code>%s</code></td>"
+                       "<td style='width:130px;color:#4ec9b0;font-size:11px'>%s</td>"
+                       "<td><code>%s</code>%s</td>"
+                       "<td style='width:110px'>%s</td>"
                        "<td style='width:150px'>%s</td>"
-                       "<td style='width:40px'>%s</td></tr>"
+                       "<td style='width:60px;text-align:right'>%s %s</td></tr>"
                        % (momento, delta, cor, _esc(nome_tipo), icone,
                           _esc(nomes.get(ev["agent_uuid"], ev["agent_uuid"][:8])),
-                          _esc((ev.get("subject") or "")[:150]), risco, desvio))
+                          _esc((ev.get("subject") or "")[:150]), contexto,
+                          attck, risco, pivo, desvio))
 
         if not linhas:
             if tipos or agente:
-                linhas = ("<tr><td colspan='6' style='color:#555;padding:30px;"
+                linhas = ("<tr><td colspan='7' style='color:#555;padding:30px;"
                           "text-align:center'>Nenhum evento com os filtros "
                           "ativos. Ha %d evento(s) nesta janela sem filtro "
                           "algum.</td></tr>" % total_janela)
             else:
-                linhas = ("<tr><td colspan='6' style='color:#555;padding:30px;"
+                linhas = ("<tr><td colspan='7' style='color:#555;padding:30px;"
                           "text-align:center'>Nenhum evento nesta janela. A "
                           "linha do tempo e derivada das capturas conforme elas "
                           "chegam.</td></tr>")
@@ -1160,20 +1285,27 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
         cabecalho_tabela = ("<thead><tr><th>Hora</th><th>Tipo</th>"
                             "<th>Agente</th><th>O que aconteceu</th>"
-                            "<th>Risco</th><th>Relogio</th></tr></thead>")
+                            "<th>ATT&amp;CK</th><th>Risco</th>"
+                            "<th>Arvore / relogio</th></tr></thead>")
 
-        corpo = (("<div style='margin-bottom:6px'>%s</div>"
-                  "<div style='margin-bottom:4px'>%s</div>%s"
-                  % (atalhos, chips, limpar))
-                 + topo
+        # As duas barras no mesmo desenho da aba Processes do laudo, com a
+        # ajuda no mesmo canto e na mesma forma.
+        barras = ("<div class='controles'>"
+                  "<span class='rotulo'>Janela</span>%s"
+                  "<span class='sep'>|</span>"
+                  "<span class='rotulo'>Tipo de evento</span>%s"
+                  "<span style='margin-left:auto'>%s</span></div>%s"
+                  % (atalhos, chips, _ajuda_risco(), limpar))
+
+        corpo = (barras + topo
                  + "<p style='color:#777;font-size:12px'>%d eventos no total; "
                    "%d na janela de %d minuto(s), em ordem cronologica corrigida "
                    "pelo desvio de relogio de cada host. A correlacao acima "
-                   "analisa exatamente esta janela.</p>"
+                   "analisa exatamente esta janela. O simbolo &#8631; leva do "
+                   "evento ao processo na arvore do laudo.</p>"
                    "<table>%s<tbody>%s</tbody></table>"
                    % (stats["total"], total_janela, minutos,
-                      cabecalho_tabela, linhas)
-                 + _legenda_risco())
+                      cabecalho_tabela, linhas))
 
         self._set_headers()
         self.wfile.write(self._pagina("Linha do tempo", corpo).encode("utf-8"))
@@ -1231,22 +1363,41 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 cenario = ("<span style='color:#6bcB77;font-size:11px'>"
                            "completo</span>")
 
-            linhas += ("<tr class='item'><td><b>%s</b>"
+            linhas += ("<tr class='item'><td style='width:240px'>%s</td>"
+                       "<td style='color:#888;font-size:11px'>%s"
                        "<div style='color:#666;font-size:10px'>%s</div></td>"
-                       "<td style='color:#888;font-size:11px'>%s</td>"
                        "<td>%s</td><td>%s</td></tr>"
-                       % (_esc(a.get("hostname") or "?"),
-                          _esc(detectar.get("kernel") or ""),
-                          _esc(a.get("os_info") or ""), deteccao, cenario))
+                       % (_identifica_agente(a, uuid),
+                          _esc(a.get("os_info") or "&mdash;"),
+                          _esc(detectar.get("kernel") or "kernel nao reportado"),
+                          deteccao, cenario))
 
-        corpo = ("<p style='color:#777;font-size:12px'>Duas perguntas "
-                 "diferentes. <b>Deteccao</b>: quanto vale um laudo produzido "
-                 "neste host. <b>Cenario</b>: o que a afericao pode cobrar "
-                 "dele.<br>Um agente com cenario limitado nao acusa menos por "
-                 "falha da ferramenta: ele nao tem como gerar o que falta.</p>"
+        ajuda = _bolha_ajuda(
+            "Duas perguntas diferentes",
+            "<div style='color:#bbb;font-size:11px;margin-top:8px;"
+            "line-height:1.6'>"
+            "<b style='color:#4ec9b0'>Deteccao</b>: quanto vale um laudo "
+            "produzido neste host. Sem eBPF a captura se reduz ao que /proc "
+            "mostra; sem privilegio ela sai incompleta SEM erro aparente, que e "
+            "o pior caso, porque o laudo parece integro.<br><br>"
+            "<b style='color:#4ec9b0'>Cenario de teste</b>: o que a afericao "
+            "pode cobrar deste host. Um agente com cenario limitado "
+            "nao acusa menos por falha da ferramenta: ele "
+            "nao tem como gerar o que falta.<br><br>"
+            "As duas colunas existem porque as situacoes opostas "
+            "&mdash; a deteccao falhou, ou nao havia o que detectar &mdash; "
+            "produzem o mesmo resultado visivel: a ausencia. Sem esta tela, o "
+            "analista deduz, e deduzir errado aqui leva a tratar host saudavel "
+            "como comprometido, ou o contrario.</div>")
+
+        corpo = ("<div class='controles'>"
+                 "<span class='rotulo'>Capacidades da frota</span>"
+                 "<span style='color:#777;font-size:11px'>%d agente(s). "
+                 "Verde = disponivel; vermelho = ausente.</span>"
+                 "<span style='margin-left:auto'>%s</span></div>"
                  "<table><thead><tr><th>Agente</th><th>Sistema</th>"
                  "<th>Deteccao</th><th>Cenario de teste</th></tr></thead>"
-                 "<tbody>%s</tbody></table>" % linhas)
+                 "<tbody>%s</tbody></table>" % (len(agentes), ajuda, linhas))
 
         self._set_headers()
         self.wfile.write(self._pagina("Capacidades da frota", corpo).encode("utf-8"))
@@ -1289,13 +1440,53 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                           "#ffd166" if pendentes else "#666", pendentes,
                           prioridade, botoes))
 
-        corpo = ("<p style='color:#777;font-size:12px'>Aguardando: <b>%d</b> "
-                 "&nbsp;|&nbsp; processadas: %d &nbsp;|&nbsp; com falha: %d<br>"
-                 "Numero menor e atendido primeiro. O padrao e 50.</p>"
+        ajuda = _bolha_ajuda(
+            "O que esta fila faz",
+            "<div style='color:#bbb;font-size:11px;margin-top:8px;"
+            "line-height:1.6'>"
+            "Toda captura passa por aqui antes de virar evidencia guardada, "
+            "venha da rede ou da coleta local. A fila existe para o servidor "
+            "nao ser derrubado por uma frota inteira reportando ao mesmo "
+            "tempo.<br><br>"
+            "Numa investigacao, porem, um host importa mais que os outros. A "
+            "prioridade coloca esse host na frente sem parar a coleta dos "
+            "demais: <b>numero MENOR e atendido primeiro</b>, e o padrao e 50, "
+            "o que deixa espaco tanto para adiantar quanto para atrasar."
+            "<br><br>Uma captura so e descartada da fila depois que o servidor "
+            "CONFIRMA que ela esta guardada, e nao quando a recebe.</div>")
+
+        # Os tres blocos respondem de imediato se a fila esta em dia. "0 na
+        # fila" espalhado por quatro linhas nao responde isso.
+        def _bloco(rotulo, valor, cor, titulo):
+            return ("<div title='%s' style='background:var(--drk);"
+                    "border-left:3px solid %s;padding:10px 16px;min-width:120px'>"
+                    "<div style='font-size:22px;color:%s'>%s</div>"
+                    "<div style='color:#777;font-size:10px;"
+                    "text-transform:uppercase'>%s</div></div>"
+                    % (_esc(titulo), cor, cor, valor, rotulo))
+
+        painel = ("<div style='display:flex;gap:10px;flex-wrap:wrap;"
+                  "margin:0 0 18px'>%s%s%s</div>"
+                  % (_bloco("aguardando", stats["pending"],
+                            "#ffd166" if stats["pending"] else "#666",
+                            "Capturas recebidas e ainda nao gravadas"),
+                     _bloco("processadas", stats["done"], "#6bcB77",
+                            "Capturas ja gravadas como evidencia"),
+                     _bloco("com falha", stats["failed"],
+                            "#ff4d4d" if stats["failed"] else "#666",
+                            "Capturas que nao puderam ser gravadas. Diferente "
+                            "de zero aqui merece investigacao: e evidencia que "
+                            "chegou e nao ficou.")))
+
+        corpo = ("<div class='controles'>"
+                 "<span class='rotulo'>Fila de ingestao</span>"
+                 "<span style='color:#777;font-size:11px'>Numero menor e "
+                 "atendido primeiro. O padrao e 50.</span>"
+                 "<span style='margin-left:auto'>%s</span></div>%s"
                  "<table><thead><tr><th>Agente</th>"
                  "<th>Na fila</th><th>Prioridade</th><th>Ordem</th></tr></thead>"
                  "<tbody>%s</tbody></table>"
-                 % (stats["pending"], stats["done"], stats["failed"], linhas))
+                 % (ajuda, painel, linhas))
 
         self._set_headers()
         self.wfile.write(self._pagina("Fila de ingestao", corpo).encode("utf-8"))
@@ -1321,10 +1512,37 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         cores = {"PENDING": "#7fb3d5", "SENT": "#ffd166",
                  "DONE": "#6bcB77", "FAILED": "#ff4d4d"}
 
-        def _hora(valor):
+        def _instante(valor):
+            """
+            Data e hora local, com o carimbo UTC embaixo.
+
+            Um registro de log com apenas "13:24:07" nao serve como rastro: nao
+            diz o dia, e nao permite cruzar com log de outro sistema, que quase
+            sempre esta em UTC. As duas formas juntas, como no resto da
+            ferramenta.
+            """
             if not valor:
-                return "-"
-            return datetime.datetime.fromtimestamp(valor).strftime("%H:%M:%S")
+                return "<span style='color:#555'>&mdash;</span>"
+            local = datetime.datetime.fromtimestamp(valor)
+            utc = datetime.datetime.utcfromtimestamp(valor)
+            return ("<div>%s</div>"
+                    "<div style='color:#666;font-family:monospace;"
+                    "font-size:10px'>%s UTC</div>"
+                    % (local.strftime("%Y-%m-%d %H:%M:%S"),
+                       utc.strftime("%Y-%m-%d %H:%M:%S")))
+
+        # O que cada acao faz, e a tecnica que ela exercita quando for o caso.
+        # Sem isso "chaos" e uma palavra sem significado para quem nao escreveu
+        # a ferramenta, e o registro de uma acao precisa dizer que acao foi.
+        ACOES = {
+            "collect": ("&#128248;", "Captura sob demanda: o agente coleta "
+                        "agora, em vez de esperar o proximo ciclo.", ""),
+            "chaos": ("&#9760;", "APENAS LAB: executa o cenario de teste, que "
+                      "planta artefatos conhecidos para aferir a deteccao.",
+                      "T1574.006"),
+            "restart": ("&#128260;", "Reinicia o processo do agente no host "
+                        "inspecionado.", ""),
+        }
 
         linhas = ""
         for r in registros:
@@ -1335,31 +1553,92 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             espera = "-"
             if r.get("delivered_at"):
                 espera = "%ds" % int(r["delivered_at"] - r["created_at"])
+
+            icone, explicacao, tecnica = ACOES.get(
+                r["command"], ("&#9881;", "Acao sem descricao nesta versao.", ""))
+            acao = ("<span title='%s'>%s %s</span>%s"
+                    % (_esc(explicacao), icone, _esc(r["command"]),
+                       ("<div style='margin-top:3px'>%s</div>"
+                        % _selo_attck(tecnica)) if tecnica else ""))
+
+            # O RESULTADO deixa de ser texto solto e vira caminho: um comando
+            # que produziu captura leva ao laudo, e todo comando leva ao
+            # historico e a janela da linha do tempo em que ele aconteceu. Sem
+            # isso, o registro diz que algo aconteceu e obriga o analista a
+            # procurar o efeito em outra tela, a mao.
+            resultado = _esc((r.get("result") or "")[:120]) or (
+                "<span style='color:#555'>&mdash;</span>")
+            atalhos = ""
+            if r.get("agent_uuid"):
+                quando = r.get("finished_at") or r.get("created_at") or 0
+                # Janela centrada no comando, com folga para os dois lados: o
+                # efeito de uma captura chega depois do comando terminar.
+                minutos = max(15, int((time.time() - quando) / 60) + 5)
+                atalhos = ("<div style='margin-top:4px'>"
+                           "<a href='/agent/%s' title='Laudo mais recente deste "
+                           "agente' style='color:#4ec9b0;text-decoration:none;"
+                           "font-size:11px;margin-right:8px'>&#128269; laudo</a>"
+                           "<a href='/history/%s' title='Capturas deste agente, "
+                           "para achar a que este comando produziu' "
+                           "style='color:#4ec9b0;text-decoration:none;"
+                           "font-size:11px;margin-right:8px'>&#128337; "
+                           "capturas</a>"
+                           "<a href='/timeline?min=%d&agent=%s' title='Eventos "
+                           "deste agente na janela que cobre este comando' "
+                           "style='color:#4ec9b0;text-decoration:none;"
+                           "font-size:11px'>&#8631; eventos</a></div>"
+                           % (r["agent_uuid"], r["agent_uuid"], minutos,
+                              r["agent_uuid"]))
+
             linhas += ("<tr class='item'>"
                        "<td style='color:#777;width:40px'>%s</td>"
-                       "<td style='color:#4ec9b0;width:80px'>%s</td>"
+                       "<td style='color:#4ec9b0;width:110px'>%s</td>"
                        "<td style='width:220px'>%s</td>"
                        "<td style='color:%s; font-weight:bold;width:80px'>%s</td>"
-                       "<td>%s</td><td>%s</td><td>%s</td>"
-                       "<td style='color:#888'>%s</td>"
-                       "<td style='color:#aaa; font-size:11px'>%s</td></tr>"
-                       % (r["id"], r["command"],
+                       "<td style='width:160px;color:#aaa;font-size:11px'>%s</td>"
+                       "<td style='width:60px'>%s</td>"
+                       "<td style='width:60px'>%s</td>"
+                       "<td style='color:#888;width:90px'>%s</td>"
+                       "<td style='color:#aaa; font-size:11px'>%s%s</td></tr>"
+                       % (r["id"], acao,
                           _identifica_agente(frota.get(r["agent_uuid"]),
                                              r["agent_uuid"]),
-                          cor, r["status"], _hora(r["created_at"]),
+                          cor, r["status"], _instante(r["created_at"]),
                           espera, duracao, r.get("requested_by") or "-",
-                          (r.get("result") or "")[:90]))
+                          resultado, atalhos))
 
         if not linhas:
             linhas = ("<tr><td colspan='9' style='color:#555; padding:30px; "
                       "text-align:center'>Nenhum pedido registrado.</td></tr>")
 
-        corpo = ("<p style='color:#777;font-size:12px'>Espera = tempo ate o "
-                 "agente recolher o pedido. Duracao = tempo de execucao no "
-                 "agente.</p>"
+        ajuda = _bolha_ajuda(
+            "Como ler este registro",
+            "<div style='color:#bbb;font-size:11px;margin-top:8px;"
+            "line-height:1.6'>"
+            "<b style='color:#7fb3d5'>PENDING</b> o pedido esta na fila; o "
+            "servidor NUNCA inicia conexao com o host inspecionado, quem busca "
+            "e o agente.<br>"
+            "<b style='color:#ffd166'>SENT</b> foi entregue ao agente. Entregue "
+            "nao e aceito: o desfecho so se conhece quando ele reporta.<br>"
+            "<b style='color:#6bcB77'>DONE</b> o agente reportou conclusao.<br>"
+            "<b style='color:#ff4d4d'>FAILED</b> falhou, ou passou de %ds sem "
+            "desfecho e foi encerrado como sem retorno.<br><br>"
+            "<b>Espera</b> = tempo ate o agente recolher o pedido, limitado "
+            "pelo ciclo dele. <b>Duracao</b> = tempo de execucao no agente."
+            "<br><br>Os atalhos de cada linha levam ao efeito do comando: o "
+            "laudo, a lista de capturas e a janela da linha do tempo que cobre "
+            "aquele momento.</div>" % STUCK_LIMIT)
+
+        corpo = ("<div class='controles'>"
+                 "<span class='rotulo'>Registro de comandos</span>"
+                 "<span style='color:#777;font-size:11px'>%d pedido(s), do mais "
+                 "recente para o mais antigo. Recarrega sozinho a cada 15s."
+                 "</span><span style='margin-left:auto'>%s</span></div>"
                  "<table><thead><tr><th>#</th><th>Acao</th><th>Agente</th>"
-                 "<th>Estado</th><th>Pedido</th><th>Espera</th><th>Duracao</th>"
-                 "<th>Solicitante</th><th>Resultado</th></tr></thead><tbody>"
+                 "<th>Estado</th><th>Pedido (local e UTC)</th><th>Espera</th>"
+                 "<th>Duracao</th><th>Solicitante</th>"
+                 "<th>Resultado e para onde ele leva</th></tr></thead><tbody>"
+                 % (len(registros), ajuda)
                  + linhas + "</tbody></table>")
         # Esta era a ultima tela com folha de estilo propria, e por isso a unica
         # sem cabecalho, sem versao e sem a barra de navegacao.

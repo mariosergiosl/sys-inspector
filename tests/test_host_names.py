@@ -80,12 +80,24 @@ def test_report_lists_the_other_names():
     assert "intranet.lab.local" in html
 
 
-def test_report_omits_redundant_names():
-    """Quando o FQDN e igual ao nome curto, nao se repete a mesma informacao."""
+def test_redundant_names_still_show_their_line():
+    """
+    A regra anterior omitia a linha do FQDN quando ele repetia o nome curto,
+    para nao repetir informacao. D-020 inverteu esse criterio: um campo que
+    desaparece obriga o leitor a deduzir se o host nao tinha ou se a ferramenta
+    nao olhou, e repetir um nome custa uma linha, enquanto deduzir errado
+    invalida a conclusao tirada da ausencia.
+
+    Os nomes ADICIONAIS continuam sem repetir o que ja foi mostrado: ali nao ha
+    ambiguidade, porque a linha "Other names" permanece na tela declarando que
+    nao havia outros.
+    """
     html = render_os_block({"hostname": "web01", "fqdn": "web01",
                             "hostnames": ["web01"]}, {})
-    assert "FQDN" not in html
-    assert "Other names" not in html
+    assert "FQDN" in html
+    assert "Other names" in html
+    # Nenhum alias alem do proprio nome: o campo diz que olhou e nao havia.
+    assert "nao havia valor" in html
 
 
 def test_report_survives_missing_name_data():

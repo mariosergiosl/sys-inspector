@@ -614,6 +614,56 @@ def _get_details_html(node, mounts, tree=None):
 # ------------------------------------------------------------------------------
 # HEADER RENDERERS
 # ------------------------------------------------------------------------------
+# D-020: TODO CAMPO SEMPRE VISIVEL, EM UM DE TRES ESTADOS
+#
+# Um campo omitido faz o leitor deduzir, e as duas deducoes possiveis levam a
+# lugares opostos: "o host nao tinha" versus "a ferramenta nao olhou". A segunda
+# invalida qualquer conclusao tirada da ausencia, e o laudo nao dizia qual das
+# duas era o caso.
+#
+# O criterio para separar as duas: a CHAVE presente no dado coletado significa
+# que a coleta olhou; o valor vazio significa que nao havia. Chave ausente
+# significa que aquela captura nao produziu o campo, o que acontece com laudo de
+# agente mais antigo que a versao do campo.
+ESTADO_VAZIO = ("&mdash;", "#666",
+                "A ferramenta olhou e nao havia valor. A ausencia aqui e uma "
+                "observacao, e nao uma falha de coleta.")
+ESTADO_AUSENTE = ("nao coletado", "#c586c0",
+                  "Esta captura NAO produziu este campo, entao nada se pode "
+                  "concluir a partir da ausencia dele. Costuma acontecer com "
+                  "laudo gerado por agente anterior a versao que passou a "
+                  "coletar o campo.")
+
+
+def _campo(rotulo, dados, chave, formata=None, estilo="", nota=""):
+    """
+    Uma linha do bloco de identificacao, sempre presente, declarando seu estado.
+
+    PARAMETER dados: dict da coleta.
+    PARAMETER chave: nome do campo dentro dele.
+    PARAMETER formata: funcao opcional para apresentar o valor.
+    PARAMETER nota: explicacao do campo, exibida no tooltip do rotulo.
+    """
+    dica_rotulo = (" title='%s'" % _esc(nota)) if nota else ""
+    presente = isinstance(dados, dict) and chave in dados
+    valor = (dados or {}).get(chave)
+
+    if not presente:
+        texto, cor, dica = ESTADO_AUSENTE
+    elif valor in (None, "", [], {}, "N/A"):
+        texto, cor, dica = ESTADO_VAZIO
+    else:
+        texto = _esc(formata(valor) if formata else valor)
+        return ("<div class='kv'><span class='kv-k'%s>%s</span>"
+                "<span class='kv-v' style='%s'>%s</span></div>"
+                % (dica_rotulo, _esc(rotulo), estilo, texto))
+
+    return ("<div class='kv'><span class='kv-k'%s>%s</span>"
+            "<span class='kv-v' title='%s' style='color:%s;font-style:italic;"
+            "font-size:11px'>%s</span></div>"
+            % (dica_rotulo, _esc(rotulo), _esc(dica), cor, texto))
+
+
 def render_os_block(os_data, hw_data, agent_uuid=None):
     """
     Bloco SYSTEM do laudo.
@@ -621,38 +671,52 @@ def render_os_block(os_data, hw_data, agent_uuid=None):
     O UUID do agente identifica a ORIGEM da captura de forma estavel: hostname
     e endereco mudam, e num laudo e o identificador que amarra a evidencia ao
     host que a produziu, junto da cadeia de custodia.
+
+    Nenhuma linha deste bloco desaparece (D-020). O FQDN e os nomes alternativos
+    sumiam quando o host nao os tinha, e comparar dois laudos lado a lado dava a
+    impressao de que a coleta havia regredido num deles.
     """
+    os_data = os_data or {}
+    hw_data = hw_data or {}
+
     html = "<div class='kv-list'>"
-    html += f"<div class='kv'><span class='kv-k'>Hostname</span><span class='kv-v'>{_esc(os_data.get('hostname'))}</span></div>"
+    html += _campo("Hostname", os_data, "hostname",
+                   nota="Nome curto que o proprio host responde.")
 
     # Um host costuma ter mais de um nome (FQDN, aliases de /etc/hosts, DNS
     # reverso por interface). Numa pericia isso importa: o mesmo host aparece
     # com nomes diferentes nos logs de sistemas diferentes, e correlacionar
     # esses registros exige conhecer todos.
-    fqdn = os_data.get('fqdn') or ''
-    nomes = [n for n in (os_data.get('hostnames') or [])
-             if n and n != os_data.get('hostname')]
-    if fqdn and fqdn != os_data.get('hostname'):
-        html += (f"<div class='kv'><span class='kv-k'>FQDN</span>"
-                 f"<span class='kv-v'>{_esc(fqdn)}</span></div>")
-    outros = [n for n in nomes if n != fqdn]
-    if outros:
-        html += (f"<div class='kv'><span class='kv-k'>Other names</span>"
-                 f"<span class='kv-v' style='font-size:11px'>{_esc(', '.join(outros))}</span></div>")
+    html += _campo("FQDN", os_data, "fqdn",
+                   nota="Nome qualificado. Vazio significa que 'hostname -f' "
+                        "nao resolve neste host, o que e comum e legitimo.")
 
-    if agent_uuid:
-        html += (f"<div class='kv'><span class='kv-k'>Agent UUID</span>"
-                 f"<span class='kv-v' style='font-family:monospace; font-size:11px'>{_esc(agent_uuid)}</span></div>")
-    html += f"<div class='kv'><span class='kv-k'>Kernel</span><span class='kv-v'>{os_data.get('kernel')}</span></div>"
-    html += f"<div class='kv'><span class='kv-k'>Uptime</span><span class='kv-v'>{os_data.get('uptime')}</span></div>"
-    html += f"<div class='kv'><span class='kv-k'>OS</span><span class='kv-v'>{os_data.get('os_pretty_name')}</span></div>"
-    html += f"<div class='kv'><span class='kv-k'>CPU</span><span class='kv-v'>{hw_data.get('cpu')}</span></div>"
-    html += f"<div class='kv'><span class='kv-k'>Memory</span><span class='kv-v'>{hw_data.get('mem_mb')} MB</span></div>"
+    outros = [n for n in (os_data.get('hostnames') or [])
+              if n and n != os_data.get('hostname') and n != os_data.get('fqdn')]
+    html += _campo("Other names",
+                   dict(os_data, _outros=outros) if 'hostnames' in os_data
+                   else {}, "_outros",
+                   formata=lambda v: ", ".join(v),
+                   estilo="font-size:11px",
+                   nota="Aliases de /etc/hosts e DNS reverso por interface. O "
+                        "mesmo host aparece com nomes diferentes em logs de "
+                        "sistemas diferentes.")
+
+    html += _campo("Agent UUID", {"uuid": agent_uuid} if agent_uuid else {},
+                   "uuid", estilo="font-family:monospace; font-size:11px",
+                   nota="Identificador estavel da origem da captura: hostname "
+                        "e endereco mudam, este nao.")
+    html += _campo("Kernel", os_data, "kernel")
+    html += _campo("Uptime", os_data, "uptime")
+    html += _campo("OS", os_data, "os_pretty_name")
+    html += _campo("CPU", hw_data, "cpu")
+    html += _campo("Memory", hw_data, "mem_mb", formata=lambda v: "%s MB" % v)
     html += "</div>"
     return html
 
 
 def render_net_block(net_data):
+    net_data = net_data or {}
     # [v0.70 FEAT] Physical Hardware Alert
     phy_alert = ""
     if net_data.get('has_phy_issues'):
@@ -662,11 +726,39 @@ def render_net_block(net_data):
 
     html = f"{phy_alert}<div class='kv-list'>"
 
-    for iface in net_data.get('interfaces', []):
-        html += f"<div class='kv'><span class='kv-k'>{iface['name']}</span><span class='kv-v'>{iface['ip']}</span></div>"
-    gw = net_data.get('gateway', 'N/A')
-    dns = ", ".join(net_data.get('dns', []))
-    html += f"<div class='net-gw-dns'><div><b>GW:</b> {gw}</div><div><b>DNS:</b> {dns}</div></div>"
+    # D-020 aplicado a topologia: um host com menos interfaces que outro nao
+    # significa coleta incompleta. Comparando dois laudos, a diferenca de
+    # interfaces foi lida como "perdemos a topologia de rede", quando um host
+    # tinha podman e o outro nao. A tela agora declara o que observou.
+    interfaces = net_data.get('interfaces')
+    if interfaces is None:
+        html += ("<div class='kv'><span class='kv-k'>Interfaces</span>"
+                 "<span class='kv-v' title='%s' style='color:%s;"
+                 "font-style:italic;font-size:11px'>%s</span></div>"
+                 % (_esc(ESTADO_AUSENTE[2]), ESTADO_AUSENTE[1],
+                    ESTADO_AUSENTE[0]))
+    elif not interfaces:
+        html += ("<div class='kv'><span class='kv-k'>Interfaces</span>"
+                 "<span class='kv-v' title='A enumeracao rodou e nao "
+                 "encontrou interface alguma alem da de loopback.' "
+                 "style='color:#666;font-style:italic;font-size:11px'>"
+                 "nenhuma alem de loopback</span></div>")
+    else:
+        for iface in interfaces:
+            html += ("<div class='kv'><span class='kv-k'>%s</span>"
+                     "<span class='kv-v'>%s</span></div>"
+                     % (_esc(iface.get('name')),
+                        _esc(iface.get('ip')) or
+                        "<span style='color:#666;font-style:italic'>sem "
+                        "endereco</span>"))
+
+    gw = net_data.get('gateway') or ""
+    dns = ", ".join(net_data.get('dns') or [])
+    vazio = ("<span style='color:#666;font-style:italic' title='%s'>%s</span>"
+             % (_esc(ESTADO_VAZIO[2]), ESTADO_VAZIO[0]))
+    html += ("<div class='net-gw-dns'><div><b>GW:</b> %s</div>"
+             "<div><b>DNS:</b> %s</div></div>"
+             % (_esc(gw) if gw else vazio, _esc(dns) if dns else vazio))
     html += "</div>"
     return html
 
