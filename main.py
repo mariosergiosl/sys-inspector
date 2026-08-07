@@ -34,7 +34,9 @@ def ensure_environment():
     Triggers setup_env.sh if ANY dependency is missing.
     This ensures SLES environments are auto-configured on first run.
     """
-    required_modules = ['yaml', 'cryptography', 'flask']
+    # Flask so e necessario para os modos com interface web; exigir de todos
+    # obrigaria um coletor puro a carregar um servidor web sem uso.
+    required_modules = ['yaml', 'cryptography']
     missing_modules = []
 
     for mod in required_modules:
@@ -103,25 +105,48 @@ def main():
     ensure_environment()
 
     # 2. Delayed Imports (To prevent ModuleNotFoundError before Setup)
+    # Apenas o que TODO modo usa. Os controllers sao importados sob demanda,
+    # ja que cada modo tem exigencias diferentes: coletar precisa de eBPF (bcc,
+    # headers do kernel), receber e analisar nao. Importar todos aqui obrigava
+    # um servidor a ter o ferramental de compilacao eBPF instalado sem nunca
+    # usa-lo, o que impedia rodar o servidor em hosts sem esse toolchain.
     try:
         from src.utils.config_loader import load_config
         from src.core.database import DatabaseManager
         from src.core.crypto import load_private_key, decrypt_data
-
-        # Controllers
-        from src.controllers.snapshot_controller import SnapshotController
-        from src.controllers.live_controller import LiveController
-        from src.controllers.daemon_controller import DaemonController
-        from src.controllers.server_controller import ServerController
-        # [NEW v0.80] Integrated Web Controller
-        from src.controllers.web_controller import WebController
-
     except ImportError as e:
-        print(f"[CRITICAL] Failed to import modules after setup: {e}")
-        # Hint for Flask which is required by WebController
-        if "flask" in str(e).lower():
-            print("HINT: 'flask' is missing. Run 'pip install flask' or './tools/setup_env.sh --install'")
+        print(f"[CRITICAL] Failed to import core modules after setup: {e}")
         sys.exit(1)
+
+    def load_controller(mode_name):
+        """
+        Importa o controller do modo escolhido, e so ele.
+
+        Uma dependencia ausente e reportada com o motivo e a acao, em vez de um
+        ModuleNotFoundError cru que nao diz ao operador o que instalar.
+        """
+        controllers = {
+            'snapshot': ('src.controllers.snapshot_controller', 'SnapshotController'),
+            'live': ('src.controllers.live_controller', 'LiveController'),
+            'daemon': ('src.controllers.daemon_controller', 'DaemonController'),
+            'server': ('src.controllers.server_controller', 'ServerController'),
+            'web': ('src.controllers.web_controller', 'WebController'),
+        }
+        module_path, class_name = controllers[mode_name]
+        try:
+            module = __import__(module_path, fromlist=[class_name])
+            return getattr(module, class_name)
+        except ImportError as exc:
+            missing = str(exc).lower()
+            print(f"[CRITICAL] Mode '{mode_name}' cannot start: {exc}")
+            if "bcc" in missing:
+                print("HINT: this mode collects with eBPF and needs 'python3-bcc' "
+                      "plus the kernel headers. Modes that only receive or "
+                      "analyse data (server) do not.")
+            elif "flask" in missing:
+                print("HINT: 'flask' is missing. Run 'pip install flask' or "
+                      "'./tools/setup_env.sh --install'")
+            sys.exit(1)
 
     # 3. Argument Parsing
     parser = argparse.ArgumentParser(description="Sys-Inspector v0.80 Agent")
@@ -263,19 +288,19 @@ def main():
             duration = args.interval if args.interval else config['snapshot'].get('duration', 30)
             logging.info(f"[START] Starting Snapshot Mode ({duration}s)...")
 
-            ctrl = SnapshotController(config, db)
+            ctrl = load_controller('snapshot')(config, db)
             ctrl.run(duration=duration)
 
         elif mode == 'live':
             # v0.60 Legacy Live Mode (Terminal UI)
             logging.warning("[COMPAT] Starting Legacy Live Mode.")
-            ctrl = LiveController(config, db, SHUTDOWN_EVENT)
+            ctrl = load_controller('live')(config, db, SHUTDOWN_EVENT)
             ctrl.run()
 
         elif mode == 'daemon':
             # v0.80 Daemon Mode (Universal Collector)
             logging.info("[START] Starting Daemon Mode (Background Collector)...")
-            ctrl = DaemonController(config, db, SHUTDOWN_EVENT)
+            ctrl = load_controller('daemon')(config, db, SHUTDOWN_EVENT)
             ctrl.run()  # This enters the efficient infinite loop
 
         elif mode == 'local-live':
@@ -283,14 +308,14 @@ def main():
             logging.info("[START] Starting Local-Live Mode (Daemon + Web)...")
 
             # 1. Start Daemon in a separate thread (Producer)
-            daemon_ctrl = DaemonController(config, db, SHUTDOWN_EVENT)
+            daemon_ctrl = load_controller('daemon')(config, db, SHUTDOWN_EVENT)
             daemon_thread = threading.Thread(target=daemon_ctrl.run, name="DaemonThread")
             daemon_thread.daemon = True  # Ensure it dies if main thread dies hard
             daemon_thread.start()
 
             # 2. Start Web Interface (Consumer) - Thread Daemonized
             try:
-                web_ctrl = WebController(config, db)
+                web_ctrl = load_controller('web')(config, db)
                 web_thread = threading.Thread(target=web_ctrl.run, name="WebThread")
                 web_thread.daemon = True
                 web_thread.start()
@@ -319,7 +344,7 @@ def main():
         elif mode == 'server':
             # v0.60 Legacy Server Mode (being refactored)
             logging.warning("[BETA] Server Mode logic is being refactored for v0.80.")
-            ctrl = ServerController(config, db, SHUTDOWN_EVENT)
+            ctrl = load_controller('server')(config, db, SHUTDOWN_EVENT)
             ctrl.run()
 
         else:
