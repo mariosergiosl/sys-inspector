@@ -164,7 +164,7 @@ class EventStore(object):
             with closing(self._conn()) as conn:
                 for ev in eventos:
                     try:
-                        conn.execute(
+                        cur = conn.execute(
                             "INSERT OR IGNORE INTO events (fingerprint, ts, "
                             "corrected_ts, type, agent_uuid, subject, detail, "
                             "severity, clock_offset, capture_id) "
@@ -176,7 +176,12 @@ class EventStore(object):
                              ev.get("severity") or "",
                              ev.get("clock_offset") or 0.0,
                              ev.get("capture_id")))
-                        gravados += conn.total_changes and 1 or 0
+                        # cursor.rowcount, nao conn.total_changes: o segundo e
+                        # CUMULATIVO da conexao, entao depois do primeiro insert
+                        # ficava sempre verdadeiro e contava tambem os eventos
+                        # ignorados por duplicidade. O log vinha reportando
+                        # numero inflado desde o inicio.
+                        gravados += 1 if cur.rowcount else 0
                     except Exception:
                         continue
                 conn.commit()
@@ -203,7 +208,20 @@ class EventStore(object):
         if agent_uuid:
             sql += " AND agent_uuid = ?"
             params.append(agent_uuid)
-        sql += " ORDER BY corrected_ts ASC LIMIT ?"
+        # Os mais RECENTES, apresentados em ordem crescente.
+        #
+        # A forma ingenua (ORDER BY ASC LIMIT n) devolve os mais ANTIGOS, e foi
+        # o que aconteceu: a tela dizia "os N mais recentes" e mostrava os
+        # processos do boot, de horas antes. O efeito para quem olhava era
+        # concluir que a captura nao pegara nada do que acabara de acontecer,
+        # quando os eventos estavam gravados o tempo todo. Pior ainda, a
+        # correlacao analisava essa mesma janela errada e por isso nunca
+        # encontrava nada.
+        #
+        # Seleciona-se descendente para pegar o fim da linha, e reordena-se
+        # ascendente para exibir, porque sequencia so se le do passado para o
+        # presente.
+        sql += " ORDER BY corrected_ts DESC LIMIT ?"
         params.append(int(limit))
 
         try:
@@ -216,6 +234,8 @@ class EventStore(object):
                     except Exception:
                         item["detail"] = {}
                     saida.append(item)
+                # Volta a ordem cronologica para exibicao.
+                saida.reverse()
                 return saida
         except Exception as exc:
             LOG.error("Reading timeline failed: %s", exc)
@@ -237,6 +257,46 @@ class EventStore(object):
 # ------------------------------------------------------------------------------
 # EXTRACAO A PARTIR DO QUE JA SE COLETA
 # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# O QUE MERECE ESTAR NA LINHA DO TEMPO
+#
+# A captura guarda TUDO, e continua sendo a evidencia. A linha do tempo e uma
+# LEITURA dela, e leitura que inclui tudo nao le nada.
+#
+# Medido em campo: derivar um evento para cada processo de cada captura produziu
+# ~260 eventos por minuto numa frota de quatro agentes, dominados por processos
+# efemeros do sistema (`head`, `sleep`, `sh`, milhares de execucoes distintas e
+# legitimas). Os artefatos do cenario de teste eram 0,2% do volume, e qualquer
+# janela de tempo os enterrava. A linha existia, funcionava, e era inutil.
+#
+# O criterio abaixo NAO descarta informacao: o processo continua na captura,
+# assinado e completo. Ele decide o que entra na leitura temporal.
+# ------------------------------------------------------------------------------
+CAMINHOS_NOTAVEIS = ("/tmp/", "/dev/shm/", "/var/tmp/", "/home/")
+
+
+def _merece_linha_do_tempo(proc):
+    """
+    Se este processo diz algo sobre a sequencia dos acontecimentos.
+
+    Entra o que tem risco atribuido, o que carrega rotulo de contexto, o que
+    fala com a rede, e o que executa de diretorio gravavel. Fica de fora o
+    processo de sistema banal, que e a esmagadora maioria e nao informa nada
+    sobre ORDEM: saber que `sleep` rodou pela milesima vez nao ajuda a
+    reconstituir um incidente.
+    """
+    if (proc.get("anomaly_score") or 0) > 0:
+        return True
+    if proc.get("context_tags"):
+        return True
+    if proc.get("connections"):
+        return True
+
+    cmd = (proc.get("cmd") or "")
+    executavel = cmd.split()[0] if cmd.split() else ""
+    return any(executavel.startswith(d) for d in CAMINHOS_NOTAVEIS)
+
+
 def events_from_capture(payload, agent_uuid, capture_id=None, clock_offset=0.0):
     """
     Deriva eventos de uma captura ja existente.
@@ -261,6 +321,8 @@ def events_from_capture(payload, agent_uuid, capture_id=None, clock_offset=0.0):
             continue
         inicio = proc.get("start_time") or 0
         if not inicio:
+            continue
+        if not _merece_linha_do_tempo(proc):
             continue
         eventos.append(make_event(
             inicio, EV_PROCESS_START, agent_uuid,

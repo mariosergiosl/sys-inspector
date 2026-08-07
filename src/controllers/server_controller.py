@@ -699,7 +699,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
     # Icone por tipo de evento. Uma linha do tempo densa se le por forma antes
     # de se ler por texto; sem distincao visual ela vira paragrafo.
     ICONE_EVENTO = {
-        "process.start": ("&#9654;", "#7fb3d5"),
+        "process.start": ("&#9679;", "#7fb3d5"),   # circulo, nao "play":
+        # o triangulo sugeria botao clicavel e nao ha acao associada
         "network.connect": ("&#127760;", "#4ec9b0"),
         "persistence.created": ("&#128204;", "#ffd166"),
         "finding.raised": ("&#9888;", "#ff4d4d"),
@@ -722,9 +723,18 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         _, _, consulta = self.path.partition("?")
         args = urlparse.parse_qs(consulta or "")
         agente = (args.get("agent") or [None])[0]
-        limite = int((args.get("limit") or ["300"])[0])
+        # A janela e de TEMPO, nao de contagem. Uma linha do tempo forense
+        # responde "o que aconteceu neste intervalo", e limitar por quantidade
+        # faz a janela encolher justamente quando ha mais atividade: com quatro
+        # agentes, 300 eventos cobriam pouco mais de um minuto, de modo que um
+        # cenario executado treze minutos antes ficava de fora e parecia nao ter
+        # sido capturado.
+        minutos = int((args.get("min") or ["60"])[0])
+        limite = int((args.get("limit") or ["1500"])[0])
+        desde = time.time() - (minutos * 60)
 
-        eventos = controller.events.timeline(agent_uuid=agente, limit=limite)
+        eventos = controller.events.timeline(inicio=desde, agent_uuid=agente,
+                                             limit=limite)
         stats = controller.events.stats()
 
         # A correlacao roda sobre a MESMA janela que esta sendo exibida: uma
@@ -796,12 +806,29 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                       "text-align:center'>Nenhum evento ainda. A linha do tempo "
                       "e derivada das capturas conforme elas chegam.</td></tr>")
 
-        corpo = (topo
-                 + "<p style='color:#777;font-size:12px'>%d eventos registrados. "
-                   "Exibindo os %d mais recentes da janela, em ordem cronologica "
-                   "corrigida pelo desvio de relogio de cada host.</p>"
-                   "<table><tbody>%s</tbody></table>"
-                   % (stats["total"], len(eventos), linhas))
+        # Seletor de janela: o intervalo que interessa muda conforme a
+        # pergunta, e obrigar a editar a URL esconderia o recurso.
+        atalhos = ""
+        for m, rotulo in ((15, "15min"), (60, "1h"), (360, "6h"), (1440, "24h")):
+            ativo = ("background:#333;" if m == minutos else "")
+            atalhos += ("<a class='btn' href='/timeline?min=%d%s' "
+                        "style='margin-right:6px;padding:3px 10px;%s'>%s</a>"
+                        % (m, ("&agent=" + agente) if agente else "", ativo,
+                           rotulo))
+
+        cabecalho_tabela = ("<thead><tr><th>Hora</th><th></th><th>Agente</th>"
+                            "<th>O que aconteceu</th><th>Relogio</th></tr>"
+                            "</thead>")
+
+        corpo = (("<div style='margin-bottom:14px'>%s</div>" % atalhos)
+                 + topo
+                 + "<p style='color:#777;font-size:12px'>%d eventos no total; "
+                   "%d na janela de %d minuto(s), em ordem cronologica corrigida "
+                   "pelo desvio de relogio de cada host. A correlacao abaixo "
+                   "analisa exatamente esta janela.</p>"
+                   "<table>%s<tbody>%s</tbody></table>"
+                   % (stats["total"], len(eventos), minutos,
+                      cabecalho_tabela, linhas))
 
         self._set_headers()
         self.wfile.write(self._pagina("Linha do tempo", corpo).encode("utf-8"))

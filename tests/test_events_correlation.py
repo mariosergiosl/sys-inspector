@@ -129,9 +129,15 @@ def test_events_are_derived_without_collecting_anything_new():
 
 
 def test_a_process_keeps_its_own_instant():
-    """O processo tem hora propria; usar a da captura apagaria a sequencia."""
+    """
+    O processo tem hora propria; usar a da captura apagaria a sequencia.
+
+    Usa um processo NOTAVEL de proposito: os banais nao entram na linha do
+    tempo, e este teste e sobre o instante, nao sobre o criterio de entrada.
+    """
     payload = {"timestamp": 5000,
-               "processes": {"1": {"pid": 1, "cmd": "x", "start_time": 4990}}}
+               "processes": {"1": {"pid": 1, "cmd": "/tmp/x",
+                                   "start_time": 4990}}}
     inicio = [e for e in events_from_capture(payload, "a")
               if e["type"] == EV_PROCESS_START][0]
     assert inicio["ts"] == 4990
@@ -410,3 +416,118 @@ def test_the_campaign_rule_no_longer_fires_on_the_real_false_positive():
     linha = "/usr/lib/gvfs/gvfsd-fuse /run/user/0/gvfs -f"
     eventos = [_proc(1000, linha, agente=h) for h in ("a", "b", "c", "d")]
     assert rule_fleet_campaign(eventos) == []
+
+
+# ------------------------------------------------------------------------------
+# A JANELA EXIBIDA
+# ------------------------------------------------------------------------------
+def test_the_timeline_returns_the_most_recent_not_the_oldest(loja):
+    """
+    Defeito observado em campo, e o terceiro do mesmo tipo neste projeto: a tela
+    dizia "os N mais recentes" e o SQL fazia ORDER BY ASC LIMIT N, que devolve
+    os mais ANTIGOS. Na pratica exibia os processos do boot, de horas antes.
+
+    O custo nao foi so visual. A correlacao analisava essa mesma janela errada e
+    por isso nunca encontrava nada, e a leitura de quem olhava era que a captura
+    nao pegara o que acabara de acontecer, quando os eventos estavam gravados o
+    tempo todo.
+    """
+    loja.add([_proc(1000 + i, "evento-%d" % i) for i in range(10)])
+
+    recentes = loja.timeline(limit=3)
+    assert [e["subject"] for e in recentes] == ["evento-7", "evento-8",
+                                                "evento-9"]
+
+
+def test_the_window_is_still_shown_oldest_first(loja):
+    """
+    Selecionar os mais recentes e uma coisa; exibi-los e outra. Sequencia so se
+    le do passado para o presente, entao a ordem final e crescente.
+    """
+    loja.add([_proc(1000 + i, "e%d" % i) for i in range(5)])
+    tempos = [e["corrected_ts"] for e in loja.timeline(limit=3)]
+    assert tempos == sorted(tempos)
+
+
+def test_correlation_sees_the_recent_window(loja):
+    """
+    Consequencia direta: o material recente e o que chega as regras. Com a
+    janela errada, um artefato ativo agora nunca seria correlacionado.
+    """
+    antigos = [_proc(100 + i, "/usr/sbin/antigo") for i in range(50)]
+    recentes = [_proc(9000 + i, "/tmp/miner") for i in range(MIN_RECORRENCIA)]
+    recentes.append(make_event(9001, EV_CONNECTION, "a", subject="1.2.3.4:9",
+                               detail={"cmd": "/tmp/miner"}))
+    loja.add(antigos + recentes)
+
+    janela = loja.timeline(limit=10)
+    assert any("/tmp/miner" in (e["subject"] or "") for e in janela)
+
+
+# ------------------------------------------------------------------------------
+# O QUE MERECE ESTAR NA LINHA DO TEMPO
+# ------------------------------------------------------------------------------
+def test_a_banal_system_process_stays_out_of_the_timeline():
+    """
+    Medido em campo: derivar um evento por processo de cada captura produziu
+    ~260 eventos por minuto com quatro agentes, dominados por `head`, `sleep` e
+    `sh` (milhares de execucoes distintas e legitimas). Os artefatos do cenario
+    eram 0,2% do volume e qualquer janela de tempo os enterrava. A linha existia,
+    funcionava, e era inutil.
+    """
+    payload = {"timestamp": 5000,
+               "processes": {"1": {"pid": 1, "cmd": "/usr/bin/sleep 1",
+                                   "start_time": 4990, "anomaly_score": 0}}}
+    inicios = [e for e in events_from_capture(payload, "a")
+               if e["type"] == EV_PROCESS_START]
+    assert inicios == []
+
+
+def test_the_process_is_still_in_the_capture():
+    """
+    O criterio nao descarta informacao: decide o que entra na LEITURA temporal.
+    A captura continua completa e assinada, e e ela a evidencia.
+    """
+    from src.core.events import _merece_linha_do_tempo
+    assert _merece_linha_do_tempo({"cmd": "/usr/bin/sleep"}) is False
+
+
+def test_anything_with_risk_gets_in():
+    from src.core.events import _merece_linha_do_tempo
+    assert _merece_linha_do_tempo({"cmd": "/usr/bin/x", "anomaly_score": 3})
+
+
+def test_anything_talking_to_the_network_gets_in():
+    from src.core.events import _merece_linha_do_tempo
+    assert _merece_linha_do_tempo({"cmd": "/usr/bin/x",
+                                   "connections": ["1.2.3.4:80"]})
+
+
+def test_anything_tagged_gets_in():
+    from src.core.events import _merece_linha_do_tempo
+    assert _merece_linha_do_tempo({"cmd": "/usr/bin/x",
+                                   "context_tags": ["UNSAFE"]})
+
+
+def test_execution_from_a_writable_directory_gets_in():
+    """E o caso do cenario de teste, e o que nao pode faltar por nada."""
+    from src.core.events import _merece_linha_do_tempo
+    assert _merece_linha_do_tempo({"cmd": "python3 /tmp/chaos/artifact.py",
+                                   "anomaly_score": 0}) is False
+    assert _merece_linha_do_tempo({"cmd": "/tmp/chaos/kryptominer"})
+
+
+# ------------------------------------------------------------------------------
+# CONTAGEM HONESTA
+# ------------------------------------------------------------------------------
+def test_the_stored_count_ignores_duplicates(loja):
+    """
+    `conn.total_changes` e CUMULATIVO da conexao: depois do primeiro insert fica
+    sempre verdadeiro e contava tambem os eventos ignorados por duplicidade. O
+    log reportava numero inflado desde o inicio, e numero inflado em ferramenta
+    forense e pior que numero ausente.
+    """
+    eventos = [_proc(1000, "/tmp/a"), _proc(2000, "/tmp/b")]
+    assert loja.add(eventos) == 2
+    assert loja.add(eventos) == 0
+    assert loja.add(eventos + [_proc(3000, "/tmp/c")]) == 1
