@@ -270,9 +270,14 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 last_ts = datetime.datetime.strptime(seen, "%Y-%m-%d %H:%M:%S")
                 idade = (datetime.datetime.utcnow() - last_ts).total_seconds()
                 is_online = idade < 90
-                seen = "%s UTC" % seen
-                if idade >= 0:
-                    seen += " (%s)" % _human_age(idade)
+                # Mostra a hora LOCAL do servidor em destaque, que e a que o
+                # analista compara com o relogio dele, e mantem o UTC ao lado
+                # em texto menor, porque um laudo nao pode ter horario ambiguo.
+                local = last_ts + (datetime.datetime.now() - datetime.datetime.utcnow())
+                seen = ("<b>%s</b> <span style='color:#666; font-size:10px'>"
+                        "(%s UTC &middot; %s)</span>"
+                        % (local.strftime("%Y-%m-%d %H:%M:%S"),
+                           last_ts.strftime("%H:%M:%S"), _human_age(idade)))
             except Exception:
                 is_online = str(a.get('status', '')).upper() == 'ONLINE'
 

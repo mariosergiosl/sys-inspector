@@ -37,9 +37,14 @@ def test_comparison_uses_utc(codigo):
     assert "datetime.datetime.now() - last_ts" not in codigo
 
 
-def test_timezone_is_shown_explicitly(codigo):
-    """O horario exibido diz em que fuso esta, sem deixar ambiguidade."""
-    assert '"%s UTC"' in codigo
+def test_local_time_is_the_prominent_value(codigo):
+    """
+    O analista compara com o relogio dele, entao a hora LOCAL do servidor vem
+    em destaque; o UTC fica ao lado, menor, para o laudo nao ficar ambiguo.
+    """
+    assert "datetime.datetime.now() - datetime.datetime.utcnow()" in codigo
+    assert "UTC" in codigo
+    assert "<b>%s</b>" in codigo
 
 
 def test_relative_age_is_shown(codigo):
