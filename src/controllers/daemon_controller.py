@@ -139,13 +139,17 @@ class DaemonController:
                 if nome == CMD_COLLECT:
                     self.collect_and_store(engine, "on-demand")
                     self.outbox.deliver_once()
-                    self.outbox.report_command(ident, True, "capture collected and delivered")
+                    self.outbox.report_command(
+                        ident, True,
+                        "captura de %ss concluida e entregue" % self.capture_duration)
 
                 elif nome == CMD_CHAOS_COLLECT:
                     saida = self._run_chaos(cmd.get("params") or {})
                     self.collect_and_store(engine, "chaos")
                     self.outbox.deliver_once()
-                    self.outbox.report_command(ident, True, saida)
+                    self.outbox.report_command(
+                        ident, True,
+                        "%s; captura de %ss entregue" % (saida, self.capture_duration))
 
                 elif nome == CMD_RESTART:
                     # Confirma ANTES de sair: depois do exit nao ha quem relate.
@@ -181,7 +185,7 @@ class DaemonController:
         subprocess.Popen(["/bin/bash", script, "--all", "--duration", duracao],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
-        return "chaos started for %ss" % duracao
+        return "chaos rodando por %ss" % duracao
 
     def collect_and_store(self, engine, cycle_id):
         """

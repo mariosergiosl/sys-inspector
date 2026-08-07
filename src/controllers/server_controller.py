@@ -156,10 +156,10 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                         "font-family:sans-serif; text-decoration:none\">"
                         "&larr; Fleet</a>"
                         + _acao("collect", "&#128248;",
-                                "Request a capture now (queued; the agent picks it "
-                                "up on its next check-in)")
+                                "Solicitar captura agora: entra na fila, o agente "
+                                "executa no proximo check-in (ate ~1 ciclo)")
                         + _acao("chaos", "&#9760;",
-                                "LAB ONLY: run the chaos generator and capture")
+                                "APENAS LAB: cenario de teste por 300s, depois captura")
                         + _acao("restart", "&#128260;", "Restart the agent (queued)")
                         + "</div>")
                     # Ancora o link no primeiro elemento do corpo, e nao na
@@ -367,9 +367,30 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # Quantos pedidos aguardam este agente perguntar. Deixa claro que a
             # acao foi enfileirada e ainda nao executada: o servidor nao alcanca
             # o agente, quem busca e ele.
+            # Estado do ultimo comando pedido. Sem isso o analista clica e nao
+            # sabe se o agente ja pegou, se esta executando ou se terminou: a
+            # acao vira um botao que aparentemente nao faz nada.
             aguardando = db_commands.pending_count(uuid) if db_commands else 0
             cmd_badge = ("<span class='cmd-badge' title='queued, waiting for the "
                          "agent to check in'>%d</span>" % aguardando) if aguardando else ""
+
+            cmd_state = ""
+            historico = db_commands.list_for(uuid, limit=1) if db_commands else []
+            if historico:
+                ultimo = historico[0]
+                rotulos = {
+                    "PENDING": ("aguardando o agente perguntar", "#7fb3d5"),
+                    "SENT": ("em execucao no agente", "#ffd166"),
+                    "DONE": ("concluido", "#6bcB77"),
+                    "FAILED": ("falhou", "#ff4d4d"),
+                }
+                texto, cor = rotulos.get(ultimo["status"], (ultimo["status"], "#888"))
+                detalhe = (ultimo.get("result") or "").strip()
+                cmd_state = ("<div style='color:%s; font-size:10px; margin-top:3px'>"
+                             "%s: %s</div>" % (cor, ultimo["command"], texto))
+                if detalhe:
+                    cmd_state += ("<div style='color:#666; font-size:10px'>%s</div>"
+                                  % detalhe[:60])
 
             fqdn = a.get('fqdn') or ""
             # Mostra o FQDN so quando acrescenta informacao ao nome curto.
@@ -413,10 +434,11 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 <td><span style='{status_style}; font-weight:bold; font-size:11px; border:1px solid; padding:2px 6px; border-radius:3px'>{status_text}</span></td>
                 <td style='white-space:nowrap'>
                     <a href='/agent/{uuid}' class='btn-ico' title='Open the forensic report'>&#128269;</a>
-                    <a href='/cmd/collect/{uuid}' class='btn-ico' title='Request a capture now (queued; the agent picks it up on its next check-in)'>&#128248;</a>
-                    <a href='/cmd/chaos/{uuid}' class='btn-ico btn-lab' title='LAB ONLY: run the chaos generator and capture'>&#9760;</a>
+                    <a href='/cmd/collect/{uuid}' class='btn-ico' title='Solicitar captura agora. Entra na fila e o agente executa no proximo check-in (ate ~1 ciclo); a captura leva o tempo configurado (capture_duration)'>&#128248;</a>
+                    <a href='/cmd/chaos/{uuid}' class='btn-ico btn-lab' title='APENAS LAB: gera cenario de teste por 300s e captura em seguida. Entra na fila; o agente executa no proximo check-in'>&#9760;</a>
                     <a href='/cmd/restart/{uuid}' class='btn-ico btn-warn' title='Restart the agent (queued)'>&#128260;</a>
                     {cmd_badge}
+                    {cmd_state}
                 </td>
             </tr>"""
 
