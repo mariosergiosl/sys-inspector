@@ -49,6 +49,8 @@ class SysInspectorEngine:
 
         # Engine Components
         self.tree = ProcessTree()  # Engine owns the tree
+        # O buffer de perf e aberto uma unica vez por processo; ver _poll_loop.
+        self._perf_buffer_aberto = False
         self.bpf = None
         self.clk_tck = os.sysconf(os.sysconf_names['SC_CLK_TCK'])
 
@@ -229,8 +231,27 @@ class SysInspectorEngine:
         """Background thread loop to drain perf buffers."""
         print("[DEBUG] BPF Polling Thread Started.")
         try:
-            # Open Perf Buffers (Only once)
-            self.bpf["events"].open_perf_buffer(self._handle_bpf_event)
+            # Abre o buffer de perf UMA VEZ na vida do processo, e nao a cada
+            # ciclo.
+            #
+            # O comentario original dizia "only once", mas esta funcao roda em
+            # uma thread NOVA a cada captura, de modo que a chamada se repetia a
+            # cada ciclo. O BCC abre um descritor por CPU em cada chamada e nao
+            # fecha os anteriores, entao o agente acumulava 4 descritores por
+            # ciclo ate esgotar o limite do processo.
+            #
+            # O efeito observado em campo e o pior possivel: por volta do ciclo
+            # 285, cerca de duas horas, o agente passou a nao conseguir mais
+            # abrir a chave nem o banco, e as capturas deixaram de ser gravadas
+            # SEM que ele parasse. Continuava aparentando funcionar enquanto nao
+            # produzia mais evidencia alguma, e a frota so acusou "offline"
+            # muito depois. Um agente que morre e visivel; um que emudece, nao.
+            #
+            # O objeto BPF sobrevive entre ciclos (_init_bpf tem guarda), entao o
+            # buffer continua valido e uma unica abertura basta.
+            if not self._perf_buffer_aberto:
+                self.bpf["events"].open_perf_buffer(self._handle_bpf_event)
+                self._perf_buffer_aberto = True
 
             while self.running:
                 # Poll with short timeout to check 'self.running'
