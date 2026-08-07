@@ -303,15 +303,45 @@ def _render_badges(node, tree=None):
         "GPU": ("🕹️", "t-gpu", "Accessing GPU Resources"),
         "CONTAINER": ("📦", "t-cont", "Containerized Process"),
         "ZOMBIE": ("🧟", "t-zombie", "Zombie Process"),
-        "IMMUTABLE": ("🔒", "t-immutable", "Immutable File Attribute")
+        "IMMUTABLE": ("🔒", "t-immutable", "Immutable File Attribute"),
+        # O binario sumiu do disco enquanto o processo continua rodando. E um
+        # dos sinais mais fortes que a arvore carrega: apagar o executavel apos
+        # a execucao e tecnica corrente para nao deixar amostra para analise
+        # (ATT&CK T1070.004). Faltava aqui, e como o laco abaixo descartava em
+        # silencio tudo que nao estivesse neste mapa, o coletor detectava, o
+        # dado trafegava ate o laudo e a interface o jogava fora sem aviso.
+        "DELETED": ("👻", "t-deleted",
+                    "Binario apagado do disco com o processo em execucao")
     }
 
     if node.is_new:
         badges.append('<span class="tag t-new" data-filter="NEW" title="New Process">✨<span class="visually-hidden">NEW</span></span>')
 
+    # Rotulos que outro trecho do relatorio ja desenha com tratamento proprio
+    # (contagem de falhas de rede, selo de severidade). Ignora-los aqui evita
+    # badge duplicado, e nomea-los deixa claro que a omissao e deliberada, e nao
+    # mais um caso de rotulo perdido.
+    tratados_em_outro_lugar = ("NET ERR", "WARN", "ZOMBIE_PARENT", "🧊")
+
     seen = set()
     for tag in node.context_tags:
         if "INSPECTOR" in tag: tag = "EDR/AV"
+
+        # Um rotulo desconhecido aparece com aviso em vez de sumir. Descartar em
+        # silencio ja custou caro: um sinal forte (binario apagado) chegava ao
+        # laudo e desaparecia na renderizacao, sem nada que denunciasse a perda.
+        # Numa ferramenta forense, sinal perdido sem rastro e o pior desfecho
+        # possivel: o analista conclui que nao havia nada.
+        if (tag not in tag_map and tag not in seen
+                and tag not in tratados_em_outro_lugar):
+            badges.append('<span class="tag t-unknown" data-filter="%s" '
+                          'title="Rotulo sem representacao visual definida: '
+                          'o coletor sinalizou algo que esta tela ainda nao '
+                          'sabe desenhar">%s</span>'
+                          % (_esc(tag), _esc(tag)))
+            seen.add(tag)
+            continue
+
         if tag in tag_map and tag not in seen:
             icon, cls, tooltip = tag_map[tag]
             if tag == "ZOMBIE" and tree:
