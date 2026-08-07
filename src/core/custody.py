@@ -142,6 +142,56 @@ def build_record(payload, agent_uuid, collector_version, previous_digest=None,
     return record
 
 
+def build_for_capture(db, config, payload, collector_version="0.91.0"):
+    """
+    Monta o registro de custodia de uma captura, resolvendo a identidade do
+    agente e o elo anterior a partir do banco e da configuracao.
+
+    Compartilhado por todos os modos que coletam (snapshot e daemon), para que
+    uma captura feita por um agente em campo tenha exatamente a mesma cadeia de
+    custodia de uma coleta pontual: perder a custodia justamente nas capturas
+    automaticas seria o pior dos casos.
+
+    Nunca levanta: falhar aqui nao pode custar a captura, entao a coleta segue
+    sem assinatura e o problema fica registrado.
+    """
+    # Importado aqui para manter este modulo utilizavel sem o backend de cripto.
+    from src.core.crypto import (ensure_agent_identity, load_private_key,
+                                 sign_bytes)
+
+    sec = config.get("security", {}) or {}
+    base = os.path.dirname(sec.get("private_key_path", "") or "") or "."
+    agent_priv = sec.get("agent_private_key_path",
+                         os.path.join(base, "agent_private_key.pem"))
+    agent_pub = sec.get("agent_public_key_path",
+                        os.path.join(base, "agent_public_key.pem"))
+
+    signer = None
+    try:
+        ensure_agent_identity(agent_priv, agent_pub)
+        agent_key = load_private_key(agent_priv)
+        signer = lambda data: sign_bytes(data, agent_key)
+    except Exception as exc:
+        LOG.error("Agent identity unavailable, capture will be unsigned: %s", exc)
+
+    agent_uuid = getattr(db, "agent_id", "local")
+    try:
+        previous = db.get_last_digest(agent_uuid)
+    except Exception:
+        previous = None
+
+    forensic = config.get("forensics", {}) or {}
+    return build_record(
+        payload,
+        agent_uuid=agent_uuid,
+        collector_version=collector_version,
+        previous_digest=previous,
+        case_id=forensic.get("case_id", ""),
+        operator=forensic.get("operator", ""),
+        signer=signer,
+    )
+
+
 def verify_payload(payload, record):
     """
     Confere se o conteudo ainda corresponde ao digest registrado.

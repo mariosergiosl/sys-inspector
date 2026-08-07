@@ -28,6 +28,8 @@ from src.collectors.manager import summarize_metrics, collect_findings
 from src.core.findings import summarize_by_severity
 # from src.core.database import DatabaseManager
 from src.core.crypto import load_public_key, encrypt_data
+from src.core.outbox import Outbox
+from src.core.custody import build_for_capture
 
 
 class DaemonController:
@@ -62,6 +64,14 @@ class DaemonController:
         self.interval = config['daemon'].get('interval', 15)
         self.capture_duration = config['daemon'].get('capture_duration', 15)
 
+        # Store-and-forward: coleta local primeiro, entrega ao servidor quando
+        # possivel. Fica inativo enquanto nao houver destino e token
+        # configurados, preservando o comportamento puramente local.
+        self.outbox = Outbox(db_manager, config)
+        if self.outbox.enabled:
+            self.logger.info("[OUTBOX] Forwarding captures to %s",
+                             self.outbox._base_url())
+
     def run(self):
         """
         Main Execution Loop.
@@ -92,7 +102,14 @@ class DaemonController:
                 self.logger.error(f"[CYCLE #{cycle_count}] Critical Failure: {e}", exc_info=True)
                 time.sleep(5)  # Backoff on error
 
-            # 3. Sleep Interval (Idle Time)
+            # 3. Entrega o que estiver pendente. Falha aqui nunca interrompe a
+            # coleta: a captura ja esta salva e sera reenviada no proximo ciclo.
+            try:
+                self.outbox.deliver_once()
+            except Exception as e:
+                self.logger.error(f"[OUTBOX] Unexpected delivery error: {e}")
+
+            # 4. Sleep Interval (Idle Time)
             if not self.shutdown_event.is_set():
                 self.logger.info(f"[WAIT] Sleeping for {self.interval}s...")
                 self.shutdown_event.wait(self.interval)
@@ -152,10 +169,16 @@ class DaemonController:
 
         # F. Persist (DatabaseManager): atualiza status do agente para ONLINE e
         # insere o snapshot com as colunas quentes.
+        # Mesma cadeia de custodia da coleta pontual: uma captura automatica
+        # em campo precisa ser tao defensavel quanto uma feita a mao.
+        custody = build_for_capture(self.db, self.config, full_data)
+
         success = self.db.insert_snapshot(
             encrypted_bundle,
             agent_uuid=self.agent_uuid,
-            metrics=metrics
+            metrics=metrics,
+            custody=custody,
+            findings_summary=full_data.get('findings_summary')
         )
 
         if success:
