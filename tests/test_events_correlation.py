@@ -21,7 +21,8 @@ from src.core.events import (EventStore, make_event, corrected_ts,
                              EV_FINDING, EV_CAPTURE)
 from src.core.correlation import (correlate, rule_active_c2,
                                   rule_persistence_after_activity,
-                                  rule_fleet_campaign, MIN_RECORRENCIA)
+                                  rule_fleet_campaign, rule_attack_chain,
+                                  MIN_RECORRENCIA, MIN_TATICAS_CADEIA)
 from src.core.findings import SEV_CRITICAL, SEV_HIGH
 
 
@@ -243,6 +244,71 @@ def test_one_host_alone_is_not_a_campaign():
     eventos = [_proc(1000, "/tmp/implant", agente="a"),
                _proc(2000, "/tmp/implant", agente="a")]
     assert rule_fleet_campaign(eventos) == []
+
+
+# ------------------------------------------------------------------------------
+# ENCADEAMENTO DE TECNICAS ATT&CK
+# ------------------------------------------------------------------------------
+def _finding(ts, tecnica, agente="a"):
+    return make_event(ts, EV_FINDING, agente, subject="achado",
+                      detail={"technique": tecnica})
+
+
+def test_multiple_tactics_on_one_host_form_a_chain():
+    """
+    Achados que atravessam varias taticas do kill chain descrevem uma
+    progressao, e nao alertas avulsos. T1053.003=Execution/Persistence,
+    T1574.006=Persistence/PrivEsc/Defense Evasion, T1071=Command and Control.
+    """
+    eventos = [_finding(1000, "T1053.003"),
+               _finding(1002, "T1574.006"),
+               _finding(1004, "T1071")]
+
+    achado = rule_attack_chain(eventos)[0]
+    assert "Cadeia ATT&CK" in achado.title
+    assert "Command and Control" in achado.description
+    # As taticas saem na ordem do kill chain, nao na de chegada.
+    assert (achado.description.index("Execution")
+            < achado.description.index("Persistence")
+            < achado.description.index("Command and Control"))
+
+
+def test_a_single_tactic_is_not_a_chain():
+    """Oito achados de persistencia sao a mesma observacao, nao progressao."""
+    eventos = [_finding(1000 + i, "T1543.002") for i in range(8)]
+    assert rule_attack_chain(eventos) == []
+
+
+def test_the_chain_is_per_host():
+    """Taticas espalhadas por hosts diferentes nao sao uma cadeia num host."""
+    eventos = [_finding(1000, "T1053.003", agente="a"),
+               _finding(1000, "T1574.006", agente="b"),
+               _finding(1000, "T1071", agente="c")]
+    assert rule_attack_chain(eventos) == []
+
+
+def test_four_or_more_tactics_is_critical():
+    """Quanto mais estagios cobertos, mais forte a leitura de ataque unico."""
+    eventos = [_finding(1000, "T1053.003"),   # Execution, Persistence
+               _finding(1001, "T1574.006"),   # + Priv Esc, Defense Evasion
+               _finding(1002, "T1071"),       # Command and Control
+               _finding(1003, "T1078")]       # + Initial Access, ...
+    achado = rule_attack_chain(eventos)[0]
+    assert achado.severity == SEV_CRITICAL
+
+
+def test_unknown_technique_does_not_invent_a_tactic():
+    """Tecnica sem verbete no catalogo nao entra na cadeia."""
+    eventos = [_finding(1000, "T9999"),
+               _finding(1001, "T8888"),
+               _finding(1002, "T7777")]
+    assert rule_attack_chain(eventos) == []
+
+
+def test_events_without_technique_are_ignored():
+    eventos = [make_event(1000, EV_FINDING, "a", subject="x", detail={}),
+               make_event(1001, EV_FINDING, "a", subject="y", detail={})]
+    assert rule_attack_chain(eventos) == []
 
 
 # ------------------------------------------------------------------------------

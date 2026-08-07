@@ -33,8 +33,24 @@ from src.core.findings import (Finding, SEV_CRITICAL, SEV_HIGH, SEV_MEDIUM,
                                SRC_HEURISTIC)
 from src.core.events import (EV_PROCESS_START, EV_CONNECTION, EV_PERSISTENCE,
                              EV_FINDING, corrected_ts)
+from src.core.attack import describe
 
 LOG = logging.getLogger("Correlation")
+
+# Ordem canonica do kill chain, das primeiras taticas as ultimas. Serve para
+# apresentar as taticas observadas na sequencia em que um ataque as percorre, e
+# nao na ordem em que os achados chegaram. A fonte da tatica de cada tecnica e o
+# catalogo local (src/core/attack.py); nao ha uma segunda copia aqui, para as
+# duas nao divergirem.
+ORDEM_TATICAS = (
+    "Initial Access", "Execution", "Persistence", "Privilege Escalation",
+    "Defense Evasion", "Credential Access", "Discovery", "Lateral Movement",
+    "Collection", "Command and Control", "Exfiltration", "Impact",
+)
+
+# A partir de quantas taticas distintas no mesmo host a leitura deixa de ser um
+# conjunto de achados e passa a descrever uma progressao de ataque.
+MIN_TATICAS_CADEIA = 3
 
 # Janela em que dois eventos sao considerados relacionados. Curta de proposito:
 # quanto maior, mais coincidencia entra como se fosse causa, e uma correlacao
@@ -259,9 +275,123 @@ def rule_fleet_campaign(eventos):
 
 
 # ------------------------------------------------------------------------------
+# REGRA 4: ENCADEAMENTO DE TECNICAS ATT&CK
+# ------------------------------------------------------------------------------
+def _taticas_de(tecnica):
+    """
+    Taticas de uma tecnica, lidas do catalogo local (fonte unica).
+
+    Uma tecnica pode pertencer a mais de uma tatica; o catalogo guarda a lista
+    separada por virgula. Tecnica sem verbete devolve vazio: nao inventa tatica.
+    """
+    dados = describe(tecnica)
+    if not dados:
+        return []
+    _nome, taticas, _resumo = dados
+    return [t.strip() for t in (taticas or "").split(",") if t.strip()]
+
+
+def rule_attack_chain(eventos):
+    """
+    Varias taticas do ATT&CK observadas no MESMO host.
+
+    Oito achados, todos de persistencia, sao oito observacoes da mesma coisa.
+    Oito achados que atravessam execucao, persistencia, evasao e canal de
+    comando sao uma progressao: descrevem um ataque avancando pelo kill chain, e
+    a resposta a uma progressao e diferente da resposta a um alerta isolado.
+
+    A regra nao afirma comprometimento. Diz quais estagios do ataque tem sinal
+    presente naquele host, apresentados na ordem canonica do kill chain, e deixa
+    a leitura da amplitude com o analista: quanto mais estagios cobertos, menos
+    provavel que sejam achados independentes e sem relacao.
+
+    A tatica de cada tecnica vem do catalogo local, entao a regra herda tudo que
+    ele souber sem manter uma segunda lista.
+    """
+    # Tecnica observada por host, com o instante mais recente de cada uma.
+    por_host = {}
+    for ev in eventos:
+        if ev.get("type") != EV_FINDING:
+            continue
+        tecnica = (ev.get("detail") or {}).get("technique")
+        if not tecnica:
+            continue
+        host = ev.get("agent_uuid")
+        registro = por_host.setdefault(host, {})
+        # Guarda o evento mais recente daquela tecnica, para datar a etapa.
+        anterior = registro.get(tecnica)
+        if anterior is None or corrected_ts(ev) > corrected_ts(anterior):
+            registro[tecnica] = ev
+
+    achados = []
+    for host, tecnicas in por_host.items():
+        # Uma cadeia e uma PROGRESSAO, entao exige mais de uma acao. Uma unica
+        # tecnica que por si so pertence a varias taticas (T1053.003 cobre tres)
+        # nao e progressao: e um artefato so. Sem esta guarda, um unico achado
+        # viraria "cadeia", que e o oposto do que a regra quer dizer.
+        if len(tecnicas) < 2:
+            continue
+
+        # Mapeia tatica -> as tecnicas observadas que a exercitam.
+        por_tatica = {}
+        for tecnica in tecnicas:
+            for tatica in _taticas_de(tecnica):
+                por_tatica.setdefault(tatica, set()).add(tecnica)
+
+        if len(por_tatica) < MIN_TATICAS_CADEIA:
+            continue
+
+        # Apresenta as taticas na ordem do kill chain; as que o catalogo trouxer
+        # e que nao estejam na ordem canonica vao ao final, preservadas.
+        ordenadas = [t for t in ORDEM_TATICAS if t in por_tatica]
+        ordenadas += [t for t in por_tatica if t not in ORDEM_TATICAS]
+
+        etapas = []
+        for t in ordenadas:
+            tecs = sorted(por_tatica[t])
+            etapas.append("%s (%s)" % (t, ", ".join(tecs)))
+        sequencia = "  ->  ".join(etapas)
+
+        # A severidade acompanha a amplitude: quanto mais estagios, mais forte a
+        # leitura de que ha um so ataque por tras.
+        severidade = SEV_CRITICAL if len(ordenadas) >= 4 else SEV_HIGH
+
+        achados.append(Finding(
+            title="Cadeia ATT&CK: %d taticas no mesmo host" % len(ordenadas),
+            severity=severidade,
+            source=SRC_HEURISTIC,
+            category="correlation",
+            target=(host or "")[:200],
+            description=(
+                "Sinais de %d taticas distintas do ATT&CK aparecem no mesmo "
+                "host, na ordem do kill chain: %s. Cada achado, isolado, e uma "
+                "observacao; atravessando varios estagios, eles descrevem uma "
+                "progressao. Quanto mais estagios cobertos, menos economica fica "
+                "a hipotese de que sao achados independentes."
+                % (len(ordenadas), sequencia)),
+            evidence={"host": host,
+                      "taticas": ordenadas,
+                      "tecnicas": sorted(tecnicas.keys())},
+            # A tecnica do achado e a da etapa mais avancada observada, que e a
+            # que melhor resume ate onde a progressao chegou.
+            technique=sorted(
+                tecnicas.keys(),
+                key=lambda tc: max(
+                    [ORDEM_TATICAS.index(t) for t in _taticas_de(tc)
+                     if t in ORDEM_TATICAS] or [-1]))[-1],
+            recommendation=(
+                "Tratar como um incidente unico, e nao como achados avulsos. "
+                "Reconstituir a ordem dos estagios na linha do tempo deste host "
+                "e conter a etapa mais avancada primeiro (canal de comando ou "
+                "exfiltracao, se presentes).")))
+    return achados
+
+
+# ------------------------------------------------------------------------------
 # COMPOSICAO
 # ------------------------------------------------------------------------------
-REGRAS = (rule_active_c2, rule_persistence_after_activity, rule_fleet_campaign)
+REGRAS = (rule_active_c2, rule_persistence_after_activity, rule_fleet_campaign,
+          rule_attack_chain)
 
 
 def correlate(eventos):

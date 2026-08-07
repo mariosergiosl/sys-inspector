@@ -172,7 +172,7 @@ def _barra_navegacao(atual=""):
     return saida
 
 
-def _cabecalho_identidade(direita=""):
+def _cabecalho_identidade(direita="", nome_tela=""):
     """
     Cabecalho unico das telas do servidor.
 
@@ -180,11 +180,17 @@ def _cabecalho_identidade(direita=""):
     quem le a tela precisa saber qual codigo a produziu, e o painel nao pode
     afirmar uma versao diferente da que o laudo afirma.
     """
+    # Nome da tela junto do produto, para o cabecalho dizer ONDE o analista
+    # esta: "Sys-Inspector Manager" no painel, "Linha do tempo" na timeline. O
+    # laudo continua "Sys-Inspector" puro, porque ali o nome do produto e a
+    # marca do documento. A versao vem sempre da fonte unica.
+    nome = (" %s" % nome_tela) if nome_tela else ""
     return ("<div class='hdr'><div class='title'>"
-            "<h1>Sys-Inspector<span>v%s</span></h1>"
+            "<h1>Sys-Inspector<b style='font-weight:600;color:#e0e0e0'>%s</b>"
+            "<span>v%s</span></h1>"
             "<div class='subtitle'>OBSERVABILITY SUITE - Enterprise Forensic "
             "Report</div></div><div class='meta'>%s</div></div>"
-            % (__version__, direita))
+            % (nome, __version__, direita))
 
 
 def _selo_attck(tecnica, texto=None):
@@ -711,7 +717,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 "<a class='btn' href='%s'>&larr; Voltar</a>"
                 "<h2 style='margin-top:16px'>%s</h2>%s</div></body></html>"
                 % (__version__, titulo, _CSS_IDENTIDADE,
-                   _cabecalho_identidade(_barra_navegacao(self.path.split("?")[0])),
+                   _cabecalho_identidade(
+                       _barra_navegacao(self.path.split("?")[0]),
+                       nome_tela=titulo),
                    voltar, titulo, corpo)).replace("{ATUALIZA}", atualiza)
 
     # Quantas capturas a linha do tempo percorre. Cada uma exige decifrar um
@@ -1842,7 +1850,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
         cabecalho = _cabecalho_identidade(
             _barra_navegacao("/")
-            + ("<div style='margin-top:6px'>%d agente(s)</div>" % len(agents)))
+            + ("<div style='margin-top:6px'>%d agente(s)</div>" % len(agents)),
+            nome_tela="Manager")
 
         html = f"""
         <html><head><meta charset="UTF-8">
