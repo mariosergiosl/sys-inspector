@@ -100,4 +100,6 @@ def test_panel_escapes_agent_names(codigo):
 
 
 def test_queue_is_reachable_from_the_fleet(codigo):
-    assert 'href="/queue"' in codigo
+    """A rota vem da barra de navegacao unica, e nao de um link por tela."""
+    assert '"/queue"' in codigo
+    assert "_barra_navegacao" in codigo

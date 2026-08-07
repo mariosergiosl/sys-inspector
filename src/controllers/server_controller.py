@@ -36,6 +36,8 @@ from src.core.retention import RetentionPolicy
 from src.core.notify import Notifier
 from src.core.capabilities import summarize, missing_for_scenarios
 from src.core.events import EventStore, events_from_capture
+from src.core import risk
+from src.version import __version__
 from src.core.correlation import correlate
 from src.core.commands import CommandQueue, ALLOWED
 from src.core.tls import ensure_self_signed_cert
@@ -61,6 +63,141 @@ def _fmt_ts(valor):
             % (momento.strftime("%Y-%m-%d %H:%M:%S"),
                datetime.datetime.utcfromtimestamp(float(valor)
                                                   ).strftime("%H:%M:%S")))
+
+
+def _selo_risco(score):
+    """
+    Risco de um processo como NIVEL nomeado, com o numero cru ao lado.
+
+    O painel exibia o `anomaly_score` sozinho, e "130" nao diz o que pontuou nem
+    quanto pesa; pior, o numero e um campo de bits e estava sendo comparado como
+    magnitude, o que invertia a gravidade (ver src/core/risk.py). O rotulo passa
+    a ser a leitura, e o numero continua visivel porque ele e o dado coletado: a
+    interpretacao nao substitui a evidencia.
+
+    Score sem sinal algum devolve um traco, e nao vazio: campo em branco nao
+    distingue "nada foi levantado" de "nao foi avaliado" (D-020).
+    """
+    nivel = risk.level(score)
+    if not nivel:
+        return ("<span title='Avaliado: nenhum sinal de risco levantado neste "
+                "processo' style='color:#555;font-size:11px'>&mdash;</span>")
+
+    sinais = risk.summary(score)
+    desconhecidos = risk.unknown_bits(score)
+    if desconhecidos:
+        sinais += (" + %d sinal(is) que esta versao ainda nao sabe nomear"
+                   % bin(desconhecidos).count("1"))
+
+    return ("<span title='%s (score %s): %s' style='background:%s;color:#000;"
+            "border-radius:3px;padding:1px 7px;font-size:10px;font-weight:bold'>"
+            "%s</span> <span style='color:#666;font-size:10px'>%s</span>"
+            % (_esc(nivel), _esc(score), _esc(sinais), risk.color(score),
+               _esc(nivel), _esc(score)))
+
+
+# ------------------------------------------------------------------------------
+# IDENTIDADE VISUAL
+# ------------------------------------------------------------------------------
+# As telas do servidor nasceram cada uma com o seu proprio bloco de estilo, e por
+# isso o painel do gerente, as telas auxiliares e o laudo pareciam tres produtos.
+# Aqui ficam a paleta e o cabecalho, definidos UMA vez.
+#
+# Deliberadamente CSS puro e inline: sem fonte externa, sem folha adicional, sem
+# framework. A pagina da frota recarrega a cada 30 segundos e o laudo passa de
+# 10MB; identidade visual nao pode custar requisicao nem tempo de carga.
+#
+# As variaveis abaixo tambem consertam um defeito silencioso: o painel ja usava
+# `var(--acc)` e `var(--red)` sem nunca declarar `:root`, entao a borda do botao
+# no hover e o fundo do contador de comandos simplesmente nao pintavam.
+_PALETA = (":root{--bg:#121212;--fg:#e0e0e0;--acc:#0078d4;--red:#ff6b6b;"
+           "--grn:#51cf66;--yel:#fcc419;--gry:#777;--drk:#252526;"
+           "--border:#333;--cyn:#4ec9b0;}")
+
+_CSS_IDENTIDADE = _PALETA + (
+    "body{font-family:'Segoe UI','Roboto',sans-serif;background:var(--bg);"
+    "color:var(--fg);font-size:13px;margin:0;padding:0}"
+    ".hdr{display:flex;justify-content:space-between;align-items:center;"
+    "background:#1a1a1a;border-bottom:2px solid var(--acc);padding:14px 30px}"
+    ".title h1{margin:0;font-weight:300;font-size:26px;color:var(--acc);"
+    "letter-spacing:-0.5px}"
+    ".title h1 span{font-size:0.6em;color:#666;margin-left:10px}"
+    ".subtitle{color:var(--gry);font-size:0.85em;text-transform:uppercase;"
+    "letter-spacing:2px;margin-top:4px;font-weight:bold}"
+    ".meta{text-align:right;color:#888;font-size:0.9em}"
+    ".navlink{color:var(--cyn);text-decoration:none;border:1px solid #444;"
+    "border-radius:4px;padding:4px 10px;margin-left:8px;font-size:11px;"
+    "white-space:nowrap}"
+    ".navlink:hover{border-color:var(--cyn);background:#222}"
+    ".conteudo{padding:24px 30px}")
+
+# Barra de navegacao entre as telas do servidor, uma so definicao para todas.
+_NAVEGACAO = (("&#127968;", "/", "Frota"),
+              ("&#128337;", "/timeline", "Linha do tempo"),
+              ("&#128203;", "/queue", "Fila"),
+              ("&#128220;", "/log", "Comandos"),
+              ("&#129513;", "/capacidades", "Capacidades"))
+
+
+def _barra_navegacao(atual=""):
+    """Links entre as telas do servidor, com a atual marcada."""
+    saida = ""
+    for icone, destino, rotulo in _NAVEGACAO:
+        # /capabilities e a rota real; o rotulo e que e traduzido.
+        destino = "/capabilities" if destino == "/capacidades" else destino
+        marca = ("background:#222;border-color:#4ec9b0;"
+                 if destino == atual else "")
+        saida += ("<a class='navlink' href='%s' style='%s'>%s %s</a>"
+                  % (destino, marca, icone, rotulo))
+    return saida
+
+
+def _cabecalho_identidade(direita=""):
+    """
+    Cabecalho unico das telas do servidor.
+
+    O mesmo titulo, subtitulo e versao do laudo. A versao vem da fonte unica:
+    quem le a tela precisa saber qual codigo a produziu, e o painel nao pode
+    afirmar uma versao diferente da que o laudo afirma.
+    """
+    return ("<div class='hdr'><div class='title'>"
+            "<h1>Sys-Inspector<span>v%s</span></h1>"
+            "<div class='subtitle'>OBSERVABILITY SUITE - Enterprise Forensic "
+            "Report</div></div><div class='meta'>%s</div></div>"
+            % (__version__, direita))
+
+
+def _legenda_risco():
+    """
+    O que a escala de risco significa, escrita a partir da propria tabela.
+
+    Gerada de `risk.SINAIS` de proposito: uma legenda mantida a mao ao lado da
+    tabela seria uma segunda fonte do mesmo fato, e as duas divergiriam na
+    primeira vez que um sinal novo entrasse. E a mesma falha que ja apareceu no
+    tag_map e na lista de artefatos do cenario.
+    """
+    itens = ""
+    for _bit, _chave, rotulo, severidade, explicacao in risk.SINAIS:
+        itens += ("<div style='margin:3px 0'>"
+                  "<span style='display:inline-block;width:74px;color:%s;"
+                  "font-size:10px;font-weight:bold'>%s</span>"
+                  "<span style='color:#bbb;font-size:11px'>%s</span>"
+                  "<span style='color:#666;font-size:11px'> &mdash; %s</span>"
+                  "</div>"
+                  % (risk.CORES.get(severidade, "#888"), _esc(severidade),
+                     _esc(rotulo), _esc(explicacao)))
+
+    return ("<details style='margin-top:18px'>"
+            "<summary style='color:#777;font-size:11px;cursor:pointer'>"
+            "O que a coluna de risco mede</summary>"
+            "<div style='background:#1a1a1a;border-left:3px solid #333;"
+            "padding:12px 16px;margin-top:8px'>"
+            "<p style='color:#777;font-size:11px;margin:0 0 10px'>"
+            "O numero ao lado do rotulo e um campo de bits: cada bit e um sinal "
+            "observado, e o valor em si nao mede gravidade. O nivel exibido e o "
+            "maior entre os sinais presentes, elevado um degrau quando dois ou "
+            "mais sinais de peso coincidem no mesmo processo.</p>%s</div>"
+            "</details>" % itens)
 
 
 def _human_age(seconds):
@@ -185,8 +322,12 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
                     # Generate HTML
                     tmp_filename = f"/tmp/sys_server_{threading.get_ident()}.html"
-                    # Use version to get new Icons/CSS
-                    generate_report(data, tree, tmp_filename, "0.61.00")
+                    # A versao do laudo e a do codigo que o produziu, lida da
+                    # fonte unica. Estava fixa em "0.61.00", entao todo laudo
+                    # aberto pelo servidor se declarava produzido por uma versao
+                    # que nao existe mais: para quem for reproduzir a analise
+                    # depois, e uma informacao errada no lugar mais sensivel.
+                    generate_report(data, tree, tmp_filename, __version__)
 
                     with open(tmp_filename, 'r', encoding='utf-8') as f:
                         html_content = f.read()
@@ -206,6 +347,30 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                                 "text-decoration:none; font-size:14px;%s\">%s</a>"
                                 % (caminho, agent_uuid, titulo, extra, icone))
 
+                    # IDADE DA CAPTURA, em destaque.
+                    #
+                    # O laudo aberto aqui e sempre o mais recente que chegou, e
+                    # nada na tela dizia de quando ele e. Um laudo de meia hora
+                    # atras e indistinguivel de um recem-coletado, e a leitura
+                    # que isso produziu em campo foi de que a captura pedida
+                    # falhara, quando o que estava na tela era simplesmente a
+                    # anterior. Amarelo a partir de 15 minutos, vermelho a partir
+                    # de uma hora: nao e alarme, e a informacao de que o que se
+                    # esta lendo pode nao descrever o estado atual do host.
+                    idade_seg = time.time() - float(snaps[0].get('timestamp') or 0)
+                    cor_idade = ("#ff4d4d" if idade_seg > 3600
+                                 else "#ffd166" if idade_seg > 900 else "#6a9955")
+                    carimbo = (
+                        "<span title=\"Momento em que o agente coletou estes "
+                        "dados. O laudo descreve o host NAQUELE instante, e nao "
+                        "agora.\" style=\"margin-left:16px; font-size:11px; "
+                        "font-family:sans-serif; color:#888\">"
+                        "coletado em %s <b style=\"color:%s\">(%s)</b></span>"
+                        % (datetime.datetime.fromtimestamp(
+                            float(snaps[0].get('timestamp') or 0)
+                        ).strftime("%Y-%m-%d %H:%M:%S"), cor_idade,
+                           _human_age(idade_seg)))
+
                     back = (
                         "<div style=\"background:#1a1a1a; border-bottom:1px solid #333; "
                         "padding:8px 20px; display:flex; align-items:center\">"
@@ -213,6 +378,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                         "border-radius:4px; padding:5px 14px; font-size:12px; "
                         "font-family:sans-serif; text-decoration:none\">"
                         "&larr; Fleet</a>"
+                        + carimbo
                         + ("<a href=\"/history/%s\" title=\"Capturas anteriores "
                            "deste agente e comparacao entre duas\" "
                            "style=\"color:#4ec9b0; border:1px solid #444; "
@@ -377,20 +543,31 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
     # HISTORICO E COMPARACAO
     # --------------------------------------------------------------------------
     def _pagina(self, titulo, corpo, voltar="/"):
-        """Moldura comum das telas auxiliares, no mesmo tema do painel."""
-        return ("<html><head><meta charset='UTF-8'><title>%s</title>"
-                "<style>body{background:#121212;color:#e0e0e0;"
-                "font-family:'Segoe UI',sans-serif;padding:30px}"
+        """
+        Moldura comum das telas auxiliares, na identidade do laudo.
+
+        Titulo, subtitulo, versao e paleta sao os mesmos que o relatorio exibe,
+        porque sao o mesmo produto: o analista transita entre as telas o tempo
+        todo e nao deveria precisar reconhecer onde esta pela cor do fundo.
+        """
+        return ("<html><head><meta charset='UTF-8'><title>"
+                "Sys-Inspector v%s | %s</title>"
+                "<style>%s"
                 "table{width:100%%;border-collapse:separate;border-spacing:0 6px}"
                 "th{text-align:left;color:#777;text-transform:uppercase;"
                 "font-size:10px;padding:0 10px 8px}td{padding:8px 10px}"
-                "tr.item{background:#252526}"
-                "a.btn{color:#4ec9b0;text-decoration:none;border:1px solid #4ec9b0;"
-                "border-radius:4px;padding:5px 14px;font-size:12px}"
+                "tr.item{background:var(--drk)}"
+                "a.btn{color:var(--cyn);text-decoration:none;"
+                "border:1px solid var(--cyn);border-radius:4px;padding:5px 14px;"
+                "font-size:12px}"
                 "code{color:#ce9178;font-size:11px;word-break:break-all}"
-                "h2{font-weight:300}</style></head><body>"
+                "h2{font-weight:300;margin:0 0 16px}</style></head><body>%s"
+                "<div class='conteudo'>"
                 "<a class='btn' href='%s'>&larr; Voltar</a>"
-                "<h2>%s</h2>%s</body></html>" % (titulo, voltar, titulo, corpo))
+                "<h2 style='margin-top:16px'>%s</h2>%s</div></body></html>"
+                % (__version__, titulo, _CSS_IDENTIDADE,
+                   _cabecalho_identidade(_barra_navegacao(self.path.split("?")[0])),
+                   voltar, titulo, corpo))
 
     # Quantas capturas a linha do tempo percorre. Cada uma exige decifrar um
     # laudo inteiro, entao a janela e curta de proposito: cobre o passado
@@ -438,8 +615,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                           "width:11px;height:16px;margin-right:2px;background:%s;"
                           "border-radius:2px'></span>"
                           % (i + 1,
-                             ("#ff4d4d" if r["max_score"] >= 70 else "#ffd166")
-                             if presente else "#2a2a2a"))
+                             risk.color(r["max_score"]) if presente
+                             else "#2a2a2a"))
 
             constante = r["count"] == total
             leitura = ("presente em TODAS as %d capturas" % total if constante
@@ -448,12 +625,16 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             linhas += ("<tr class='item'><td style='width:230px'>%s"
                        "<div style='color:#777;font-size:10px;margin-top:3px'>%s"
                        "</div></td>"
-                       "<td style='width:60px;text-align:center;color:%s;"
-                       "font-weight:bold'>%s</td>"
+                       "<td style='width:170px'>%s</td>"
                        "<td><code>%s</code></td></tr>"
-                       % (faixa, leitura,
-                          "#ff4d4d" if r["max_score"] >= 70 else "#ffd166",
-                          r["max_score"], _esc(r["cmd"][:150])))
+                       % (faixa, leitura, _selo_risco(r["max_score"]),
+                          _esc(r["cmd"][:150])))
+
+        # Sem cabecalho, as tres colunas (presenca, risco, comando) so se
+        # identificavam por deducao, e a do meio era um numero solto.
+        cabecalho = ("<thead><tr><th>Presenca nas capturas</th>"
+                     "<th>Risco (maior observado)</th><th>Comando</th></tr>"
+                     "</thead>")
 
         return ("<h3 style='font-weight:300;color:#4ec9b0;margin-bottom:2px'>"
                 "Comportamento ao longo do tempo</h3>"
@@ -463,9 +644,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 "estava presente. Reaparecer sempre indica persistencia ativa: o "
                 "artefato volta depois de morto. Aparecer uma vez so sugere acao "
                 "pontual. Sao incidentes diferentes.</p>"
-                "<table><tbody>%s</tbody></table>"
+                "<table>%s<tbody>%s</tbody></table>"
                 "<hr style='border:none;border-top:1px solid #2a2a2a;margin:26px 0'>"
-                % (total, linhas))
+                % (total, cabecalho, linhas))
 
     def _serve_history(self, controller, agent_uuid):
         """
@@ -487,24 +668,39 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # pedida na esmagadora maioria das vezes. As demais ficam a um
             # clique, escolhendo outra linha de partida.
             anterior = capturas[i + 1]["id"] if i + 1 < len(capturas) else None
-            botao = ("<a class='btn' href='/diff/%s?a=%s&b=%s'>comparar com a "
-                     "anterior</a>" % (agent_uuid, anterior, c["id"])
-                     ) if anterior else "<span style='color:#555'>primeira</span>"
-            linhas += ("<tr class='item'><td style='color:#777'>%s</td>"
-                       "<td>%s</td><td style='color:#888'>%s%%</td>"
-                       "<td style='color:%s'>%s</td><td>%s</td></tr>"
-                       % (c["id"], _fmt_ts(c["timestamp"]),
+            # Emoji no lugar da frase: o texto "comparar com a anterior" ocupava
+            # uma coluna inteira para repetir em toda linha o que o cabecalho ja
+            # diz uma vez. A explicacao continua acessivel no title.
+            botao = ("<a class='btn' title='Comparar esta captura com a "
+                     "imediatamente anterior (#%s)' "
+                     "href='/diff/%s?a=%s&b=%s'>&#8646;</a>"
+                     % (anterior, agent_uuid, anterior, c["id"])
+                     ) if anterior else ("<span title='E a captura mais antiga "
+                                         "guardada deste agente: nao ha anterior "
+                                         "com que comparar' "
+                                         "style='color:#555'>&mdash;</span>")
+
+            idade = ("<span style='color:#666;font-size:10px'>%s</span>"
+                     % _human_age(time.time() - float(c["timestamp"] or 0)))
+
+            linhas += ("<tr class='item'><td style='color:#777;width:60px'>%s</td>"
+                       "<td>%s<br>%s</td><td style='color:#888;width:70px'>%s%%</td>"
+                       "<td style='width:170px'>%s</td>"
+                       "<td style='width:70px'>%s</td></tr>"
+                       % (c["id"], _fmt_ts(c["timestamp"]), idade,
                           round(c.get("cpu_avg") or 0, 1),
-                          "#ff4d4d" if c.get("is_alert") else "#6bcB77",
-                          c.get("alert_score") or 0, botao))
+                          _selo_risco(c.get("alert_score")), botao))
+
+        tabela = ("<p style='color:#777;font-size:12px'>%d capturas. "
+                  "A comparacao roda no servidor: o laudo completo passa de "
+                  "10MB e nao caberia no navegador.</p>"
+                  "<table><thead><tr><th>Captura</th>"
+                  "<th>Momento da coleta</th><th>CPU media</th>"
+                  "<th>Risco (pior processo)</th><th>Comparar</th></tr></thead>"
+                  "<tbody>%s</tbody></table>" % (len(capturas), linhas))
 
         corpo = (self._render_timeline(controller, capturas)
-                 + "<p style='color:#777;font-size:12px'>%d capturas. "
-                 "A comparacao roda no servidor: o laudo completo passa de 10MB "
-                 "e nao caberia no navegador.</p>"
-                 "<table><thead><tr><th>#</th><th>Momento</th><th>CPU</th>"
-                 "<th>Risco</th><th></th></tr></thead><tbody>%s</tbody></table>"
-                 % (len(capturas), linhas))
+                 + tabela + _legenda_risco())
         self._set_headers()
         self.wfile.write(self._pagina("Historico do agente", corpo).encode("utf-8"))
 
@@ -591,11 +787,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                             "<code>%s</code> &rarr; <code>%s</code></div>"
                             % (_esc(campo), _esc(val["antes"]), _esc(val["depois"])))
 
-            risco = p.get("alert_score") or 0
-            selo = ("<span style='background:%s;color:#000;border-radius:3px;"
-                    "padding:1px 6px;font-size:10px;font-weight:bold'>%s</span>"
-                    % ("#ff4d4d" if risco >= 70 else
-                       "#ffd166" if risco >= 30 else "#444", risco)) if risco else ""
+            selo = _selo_risco(p.get("alert_score"))
 
             return ("<tr class='item'>"
                     "<td style='color:%s;font-weight:bold;width:70px'>%s</td>"
@@ -603,7 +795,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     "<td style='color:#888;width:80px'>%s</td>"
                     "<td style='color:#888;width:70px'>%s</td>"
                     "<td><code>%s</code>%s</td>"
-                    "<td style='width:60px;text-align:right'>%s</td></tr>"
+                    "<td style='width:150px;text-align:right'>%s</td></tr>"
                     % (cor, p.get("pid"), selos, _esc(p.get("user") or "-"),
                        _esc(p.get("duration") or "-"),
                        _esc(p.get("cmd") or "(sem linha de comando)"),
@@ -696,16 +888,22 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                                       voltar="/history/%s" % agent_uuid
                                       ).encode("utf-8"))
 
-    # Icone por tipo de evento. Uma linha do tempo densa se le por forma antes
-    # de se ler por texto; sem distincao visual ela vira paragrafo.
+    # Icone, cor e NOME de cada tipo de evento. Uma linha do tempo densa se le
+    # por forma antes de se ler por texto; sem distincao visual ela vira
+    # paragrafo. O nome existe para o filtro: um botao com so um icone obriga a
+    # adivinhar o que ele filtra.
     ICONE_EVENTO = {
-        "process.start": ("&#9679;", "#7fb3d5"),   # circulo, nao "play":
-        # o triangulo sugeria botao clicavel e nao ha acao associada
-        "network.connect": ("&#127760;", "#4ec9b0"),
-        "persistence.created": ("&#128204;", "#ffd166"),
-        "finding.raised": ("&#9888;", "#ff4d4d"),
-        "capture.taken": ("&#128248;", "#555"),
-        "auth.session": ("&#128273;", "#c586c0"),
+        "process.start": ("&#9679;", "#7fb3d5", "processo iniciou"),
+        # circulo, nao "play": o triangulo sugeria botao clicavel e nao ha acao
+        "process.end": ("&#9675;", "#666", "processo terminou"),
+        "network.connect": ("&#127760;", "#4ec9b0", "conexao de rede"),
+        "file.write": ("&#128221;", "#ffd166", "arquivo gravado"),
+        "file.delete": ("&#128465;", "#ff8c42", "arquivo apagado"),
+        "persistence.created": ("&#128204;", "#ffd166", "persistencia"),
+        "finding.raised": ("&#9888;", "#ff4d4d", "achado"),
+        "capture.taken": ("&#128248;", "#555", "captura"),
+        "auth.session": ("&#128273;", "#c586c0", "sessao/autenticacao"),
+        "command.executed": ("&#9881;", "#c586c0", "comando executado"),
     }
 
     def _serve_timeline(self, controller):
@@ -732,15 +930,31 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         minutos = int((args.get("min") or ["60"])[0])
         limite = int((args.get("limit") or ["1500"])[0])
         desde = time.time() - (minutos * 60)
+        # Tipos escolhidos pelo analista. Lista vazia significa "todos", e nao
+        # "nenhum": a tela abre mostrando tudo.
+        tipos = [t for t in (args.get("type") or []) if t]
 
         eventos = controller.events.timeline(inicio=desde, agent_uuid=agente,
                                              limit=limite)
         stats = controller.events.stats()
 
-        # A correlacao roda sobre a MESMA janela que esta sendo exibida: uma
-        # conclusao tirada de material que o analista nao ve seria impossivel de
-        # conferir.
+        # Contagem por tipo ANTES de filtrar, para o botao de cada tipo mostrar
+        # quantos eventos ele traria de volta. Filtrar e escolher o que olhar; a
+        # tela nao pode esconder que o resto existe.
+        na_janela = {}
+        for ev in eventos:
+            na_janela[ev["type"]] = na_janela.get(ev["type"], 0) + 1
+        total_janela = len(eventos)
+
+        # A correlacao roda sobre a janela INTEIRA, nunca sobre o recorte visivel.
+        # Ela existe para juntar sinais de tipos diferentes; alimenta-la com o
+        # filtro de tela faria as conclusoes aparecerem e sumirem conforme o
+        # analista escolhe o que olhar, e uma conclusao que depende do filtro nao
+        # e conclusao.
         conclusoes = correlate(eventos)
+
+        if tipos:
+            eventos = [ev for ev in eventos if ev["type"] in tipos]
 
         nomes = {}
         for a in (controller.db.get_fleet_status() or []):
@@ -770,7 +984,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         linhas = ""
         anterior = None
         for ev in eventos:
-            icone, cor = self.ICONE_EVENTO.get(ev["type"], ("&#8226;", "#888"))
+            icone, cor, nome_tipo = self.ICONE_EVENTO.get(
+                ev["type"], ("&#8226;", "#888", ev["type"]))
             momento = datetime.datetime.fromtimestamp(
                 ev["corrected_ts"]).strftime("%H:%M:%S")
 
@@ -791,44 +1006,129 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                           "style='color:#c586c0;font-size:10px'>&#9201;</span>"
                           % ev["clock_offset"])
 
+            # RISCO do evento, que faltava por completo.
+            #
+            # Sem ele a linha do tempo dizia o que aconteceu e em que ordem, mas
+            # nao dizia o que PESA: as vinte linhas de um processo banal e a do
+            # binario apagado tinham exatamente a mesma aparencia, e o analista
+            # precisava abrir a captura para descobrir qual era qual.
+            detalhe = ev.get("detail") or {}
+            if ev["type"] == "finding.raised":
+                sev = ev.get("severity") or ""
+                risco = (("<span style='background:%s;color:#000;"
+                          "border-radius:3px;padding:1px 7px;font-size:10px;"
+                          "font-weight:bold'>%s</span>")
+                         % (risk.CORES.get(sev, "#888"), _esc(sev))) if sev else ""
+            else:
+                risco = _selo_risco(detalhe.get("score"))
+
             linhas += ("<tr class='item'>"
                        "<td style='width:90px;color:#888'>%s %s</td>"
-                       "<td style='width:30px;color:%s'>%s</td>"
+                       "<td style='width:30px;color:%s' title='%s'>%s</td>"
                        "<td style='width:120px;color:#4ec9b0;font-size:11px'>%s</td>"
                        "<td><code>%s</code></td>"
-                       "<td style='width:60px'>%s</td></tr>"
-                       % (momento, delta, cor, icone,
+                       "<td style='width:150px'>%s</td>"
+                       "<td style='width:40px'>%s</td></tr>"
+                       % (momento, delta, cor, _esc(nome_tipo), icone,
                           _esc(nomes.get(ev["agent_uuid"], ev["agent_uuid"][:8])),
-                          _esc((ev.get("subject") or "")[:150]), desvio))
+                          _esc((ev.get("subject") or "")[:150]), risco, desvio))
 
         if not linhas:
-            linhas = ("<tr><td colspan='5' style='color:#555;padding:30px;"
-                      "text-align:center'>Nenhum evento ainda. A linha do tempo "
-                      "e derivada das capturas conforme elas chegam.</td></tr>")
+            if tipos or agente:
+                linhas = ("<tr><td colspan='6' style='color:#555;padding:30px;"
+                          "text-align:center'>Nenhum evento com os filtros "
+                          "ativos. Ha %d evento(s) nesta janela sem filtro "
+                          "algum.</td></tr>" % total_janela)
+            else:
+                linhas = ("<tr><td colspan='6' style='color:#555;padding:30px;"
+                          "text-align:center'>Nenhum evento nesta janela. A "
+                          "linha do tempo e derivada das capturas conforme elas "
+                          "chegam.</td></tr>")
 
-        # Seletor de janela: o intervalo que interessa muda conforme a
-        # pergunta, e obrigar a editar a URL esconderia o recurso.
+        # ----------------------------------------------------------------------
+        # FILTROS
+        #
+        # Todo filtro precisa ter volta. Os botoes anteriores so acrescentavam
+        # criterio a URL: escolher um agente ou uma janela deixava o analista
+        # dentro de um recorte sem nada na tela que o desfizesse, e a unica saida
+        # era editar o endereco a mao. Um filtro sem retorno se confunde com
+        # ausencia de dado, que numa ferramenta forense e a leitura mais cara de
+        # todas.
+        # ----------------------------------------------------------------------
+        def _url(min_=None, agent=None, types=None):
+            params = [("min", min_ if min_ is not None else minutos)]
+            if agent:
+                params.append(("agent", agent))
+            for t in (types or []):
+                params.append(("type", t))
+            return "/timeline?" + urlparse.urlencode(params)
+
         atalhos = ""
         for m, rotulo in ((15, "15min"), (60, "1h"), (360, "6h"), (1440, "24h")):
             ativo = ("background:#333;" if m == minutos else "")
-            atalhos += ("<a class='btn' href='/timeline?min=%d%s' "
+            atalhos += ("<a class='btn' href='%s' "
                         "style='margin-right:6px;padding:3px 10px;%s'>%s</a>"
-                        % (m, ("&agent=" + agente) if agente else "", ativo,
+                        % (_url(min_=m, agent=agente, types=tipos), ativo,
                            rotulo))
 
-        cabecalho_tabela = ("<thead><tr><th>Hora</th><th></th><th>Agente</th>"
-                            "<th>O que aconteceu</th><th>Relogio</th></tr>"
-                            "</thead>")
+        # Chips de tipo: clicar liga, clicar de novo desliga. A contagem ao lado
+        # mostra o que cada um traz de volta, para desligar um filtro nao ser um
+        # salto no escuro.
+        chips = ""
+        for tipo, (icone, cor, nome) in sorted(self.ICONE_EVENTO.items(),
+                                               key=lambda kv: kv[1][2]):
+            quantos = na_janela.get(tipo, 0)
+            ligado = tipo in tipos
+            if ligado:
+                destino = _url(agent=agente,
+                               types=[t for t in tipos if t != tipo])
+            else:
+                destino = _url(agent=agente, types=tipos + [tipo])
+            chips += ("<a href='%s' title='%s: %s' style='display:inline-block;"
+                      "margin:0 6px 6px 0;padding:3px 9px;border-radius:12px;"
+                      "font-size:11px;text-decoration:none;border:1px solid %s;"
+                      "color:%s;background:%s'>%s %s <span style='color:#777'>"
+                      "%d</span></a>"
+                      % (destino, _esc(nome),
+                         "clique para remover este filtro" if ligado
+                         else "clique para ver so este tipo",
+                         cor, "#000" if ligado else cor,
+                         cor if ligado else "transparent",
+                         icone, _esc(nome), quantos))
 
-        corpo = (("<div style='margin-bottom:14px'>%s</div>" % atalhos)
+        limpar = ""
+        if tipos or agente:
+            ativos = []
+            if agente:
+                ativos.append("agente <b>%s</b>"
+                              % _esc(nomes.get(agente, agente[:8])))
+            if tipos:
+                ativos.append("%d tipo(s) de evento" % len(tipos))
+            limpar = ("<div style='background:#2a2a1a;border-left:3px solid "
+                      "#ffd166;padding:8px 14px;margin:10px 0;font-size:11px;"
+                      "color:#ffd166'>Filtrado por %s: exibindo %d de %d "
+                      "evento(s) da janela. "
+                      "<a class='btn' href='%s' style='margin-left:10px;"
+                      "padding:2px 10px'>ver tudo</a></div>"
+                      % (" e ".join(ativos), len(eventos), total_janela,
+                         _url()))
+
+        cabecalho_tabela = ("<thead><tr><th>Hora</th><th>Tipo</th>"
+                            "<th>Agente</th><th>O que aconteceu</th>"
+                            "<th>Risco</th><th>Relogio</th></tr></thead>")
+
+        corpo = (("<div style='margin-bottom:6px'>%s</div>"
+                  "<div style='margin-bottom:4px'>%s</div>%s"
+                  % (atalhos, chips, limpar))
                  + topo
                  + "<p style='color:#777;font-size:12px'>%d eventos no total; "
                    "%d na janela de %d minuto(s), em ordem cronologica corrigida "
-                   "pelo desvio de relogio de cada host. A correlacao abaixo "
+                   "pelo desvio de relogio de cada host. A correlacao acima "
                    "analisa exatamente esta janela.</p>"
                    "<table>%s<tbody>%s</tbody></table>"
-                   % (stats["total"], len(eventos), minutos,
-                      cabecalho_tabela, linhas))
+                   % (stats["total"], total_janela, minutos,
+                      cabecalho_tabela, linhas)
+                 + _legenda_risco())
 
         self._set_headers()
         self.wfile.write(self._pagina("Linha do tempo", corpo).encode("utf-8"))
@@ -1179,14 +1479,17 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 </td>
             </tr>"""
 
+        cabecalho = _cabecalho_identidade(
+            _barra_navegacao("/")
+            + ("<div style='margin-top:6px'>%d agente(s)</div>" % len(agents)))
+
         html = f"""
-        <html><head><title>Sys-Inspector Manager</title>
+        <html><head><meta charset="UTF-8">
+        <title>Sys-Inspector v{__version__} | Manager</title>
         <meta http-equiv="refresh" content="30">
         <style>
-            body {{ font-family: 'Segoe UI', sans-serif; background: #1e1e1e; color: #eee; padding: 0; margin: 0; }}
-            .header {{ background: #2d2d30; padding: 15px 30px; border-bottom: 2px solid #0078d4; display: flex; align-items: center; justify-content: space-between; }}
-            h1 {{ margin: 0; font-weight: 300; letter-spacing: 1px; }}
-            table {{ width: 90%; margin: 40px auto; border-collapse: separate; border-spacing: 0 10px; }}
+            {_CSS_IDENTIDADE}
+            table {{ width: 90%; margin: 30px auto; border-collapse: separate; border-spacing: 0 10px; }}
             th {{ text-align: left; color: #777; text-transform: uppercase; font-size: 0.85em; padding: 0 15px 10px 15px; letter-spacing: 1px; }}
             td {{ padding: 15px; }}
             tr {{ transition: transform 0.2s; }}
@@ -1200,15 +1503,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             .btn-view:hover {{ background: #0078d4; border-color: #0078d4; }}
         </style>
         </head><body>
-        <div class="header">
-            <h1>Sys-Inspector <span style="color:#0078d4; font-weight:bold">Manager</span></h1>
-            <div style="font-size:0.9em; color:#aaa; font-weight:bold">
-                <a href="/log" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#128220; Command log</a>
-                <a href="/queue" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#128203; Fila</a>
-                <a href="/capabilities" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#129513; Capacidades</a>
-                <a href="/timeline" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#128337; Linha do tempo</a>
-                {len(agents)} AGENTS</div>
-        </div>
+        {cabecalho}
         <table>
             <thead><tr><th>Hostname / UUID</th><th>IP Address</th><th>Crit</th><th>High</th><th>Med</th><th>Low</th><th>Last Seen</th><th>Next</th><th>Status</th><th>Action</th></tr></thead>
             <tbody>{rows}</tbody>

@@ -136,5 +136,11 @@ def test_log_page_closes_stuck_commands_before_showing(codigo_servidor):
 
 
 def test_fleet_links_to_the_log(codigo_servidor):
-    """Um registro que ninguem encontra nao cumpre a funcao de registro."""
-    assert 'href="/log"' in codigo_servidor
+    """
+    Um registro que ninguem encontra nao cumpre a funcao de registro.
+
+    O link deixou de ser escrito a mao em cada tela e passou a sair da barra de
+    navegacao unica (`_NAVEGACAO`), que agora e o que precisa conter a rota.
+    """
+    assert '"/log"' in codigo_servidor
+    assert "_barra_navegacao" in codigo_servidor
