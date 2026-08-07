@@ -40,6 +40,11 @@ ST_FAILED = "FAILED"
 # para permitir promover e rebaixar um agente sem renumerar os demais.
 PRIORITY_DEFAULT = 50
 
+# Substitui o conteudo de uma entrada ja processada. A captura foi salva e
+# assinada no armazenamento definitivo; manter a copia na fila so duplicaria
+# cada evidencia e, como a fila nunca teve retencao, crescia sem limite.
+PAYLOAD_DESCARTADO = '{"_purged": true}'
+
 # Vagas concedidas por rodada a um agente. Limita o quanto um unico host
 # despeja de uma vez quando volta de uma indisponibilidade longa.
 DEFAULT_SLOTS = 10
@@ -216,8 +221,32 @@ class IngestQueue(object):
             return []
 
     def mark_done(self, entry_id):
-        """Marca a entrada como processada."""
-        self._set_status(entry_id, ST_DONE)
+        """
+        Marca a entrada como processada e DESCARTA o payload.
+
+        A fila e um buffer de transporte, nao um segundo arquivo. Guardar o
+        payload depois de a captura estar salva significa manter cada evidencia
+        em duplicidade, e como a fila nunca teve retencao, essa copia crescia
+        sem limite: medido em campo, 785 entradas ocupavam 1.03 GB, 86% do banco
+        inteiro, contra 65 MB das capturas de fato guardadas.
+
+        O registro da entrada permanece: quem entregou, quando, com que digest e
+        qual foi o desfecho. E o rastro que importa; o conteudo ja esta no lugar
+        definitivo e assinado.
+        """
+        # Marcador explicito em vez de NULL: a coluna e NOT NULL desde o
+        # esquema original, e trocar isso exigiria migrar bancos ja em uso. O
+        # marcador tambem e mais honesto que um valor vazio, porque diz o que
+        # aconteceu a quem for ler a linha.
+        try:
+            with closing(self._conn()) as conn:
+                conn.execute("UPDATE ingest_queue SET status = ?, "
+                             "attempts = attempts + 1, payload = ? "
+                             "WHERE id = ?",
+                             (ST_DONE, PAYLOAD_DESCARTADO, entry_id))
+                conn.commit()
+        except Exception as exc:
+            LOG.error("Completing queue entry %s failed: %s", entry_id, exc)
 
     def mark_failed(self, entry_id, error=""):
         """Marca a entrada como falha, preservando o motivo para analise."""

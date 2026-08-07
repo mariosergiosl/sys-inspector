@@ -33,6 +33,7 @@ from src.exporters.html_report import generate_report
 from src.collectors.process_tree import ProcessTree, ProcessNode
 from src.core.crypto import load_private_key, decrypt_data
 from src.core.ingest import IngestQueue, process_batch
+from src.core.retention import RetentionPolicy
 from src.core.commands import CommandQueue, ALLOWED
 from src.core.tls import ensure_self_signed_cert
 from src.core.outbox import PATH_SLOT, PATH_INGEST, PATH_COMMAND_RESULT
@@ -1071,7 +1072,23 @@ class ServerController:
 
         # Processador da fila: drena para o armazenamento definitivo em ritmo
         # proprio, para uma rajada de entregas nao bloquear quem esta recebendo.
+        # A retencao roda no MESMO laco da ingestao, logo apos gravar: e o
+        # unico momento em que se sabe que a captura ja esta salva. Aplica-la em
+        # paralelo arriscaria remover algo que ainda estava a caminho do disco.
+        politica = RetentionPolicy(self.db.db_path, self.config)
+        if politica.preserves_everything:
+            self.logger.warning(
+                "[RETENTION] Modo forense: nada sera apagado. O disco cresce "
+                "sem limite, e essa e a escolha correta para investigacao.")
+        else:
+            self.logger.info("[RETENTION] Modo seguranca: payload mantido por "
+                             "%dd, teto de %dMB, %d por agente. A cadeia de "
+                             "custodia e preservada por lapide.",
+                             politica.max_age_days, politica.max_total_mb,
+                             politica.max_per_agent)
+
         def _drain():
+            ciclos = 0
             while not self.shutdown_event.is_set():
                 try:
                     done = process_batch(self.queue, self.db)
@@ -1079,6 +1096,20 @@ class ServerController:
                         self.logger.info("[INGEST] %d capture(s) stored from the queue", done)
                 except Exception as e:
                     self.logger.error(f"[INGEST] Queue processing error: {e}")
+
+                # Nao a cada volta: varrer o banco a cada 3s custaria mais que o
+                # espaco que economiza.
+                ciclos += 1
+                if ciclos % 100 == 0:
+                    try:
+                        r = politica.apply()
+                        if r.get("purged"):
+                            self.logger.info(
+                                "[RETENTION] %d capture(s) purged (chain kept "
+                                "by tombstone)", r["purged"])
+                    except Exception as e:
+                        self.logger.error("[RETENTION] Failed: %s", e)
+
                 self.shutdown_event.wait(3)
 
         t_queue = threading.Thread(target=_drain)
