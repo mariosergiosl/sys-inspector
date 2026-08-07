@@ -346,6 +346,50 @@ class DatabaseManager:
             self.logger.error(f"Purging confirmed snapshots failed: {e}")
             return 0
 
+    def set_capabilities(self, agent_uuid, capabilities):
+        """
+        Guarda o retrato de capacidades enviado pelo agente.
+
+        Em coluna propria e em claro: e metadado operacional, nao conteudo de
+        investigacao, e a triagem da frota precisa dele sem descriptografar
+        nada.
+        """
+        if not capabilities:
+            return
+        try:
+            with closing(self._get_conn()) as conn:
+                try:
+                    conn.execute("ALTER TABLE agents ADD COLUMN capabilities TEXT")
+                except Exception:
+                    pass
+                conn.execute("UPDATE agents SET capabilities = ? WHERE uuid = ?",
+                             (json.dumps(capabilities), agent_uuid))
+                conn.commit()
+        except Exception as e:
+            self.logger.error(f"Storing capabilities failed: {e}")
+
+    def get_capabilities(self, agent_uuid=None):
+        """Capacidades de um agente, ou de todos, para a tela da frota."""
+        try:
+            with closing(self._get_conn()) as conn:
+                try:
+                    conn.execute("ALTER TABLE agents ADD COLUMN capabilities TEXT")
+                    conn.commit()
+                except Exception:
+                    pass
+                if agent_uuid:
+                    row = conn.execute(
+                        "SELECT capabilities FROM agents WHERE uuid = ?",
+                        (agent_uuid,)).fetchone()
+                    return json.loads(row[0]) if row and row[0] else {}
+                saida = {}
+                for r in conn.execute("SELECT uuid, capabilities FROM agents"):
+                    saida[r[0]] = json.loads(r[1]) if r[1] else {}
+                return saida
+        except Exception as e:
+            self.logger.error(f"Reading capabilities failed: {e}")
+            return {} if agent_uuid else {}
+
     def digests_present(self, digests):
         """
         Quais destes digests estao de fato guardados aqui.

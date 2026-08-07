@@ -35,6 +35,7 @@ from src.core.crypto import load_private_key, decrypt_data
 from src.core.ingest import IngestQueue, process_batch
 from src.core.retention import RetentionPolicy
 from src.core.notify import Notifier
+from src.core.capabilities import summarize, missing_for_scenarios
 from src.core.commands import CommandQueue, ALLOWED
 from src.core.tls import ensure_self_signed_cert
 from src.core.outbox import PATH_SLOT, PATH_INGEST, PATH_COMMAND_RESULT
@@ -122,6 +123,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
         elif self.path == '/log':
             self._serve_command_log(controller.commands)
+
+        elif self.path == '/capabilities':
+            self._serve_capabilities(controller)
 
         elif self.path == '/queue':
             self._serve_queue(controller)
@@ -304,6 +308,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                         ip=host.get("ip_address"), os_info=host.get("os_info"),
                         fqdn=host.get("fqdn"),
                                        cycle_seconds=host.get("cycle_seconds"))
+                    controller.db.set_capabilities(agent_uuid,
+                                                   host.get("capabilities"))
                 self._reply(resposta)
                 return
 
@@ -686,6 +692,79 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                                       voltar="/history/%s" % agent_uuid
                                       ).encode("utf-8"))
 
+    def _serve_capabilities(self, controller):
+        """
+        O que cada host consegue medir, e o que consegue exercitar.
+
+        Existe para desfazer uma ambiguidade que ja custou caro: quando um
+        agente acusa menos que outro, isso pode significar que a deteccao
+        falhou OU que aquele host nunca teve como produzir o cenario. As duas
+        situacoes sao opostas e produzem o mesmo resultado visivel, a ausencia.
+
+        A tela responde antes de a pergunta ser feita, porque a alternativa e o
+        analista deduzir, e deduzir errado aqui leva a tratar host saudavel
+        como comprometido ou o contrario.
+        """
+        capacidades = controller.db.get_capabilities() or {}
+        agentes = controller.db.get_fleet_status() or []
+
+        linhas = ""
+        for a in agentes:
+            uuid = a.get("uuid") or ""
+            caps = capacidades.get(uuid) or {}
+            detectar = caps.get("detect") or {}
+            faltando = missing_for_scenarios(caps)
+
+            def _selo(ok, texto, titulo):
+                cor = "#6bcB77" if ok else "#ff4d4d"
+                return ("<span title='%s' style='border:1px solid %s;color:%s;"
+                        "border-radius:3px;padding:1px 6px;font-size:10px;"
+                        "margin-right:4px'>%s</span>"
+                        % (_esc(titulo), cor, cor, texto))
+
+            if not caps:
+                deteccao = ("<span style='color:#777;font-size:11px'>ainda nao "
+                            "reportou (agente anterior a esta versao)</span>")
+            else:
+                deteccao = (
+                    _selo(detectar.get("ebpf"), "eBPF",
+                          "Sem eBPF a captura se reduz ao que /proc mostra")
+                    + _selo(detectar.get("btf"), "BTF",
+                            "BTF no kernel permite o motor CO-RE")
+                    + _selo(detectar.get("root"), "root",
+                            "Sem privilegio o laudo sai incompleto sem erro aparente")
+                    + _selo(detectar.get("cgroup_v2"), "cgroup2",
+                            "Muda como conteiner e limite de recurso sao identificados"))
+
+            if not caps:
+                cenario = "-"
+            elif faltando:
+                cenario = ("<span style='color:#ffd166;font-size:11px'>limitado: "
+                           "falta %s</span>" % _esc(", ".join(faltando)))
+            else:
+                cenario = ("<span style='color:#6bcB77;font-size:11px'>"
+                           "completo</span>")
+
+            linhas += ("<tr class='item'><td><b>%s</b>"
+                       "<div style='color:#666;font-size:10px'>%s</div></td>"
+                       "<td style='color:#888;font-size:11px'>%s</td>"
+                       "<td>%s</td><td>%s</td></tr>"
+                       % (_esc(a.get("hostname") or "?"),
+                          _esc(detectar.get("kernel") or ""),
+                          _esc(a.get("os_info") or ""), deteccao, cenario))
+
+        corpo = ("<p style='color:#777;font-size:12px'>Duas perguntas "
+                 "diferentes. <b>Deteccao</b>: quanto vale um laudo produzido "
+                 "neste host. <b>Cenario</b>: o que a afericao pode cobrar "
+                 "dele.<br>Um agente com cenario limitado nao acusa menos por "
+                 "falha da ferramenta: ele nao tem como gerar o que falta.</p>"
+                 "<table><thead><tr><th>Agente</th><th>Sistema</th>"
+                 "<th>Deteccao</th><th>Cenario de teste</th></tr></thead>"
+                 "<tbody>%s</tbody></table>" % linhas)
+
+        self._set_headers()
+        self.wfile.write(self._pagina("Capacidades da frota", corpo).encode("utf-8"))
+
     def _serve_queue(self, controller):
         """
         Situacao da fila de ingestao e ordem de atendimento dos agentes.
@@ -985,6 +1064,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             <div style="font-size:0.9em; color:#aaa; font-weight:bold">
                 <a href="/log" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#128220; Command log</a>
                 <a href="/queue" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#128203; Fila</a>
+                <a href="/capabilities" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#129513; Capacidades</a>
                 {len(agents)} AGENTS</div>
         </div>
         <table>

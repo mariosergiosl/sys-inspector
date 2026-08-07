@@ -177,6 +177,17 @@ class Outbox(object):
             fqdn = socket.getfqdn()
         except Exception:
             fqdn = ""
+        # Capacidades: o que ESTE host consegue fazer, nas duas pontas. Sem
+        # isso, "o agente X nao acusou o cenario Y" fica ambiguo entre falha da
+        # deteccao e incapacidade do host, e foi essa ambiguidade que atrasou um
+        # diagnostico inteiro no laboratorio.
+        capacidades = {}
+        try:
+            from src.core.capabilities import describe_host
+            capacidades = describe_host()
+        except Exception:
+            capacidades = {}
+
         # O agente informa seu proprio ciclo para o servidor conseguir prever
         # o proximo contato. Sem isso a frota so pode usar um timeout fixo, que
         # marca como offline um agente saudavel de ciclo longo e demora a
@@ -185,7 +196,8 @@ class Outbox(object):
         ciclo = (int(daemon_cfg.get("capture_duration", 15) or 15)
                  + int(daemon_cfg.get("interval", 15) or 15))
         return {"hostname": hostname, "ip_address": address,
-                "os_info": os_info, "fqdn": fqdn, "cycle_seconds": ciclo}
+                "os_info": os_info, "fqdn": fqdn, "cycle_seconds": ciclo,
+                "capabilities": capacidades}
 
     def request_slot(self, pending):
         """
