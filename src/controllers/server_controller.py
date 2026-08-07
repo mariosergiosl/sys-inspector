@@ -18,6 +18,7 @@
 # ==============================================================================
 
 import os
+import ssl
 import json
 import time
 import threading
@@ -31,7 +32,21 @@ from src.exporters.html_report import generate_report
 from src.collectors.process_tree import ProcessTree, ProcessNode
 from src.core.crypto import load_private_key, decrypt_data
 from src.core.ingest import IngestQueue, process_batch
+from src.core.tls import ensure_self_signed_cert
 from src.core.outbox import PATH_SLOT, PATH_INGEST
+
+
+
+def _human_age(seconds):
+    """Idade legivel ("12s atras"), para o analista nao precisar calcular."""
+    seconds = int(seconds)
+    if seconds < 60:
+        return "%ds ago" % seconds
+    if seconds < 3600:
+        return "%dm ago" % (seconds // 60)
+    if seconds < 86400:
+        return "%dh ago" % (seconds // 3600)
+    return "%dd ago" % (seconds // 86400)
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -246,10 +261,18 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             ip = a.get('ip_address') or "Unknown IP"
             seen = a.get('last_seen', '')
 
-            # Status a partir da coluna 'status' e do last_seen (timeout 90s).
+            # last_seen vem do CURRENT_TIMESTAMP do SQLite, que e UTC. O resto
+            # do laudo usa a hora local do host, e misturar fusos numa
+            # ferramenta forense pode inverter a ordem dos eventos numa linha
+            # do tempo. O horario e comparado em UTC e exibido com o fuso
+            # explicito, para nao restar ambiguidade.
             try:
                 last_ts = datetime.datetime.strptime(seen, "%Y-%m-%d %H:%M:%S")
-                is_online = (datetime.datetime.now() - last_ts).total_seconds() < 90
+                idade = (datetime.datetime.utcnow() - last_ts).total_seconds()
+                is_online = idade < 90
+                seen = "%s UTC" % seen
+                if idade >= 0:
+                    seen += " (%s)" % _human_age(idade)
             except Exception:
                 is_online = str(a.get('status', '')).upper() == 'ONLINE'
 
@@ -359,12 +382,50 @@ class ServerController:
             self.logger.error(f"[SECURITY] Decryption failed: {e}")
             return None
 
+    def _wrap_tls(self, server):
+        """
+        Protege a porta do servidor com TLS, gerando um certificado
+        autoassinado se ainda nao houver um.
+
+        As capturas ja viajam cifradas com a chave do analista, mas o TLS
+        protege o que esta ao redor: o token de ingestao, os metadados em claro
+        (hostname, endereco, contagem de achados) e o proprio painel, que
+        expoe a situacao da frota. Sem ele, tudo isso trafega legivel na rede.
+
+        Autoassinado e o padrao para nao exigir uma PKI antes do primeiro uso;
+        num ambiente com CA propria basta apontar cert e key na configuracao.
+        """
+        srv_cfg = self.config.get('server', {}) or {}
+        cert = srv_cfg.get('ssl_cert', '/etc/sys-inspector/server_cert.pem')
+        key = srv_cfg.get('ssl_key', '/etc/sys-inspector/server_key.pem')
+
+        try:
+            ensure_self_signed_cert(cert, key)
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(certfile=cert, keyfile=key)
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+            self.logger.info("[HTTPS] TLS enabled using %s", cert)
+            return True
+        except Exception as exc:
+            # Falhar aqui nao pode deixar o servidor mudo: ele volta a HTTP e
+            # avisa, para o operador decidir, em vez de simplesmente sumir.
+            self.logger.error("[HTTPS] Could not enable TLS (%s); serving plain HTTP", exc)
+            return False
+
     def run(self):
         """Starts the Server HTTP Daemon."""
         port = self.config['network']['bind_port']
 
         server = ThreadingHTTPServer(('0.0.0.0', port), ServerHTTPHandler)
         server.controller = self
+
+        # TLS opcional, desligado por padrao para nao quebrar instalacoes que
+        # ja apontam agentes para HTTP.
+        scheme = "http"
+        if bool(self.config.get('network', {}).get('tls_enabled', False)):
+            if self._wrap_tls(server):
+                scheme = "https"
+        self.scheme = scheme
 
         t_server = threading.Thread(target=server.serve_forever)
         t_server.daemon = True
@@ -386,8 +447,8 @@ class ServerController:
         t_queue.daemon = True
         t_queue.start()
 
-        self.logger.info(f"[HTTP] Server Manager listening on port {port}")
-        self.logger.info("[INFO] Dashboard available at http://localhost:" + str(port))
+        self.logger.info(f"[HTTP] Server Manager listening on port {port} ({scheme})")
+        self.logger.info(f"[INFO] Dashboard available at {scheme}://<server-ip>:{port}")
 
         try:
             while not self.shutdown_event.is_set():
