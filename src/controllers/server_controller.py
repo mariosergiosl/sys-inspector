@@ -239,7 +239,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     controller.db.update_agent_status(
                         agent_uuid, "ONLINE", hostname=host.get("hostname"),
                         ip=host.get("ip_address"), os_info=host.get("os_info"),
-                        fqdn=host.get("fqdn"))
+                        fqdn=host.get("fqdn"),
+                                       cycle_seconds=host.get("cycle_seconds"))
                 self._reply(resposta)
                 return
 
@@ -336,9 +337,32 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                            last_ts.strftime("%Y-%m-%d %H:%M:%S"),
                            _human_age(idade)))
                 seen_full = ""
+
+                # Proximo contato esperado, a partir do ciclo que o proprio
+                # agente informou. Substitui o timeout fixo de 90s, que marcava
+                # como offline um agente saudavel de ciclo longo e demorava a
+                # perceber a ausencia de um de ciclo curto.
+                ciclo = int(a.get('cycle_seconds') or 0)
+                if ciclo:
+                    restante = ciclo - idade
+                    # Atrasar um ciclo inteiro ainda e tolerado; dois ja indica
+                    # que o agente parou de conversar.
+                    is_online = idade < (ciclo * 2)
+                    if restante > 0:
+                        proximo = "em %s" % _human_age(restante).replace(" ago", "")
+                        cor = "#6bcB77"
+                    else:
+                        proximo = "atrasado %s" % _human_age(-restante).replace(" ago", "")
+                        cor = "#ffd166" if idade < ciclo * 2 else "#ff4d4d"
+                    proximo_html = ("<div style='color:%s; font-size:11px'>%s</div>"
+                                    "<div style='color:#777; font-size:10px'>ciclo %ss</div>"
+                                    % (cor, proximo, ciclo))
+                else:
+                    proximo_html = "<span style='color:#555'>-</span>"
             except Exception:
                 is_online = str(a.get('status', '')).upper() == 'ONLINE'
                 seen_full = ""
+                proximo_html = "<span style='color:#555'>-</span>"
 
             # Quantos pedidos aguardam este agente perguntar. Deixa claro que a
             # acao foi enfileirada e ainda nao executada: o servidor nao alcanca
@@ -385,6 +409,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 <td style='color:#ccc'>{ip}</td>
                 {sev_cells}
                 <td style='color:#aaa'>{seen}</td>
+                <td>{proximo_html}</td>
                 <td><span style='{status_style}; font-weight:bold; font-size:11px; border:1px solid; padding:2px 6px; border-radius:3px'>{status_text}</span></td>
                 <td style='white-space:nowrap'>
                     <a href='/agent/{uuid}' class='btn-ico' title='Open the forensic report'>&#128269;</a>
@@ -421,7 +446,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             <div style="font-size:0.9em; color:#aaa; font-weight:bold">{len(agents)} AGENTS</div>
         </div>
         <table>
-            <thead><tr><th>Hostname / UUID</th><th>IP Address</th><th>Crit</th><th>High</th><th>Med</th><th>Low</th><th>Last Seen</th><th>Status</th><th>Action</th></tr></thead>
+            <thead><tr><th>Hostname / UUID</th><th>IP Address</th><th>Crit</th><th>High</th><th>Med</th><th>Low</th><th>Last Seen</th><th>Next</th><th>Status</th><th>Action</th></tr></thead>
             <tbody>{rows}</tbody>
         </table>
         </body></html>

@@ -179,8 +179,15 @@ class Outbox(object):
             fqdn = socket.getfqdn()
         except Exception:
             fqdn = ""
+        # O agente informa seu proprio ciclo para o servidor conseguir prever
+        # o proximo contato. Sem isso a frota so pode usar um timeout fixo, que
+        # marca como offline um agente saudavel de ciclo longo e demora a
+        # perceber a ausencia de um agente de ciclo curto.
+        daemon_cfg = (self.config.get("daemon", {}) or {})
+        ciclo = (int(daemon_cfg.get("capture_duration", 15) or 15)
+                 + int(daemon_cfg.get("interval", 15) or 15))
         return {"hostname": hostname, "ip_address": address,
-                "os_info": os_info, "fqdn": fqdn}
+                "os_info": os_info, "fqdn": fqdn, "cycle_seconds": ciclo}
 
     def request_slot(self, pending):
         """

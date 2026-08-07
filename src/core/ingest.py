@@ -285,7 +285,8 @@ def process_batch(queue, db, limit=None):
                                        hostname=host.get("hostname"),
                                        ip=host.get("ip_address"),
                                        os_info=host.get("os_info"),
-                                       fqdn=host.get("fqdn"))
+                                       fqdn=host.get("fqdn"),
+                                       cycle_seconds=host.get("cycle_seconds"))
             queue.mark_done(item["id"])
             processed += 1
         except Exception as exc:
