@@ -51,19 +51,13 @@ from src.exporters.html_report import _esc
 
 def _fmt_ts(valor):
     """
-    Momento da captura em hora local, com o carimbo UTC ao lado.
+    Momento da captura, data e hora completas, local e UTC.
 
-    As duas formas juntas porque servem a leitores diferentes: o analista compara
-    com o proprio relogio, e o laudo precisa de referencia absoluta.
+    Delega ao formato unico da ferramenta (`_fmt_datahora`), para as telas nao
+    divergirem no jeito de mostrar tempo, que num laudo forense e informacao
+    sensivel: fuso omitido pode inverter a ordem de eventos entre maquinas.
     """
-    try:
-        momento = datetime.datetime.fromtimestamp(float(valor))
-    except (TypeError, ValueError):
-        return "-"
-    return ("%s <span style='color:#666;font-size:10px'>%s UTC</span>"
-            % (momento.strftime("%Y-%m-%d %H:%M:%S"),
-               datetime.datetime.utcfromtimestamp(float(valor)
-                                                  ).strftime("%H:%M:%S")))
+    return _fmt_datahora(valor, compacto=False)
 
 
 def _selo_risco(score):
@@ -302,6 +296,31 @@ def _ajuda_risco():
                         _legenda_risco())
 
 
+def _fmt_datahora(epoch, compacto=True):
+    """
+    Data e hora completas em hora LOCAL, com o carimbo UTC ao lado.
+
+    Um so formato para toda a ferramenta (frota, linha do tempo, comandos,
+    laudo): so a hora ("14:01:17") nao diz o dia e nao cruza com log de outro
+    sistema, que quase sempre esta em UTC. A ausencia do fuso num laudo forense
+    pode inverter a ordem de eventos entre maquinas.
+
+    PARAMETER compacto: em duas linhas e letra pequena, para caber em coluna de
+                        tabela sem roubar largura das demais.
+    """
+    try:
+        valor = float(epoch)
+    except (TypeError, ValueError):
+        return "<span style='color:#555'>&mdash;</span>"
+    local = datetime.datetime.fromtimestamp(valor).strftime("%Y-%m-%d %H:%M:%S")
+    utc = datetime.datetime.utcfromtimestamp(valor).strftime("%Y-%m-%d %H:%M:%S")
+    if compacto:
+        return ("<div>%s</div><div style='color:#666;font-family:monospace;"
+                "font-size:10px'>%s UTC</div>" % (local, utc))
+    return ("%s <span style='color:#666;font-size:10px'>%s UTC</span>"
+            % (local, utc))
+
+
 def _human_age(seconds):
     """Idade legivel ("12s atras"), para o analista nao precisar calcular."""
     seconds = int(seconds)
@@ -412,14 +431,33 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
         elif self.path.startswith('/agent/'):
             # --- VIEW AGENT SNAPSHOT ---
-            agent_uuid = self.path.split('/')[-1]
-            # Get latest snapshot for this agent
+            caminho, _, consulta = self.path.partition("?")
+            agent_uuid = caminho.split('/')[-1]
+            args = urlparse.parse_qs(consulta or "")
+            # Captura ESPECIFICA pedida (?capture=<id>), ou a mais recente.
+            #
+            # O pivo da linha do tempo chega aqui apontando a captura DE ONDE o
+            # evento saiu, e nao a atual: um processo efemero (um shell, um
+            # sleep) ja nao existe na captura mais recente, entao abrir sempre a
+            # ultima fazia o pivo cair em "nao esta nesta captura" quase sempre.
+            # Abrindo a captura de origem, o processo esta la.
+            captura_pedida = (args.get("capture") or [None])[0]
             snaps = controller.db.get_history(0, time.time(), agent_filter=agent_uuid)
 
+            escolhido = None
             if snaps:
+                if captura_pedida:
+                    escolhido = next((s for s in snaps
+                                      if str(s.get("id")) == str(captura_pedida)),
+                                     None)
+                escolhido = escolhido or snaps[0]
+
+            if escolhido:
                 # get_snapshot_details devolve o bundle cifrado; descriptografa.
-                data = controller.decrypt(controller.db.get_snapshot_details(snaps[0]['id']))
+                data = controller.decrypt(
+                    controller.db.get_snapshot_details(escolhido['id']))
                 if data:
+                    snaps = [escolhido]  # o carimbo e a idade usam este
                     tree = self._rehydrate_tree(data)
 
                     # Generate HTML
@@ -1117,8 +1155,10 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         for ev in eventos:
             icone, cor, nome_tipo = self.ICONE_EVENTO.get(
                 ev["type"], ("&#8226;", "#888", ev["type"]))
-            momento = datetime.datetime.fromtimestamp(
-                ev["corrected_ts"]).strftime("%H:%M:%S")
+            # Data e hora completas, local e UTC, como no restante da ferramenta:
+            # so "14:01:17" nao diz o dia e nao cruza com log de outro sistema,
+            # que quase sempre esta em UTC.
+            momento = _fmt_datahora(ev["corrected_ts"])
 
             # Intervalo desde o evento anterior: e o que transforma uma lista em
             # sequencia legivel. "4s depois" diz mais que dois horarios.
@@ -1177,16 +1217,22 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                              % _esc(str(detalhe["target"])[:160]))
 
             # PIVO PARA A ARVORE. Um evento aponta um processo; a arvore mostra
-            # de onde ele veio. Sem esse caminho, cruzar as duas telas era
-            # trabalho manual de copiar um PID e procurar.
+            # de onde ele veio. O link abre a captura DE ONDE este evento saiu
+            # (capture_id), e nao a mais recente: um processo efemero ja nao
+            # existe na captura atual, e apontar a atual faria o pivo cair em
+            # "nao esta nesta captura" quase sempre.
             pivo = ""
             if detalhe.get("pid") and ev.get("agent_uuid"):
-                pivo = ("<a href='/agent/%s#pid=%s' title='Abrir este processo "
-                        "na arvore do laudo mais recente deste agente. Se o "
-                        "processo ja nao existir na captura atual, a propria "
-                        "tela avisa.' style='color:#4ec9b0;text-decoration:none;"
-                        "font-size:11px'>&#8631;</a>"
-                        % (ev["agent_uuid"], detalhe["pid"]))
+                cap = ev.get("capture_id")
+                destino = ("/agent/%s%s#pid=%s"
+                           % (ev["agent_uuid"],
+                              ("?capture=%s" % cap) if cap else "",
+                              detalhe["pid"]))
+                pivo = ("<a href='%s' title='Abrir este processo na arvore da "
+                        "captura de onde este evento saiu. Se ainda assim ele "
+                        "nao aparecer, a propria tela avisa.' "
+                        "style='color:#4ec9b0;text-decoration:none;"
+                        "font-size:13px'>&#8631;</a>" % destino)
 
             attck = _selo_attck(detalhe.get("technique"))
 
@@ -1283,10 +1329,23 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                       % (" e ".join(ativos), len(eventos), total_janela,
                          _url()))
 
-        cabecalho_tabela = ("<thead><tr><th>Hora</th><th>Tipo</th>"
-                            "<th>Agente</th><th>O que aconteceu</th>"
-                            "<th>ATT&amp;CK</th><th>Risco</th>"
-                            "<th>Arvore / relogio</th></tr></thead>")
+        cabecalho_tabela = (
+            "<thead><tr>"
+            "<th title='Instante corrigido pelo desvio de relogio do host, "
+            "para ser comparavel entre maquinas'>Hora</th>"
+            "<th title='Natureza do evento; o icone repete o do filtro acima'>"
+            "Tipo</th>"
+            "<th>Agente</th>"
+            "<th>O que aconteceu</th>"
+            "<th title='Tecnica MITRE ATT&amp;CK associada, quando ha. Passe o "
+            "mouse para o nome e a tatica.'>ATT&amp;CK</th>"
+            "<th title='Nivel de risco e, ao lado, o numero cru do anomaly "
+            "score. O numero e um campo de bits: cada bit e um sinal observado, "
+            "nao uma magnitude. Veja o ? acima.'>Risco</th>"
+            "<th title='A seta em espiral abre este processo na arvore da "
+            "captura de onde o evento saiu; o relogio indica que a hora ja foi "
+            "corrigida pelo desvio do host'>Arvore / relogio</th>"
+            "</tr></thead>")
 
         # As duas barras no mesmo desenho da aba Processes do laudo, com a
         # ajuda no mesmo canto e na mesma forma.
@@ -1512,25 +1571,6 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         cores = {"PENDING": "#7fb3d5", "SENT": "#ffd166",
                  "DONE": "#6bcB77", "FAILED": "#ff4d4d"}
 
-        def _instante(valor):
-            """
-            Data e hora local, com o carimbo UTC embaixo.
-
-            Um registro de log com apenas "13:24:07" nao serve como rastro: nao
-            diz o dia, e nao permite cruzar com log de outro sistema, que quase
-            sempre esta em UTC. As duas formas juntas, como no resto da
-            ferramenta.
-            """
-            if not valor:
-                return "<span style='color:#555'>&mdash;</span>"
-            local = datetime.datetime.fromtimestamp(valor)
-            utc = datetime.datetime.utcfromtimestamp(valor)
-            return ("<div>%s</div>"
-                    "<div style='color:#666;font-family:monospace;"
-                    "font-size:10px'>%s UTC</div>"
-                    % (local.strftime("%Y-%m-%d %H:%M:%S"),
-                       utc.strftime("%Y-%m-%d %H:%M:%S")))
-
         # O que cada acao faz, e a tecnica que ela exercita quando for o caso.
         # Sem isso "chaos" e uma palavra sem significado para quem nao escreveu
         # a ferramenta, e o registro de uma acao precisa dizer que acao foi.
@@ -1603,7 +1643,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                        % (r["id"], acao,
                           _identifica_agente(frota.get(r["agent_uuid"]),
                                              r["agent_uuid"]),
-                          cor, r["status"], _instante(r["created_at"]),
+                          cor, r["status"], _fmt_datahora(r["created_at"]),
                           espera, duracao, r.get("requested_by") or "-",
                           resultado, atalhos))
 
@@ -1686,16 +1726,13 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 # compara com o relogio dele. O carimbo completo em UTC, que
                 # nao pode faltar num laudo, vai em letra miuda junto do host.
                 local = last_ts + (datetime.datetime.now() - datetime.datetime.utcnow())
-                # Os dois formatos ficam juntos na coluna: a hora local, que o
-                # analista compara com o relogio dele, e o carimbo absoluto em
-                # UTC, que um laudo exige. Em duas linhas e letra pequena para
-                # nao roubar largura das colunas de severidade.
-                seen = ("<div style='font-size:12px'>%s</div>"
-                        "<div style='color:#777; font-size:10px; font-family:monospace'>"
-                        "%s UTC (%s)</div>"
-                        % (local.strftime("%H:%M:%S"),
-                           last_ts.strftime("%Y-%m-%d %H:%M:%S"),
-                           _human_age(idade)))
+                # Data e hora completas, local e UTC, no MESMO formato das
+                # demais telas (linha do tempo, comandos, laudo). Antes esta
+                # coluna mostrava so a hora local curta ("22:01:23"), que nao diz
+                # o dia; a idade legivel ("35s ago") continua ao lado.
+                local_epoch = local.timestamp()
+                seen = ("%s<div style='color:#777;font-size:10px'>(%s)</div>"
+                        % (_fmt_datahora(local_epoch), _human_age(idade)))
                 seen_full = ""
 
                 # Proximo contato esperado, a partir do ciclo que o proprio

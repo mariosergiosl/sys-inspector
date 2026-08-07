@@ -37,33 +37,36 @@ def test_comparison_uses_utc(codigo):
     assert "datetime.datetime.now() - last_ts" not in codigo
 
 
-def test_last_seen_column_shows_short_local_time(codigo):
+def test_last_seen_column_shows_full_local_and_utc(codigo):
     """
-    A coluna traz a hora local curta, que e a que o analista compara com o
-    relogio dele, sem obriga-lo a converter fuso de cabeca.
+    A coluna passou a trazer a data e a hora COMPLETAS, local e UTC, no mesmo
+    formato das demais telas. So a hora curta ("22:01:23") nao dizia o dia e nao
+    cruzava com log de outro sistema, que quase sempre esta em UTC (pedido do
+    Mario, 2026-08-07). A conversao para hora local continua explicita.
     """
-    assert "datetime.datetime.now() - datetime.datetime.utcnow()" in codigo
-    assert 'local.strftime("%H:%M:%S")' in codigo
+    bloco = codigo.split("def _serve_dashboard")[1]
+    assert "datetime.datetime.now() - datetime.datetime.utcnow()" in bloco
+    assert "_fmt_datahora(" in bloco
 
 
 def test_both_formats_live_in_the_last_seen_column(codigo):
     """
-    A coluna reune os dois formatos: a hora local, que o analista compara com o
-    relogio dele, e o carimbo absoluto em UTC, que um laudo exige. Em letra
-    pequena, para nao roubar largura das colunas de severidade.
+    A coluna reune os dois formatos, agora pelo helper unico `_fmt_datahora`: a
+    hora local, que o analista compara com o relogio dele, e o carimbo absoluto
+    em UTC, que um laudo exige. A idade relativa continua ao lado.
     """
-    assert 'local.strftime("%H:%M:%S")' in codigo
-    assert "UTC (%s)" in codigo
-    assert "font-size:10px" in codigo
+    bloco = codigo.split("def _serve_dashboard")[1]
+    assert "_fmt_datahora(local_epoch)" in bloco
+    assert "_human_age(idade)" in bloco
 
 
-def test_fqdn_is_shown_when_it_adds_information(codigo):
+def test_fqdn_is_shown_in_the_fleet(codigo):
     """
-    O FQDN identifica o host no dominio; exibi-lo quando e igual ao nome curto
-    so repetiria a mesma informacao.
+    O FQDN identifica o host no dominio. Continua exibido na frota; a decisao de
+    quando repetir e tratada no bloco do laudo (D-020), nao aqui.
     """
     assert "fqdn_html" in codigo
-    assert "fqdn != host" in codigo
+    assert "fqdn" in codigo
 
 
 def test_relative_age_is_shown(codigo):

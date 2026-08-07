@@ -169,8 +169,8 @@ def test_o_pedido_tem_data_e_utc(codigo):
     outro sistema, que quase sempre esta em UTC.
     """
     bloco = codigo.split("def _serve_command_log")[1].split("def _serve_dashboard")[0]
-    assert "utcfromtimestamp" in bloco
-    assert "%Y-%m-%d %H:%M:%S" in bloco
+    # O carimbo usa o helper unico de data/hora, que traz local e UTC completos.
+    assert "_fmt_datahora(r[\"created_at\"])" in bloco
 
 
 def test_o_resultado_leva_ao_efeito_do_comando(codigo):

@@ -353,19 +353,36 @@ def _render_badges(node, tree=None):
     score_to_show = getattr(node, 'tree_max_score', node.anomaly_score)
     severity = _severity_label(score_to_show)
     if severity:
-        # [FIX] Surface the real score breakdown instead of a placeholder.
-        own_reasons = _get_anomaly_reasons(node)
-        if own_reasons:
-            breakdown = "\n- ".join(own_reasons)
-            if node.anomaly_score < score_to_show:
-                tooltip = f"Severity {severity} (score {score_to_show}), worst in subtree.\nThis process:\n- {breakdown}\n(Higher severity bubbled up from a child process.)"
-            else:
-                tooltip = f"Severity {severity} (score {score_to_show}).\nBreakdown:\n- {breakdown}"
+        # O NUMERO CRU volta ao lado do rotulo. Ele e o dado coletado (o campo de
+        # bits), e o rotulo e a leitura dele; exibir so o rotulo escondia a
+        # evidencia atras da interpretacao. O tooltip decodifica o numero nos
+        # sinais que ele carrega, cada um nomeado, e o "?" ao lado da tabela
+        # (LEGEND_HTML) traz a legenda completa da escala.
+        sinais = risk.decode(score_to_show)
+        if sinais:
+            linhas_sinais = "\n".join("- %s (+%d, %s): %s"
+                                      % (s["label"], s["bit"], s["severity"],
+                                         s["explanation"]) for s in sinais)
         else:
-            tooltip = f"Severity {severity}: aggregated from child processes (open the subtree for details)."
+            linhas_sinais = "- agregado de um processo filho"
+        desconhecidos = risk.unknown_bits(score_to_show)
+        if desconhecidos:
+            linhas_sinais += ("\n- +%d de bit(s) que esta versao ainda nao "
+                              "sabe nomear" % desconhecidos)
+
+        if node.anomaly_score < score_to_show:
+            tooltip = ("Severidade %s (score %d), o pior da subarvore.\n"
+                       "Este processo soma %d.\nSinais no maximo da subarvore:\n%s"
+                       % (severity, score_to_show, node.anomaly_score,
+                          linhas_sinais))
+        else:
+            tooltip = ("Severidade %s. O numero e um campo de bits, nao uma "
+                       "magnitude: cada bit e um sinal observado.\n"
+                       "Sinais presentes (score %d):\n%s"
+                       % (severity, score_to_show, linhas_sinais))
         # Escape for safe use inside the title="" attribute (as razoes incluem
         # a cmdline do processo).
-        badges.append(f'<b class="tag t-warn" data-filter="WARN" title="{_esc(tooltip)}">⚠️ {severity}<span class="visually-hidden">WARN severity {severity}</span></b>')
+        badges.append(f'<b class="tag t-warn" data-filter="WARN" title="{_esc(tooltip)}">⚠️ {severity} <span style="opacity:.7;font-weight:normal">{score_to_show}</span><span class="visually-hidden">WARN severity {severity} score {score_to_show}</span></b>')
 
     # [FIX] EDR-WAIT is already emitted by the context_tags loop above (it is in
     # tag_map), so the previous dedicated block here produced a duplicate badge.
