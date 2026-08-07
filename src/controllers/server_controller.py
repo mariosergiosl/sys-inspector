@@ -325,9 +325,17 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 # compara com o relogio dele. O carimbo completo em UTC, que
                 # nao pode faltar num laudo, vai em letra miuda junto do host.
                 local = last_ts + (datetime.datetime.now() - datetime.datetime.utcnow())
-                seen = local.strftime("%H:%M:%S")
-                seen_full = "%s UTC (%s)" % (
-                    last_ts.strftime("%Y-%m-%d %H:%M:%S"), _human_age(idade))
+                # Os dois formatos ficam juntos na coluna: a hora local, que o
+                # analista compara com o relogio dele, e o carimbo absoluto em
+                # UTC, que um laudo exige. Em duas linhas e letra pequena para
+                # nao roubar largura das colunas de severidade.
+                seen = ("<div style='font-size:12px'>%s</div>"
+                        "<div style='color:#777; font-size:10px; font-family:monospace'>"
+                        "%s UTC (%s)</div>"
+                        % (local.strftime("%H:%M:%S"),
+                           last_ts.strftime("%Y-%m-%d %H:%M:%S"),
+                           _human_age(idade)))
+                seen_full = ""
             except Exception:
                 is_online = str(a.get('status', '')).upper() == 'ONLINE'
                 seen_full = ""
@@ -343,8 +351,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # Mostra o FQDN so quando acrescenta informacao ao nome curto.
             fqdn_html = ("<br><small style='color:#777; font-family:monospace'>%s</small>"
                          % fqdn) if fqdn and fqdn != host else ""
-            seen_html = ("<br><small style='color:#666; font-family:monospace'>%s</small>"
-                         % seen_full) if seen_full else ""
+            # O carimbo completo agora vive na coluna LAST SEEN; sob o host
+            # ficam apenas os identificadores (UUID e FQDN).
+            seen_html = ""
 
             # Contagem por severidade, vinda em claro com a captura.
             findings = a.get('findings') or {}

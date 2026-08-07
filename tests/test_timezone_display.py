@@ -46,14 +46,15 @@ def test_last_seen_column_shows_short_local_time(codigo):
     assert 'local.strftime("%H:%M:%S")' in codigo
 
 
-def test_full_utc_stamp_is_kept_in_small_print(codigo):
+def test_both_formats_live_in_the_last_seen_column(codigo):
     """
-    O carimbo completo em UTC nao pode sumir: num laudo o horario precisa ser
-    absoluto e sem ambiguidade. Ele fica em letra miuda junto do host.
+    A coluna reune os dois formatos: a hora local, que o analista compara com o
+    relogio dele, e o carimbo absoluto em UTC, que um laudo exige. Em letra
+    pequena, para nao roubar largura das colunas de severidade.
     """
-    assert "seen_full" in codigo
+    assert 'local.strftime("%H:%M:%S")' in codigo
     assert "UTC (%s)" in codigo
-    assert "seen_html" in codigo
+    assert "font-size:10px" in codigo
 
 
 def test_fqdn_is_shown_when_it_adds_information(codigo):
