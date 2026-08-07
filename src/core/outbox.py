@@ -30,7 +30,9 @@
 import ssl
 import json
 import time
+import socket
 import logging
+import platform
 import urllib.request
 import urllib.error
 
@@ -134,6 +136,37 @@ class Outbox(object):
             body = response.read().decode("utf-8", "replace")
             return json.loads(body) if body else {}
 
+    def _host_identity(self):
+        """
+        Identidade minima do host, em claro, para o servidor listar a frota.
+
+        Sao dados de inventario (nome, endereco, sistema), nao conteudo da
+        coleta: o que e sensivel continua cifrado.
+        """
+        hostname = platform.node()
+        address = ""
+        try:
+            # Descobre o endereco pela rota de saida, sem depender de DNS.
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe.settimeout(1)
+            probe.connect((self.server_ip, int(self.server_port)))
+            address = probe.getsockname()[0]
+            probe.close()
+        except Exception:
+            address = ""
+        # platform.linux_distribution foi removido no Python 3.8; ler
+        # /etc/os-release funciona em qualquer distribuicao atual.
+        os_info = platform.system()
+        try:
+            with open("/etc/os-release", "r") as handle:
+                for line in handle:
+                    if line.startswith("PRETTY_NAME="):
+                        os_info = line.split("=", 1)[1].strip().strip('"')
+                        break
+        except Exception:
+            pass
+        return {"hostname": hostname, "ip_address": address, "os_info": os_info}
+
     def request_slot(self, pending):
         """
         Pergunta ao servidor quantas capturas ele aceita agora.
@@ -189,6 +222,11 @@ class Outbox(object):
             try:
                 answer = self._post(PATH_INGEST, {
                     "agent_uuid": getattr(self.db, "agent_id", ""),
+                    # Identidade do host EM CLARO: hostname, endereco e sistema
+                    # ficam dentro do payload cifrado, que o servidor so abre
+                    # com a chave do analista. Sem envia-los ao lado, a frota
+                    # lista todo agente como "unknown" e a triagem fica cega.
+                    "host": self._host_identity(),
                     "bundle": item.get("data"),
                     "metrics": item.get("metrics") or {},
                     "custody": item.get("custody") or {},

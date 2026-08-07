@@ -126,9 +126,18 @@ def generate_key_pair(private_key_path="private_key.pem", public_key_path="publi
 
 
 def ensure_crypto_environment(public_key_path, private_key_path):
-    """Checks if keys exist; if not, auto-provisions them for the agent."""
-    if not os.path.exists(public_key_path) or not os.path.exists(private_key_path):
-        print("[!] Cryptographic keys not found. Auto-provisioning identity...")
+    """
+    Garante que exista uma chave publica para cifrar as capturas.
+
+    So provisiona quando a chave PUBLICA falta. Um agente que tem apenas a
+    chave publica do analista e a implantacao correta em campo: ele cifra e nao
+    consegue reabrir o que coletou (zero-knowledge). Tratar a ausencia da chave
+    privada como "faltam chaves" faria o agente gerar um par proprio e
+    SOBRESCREVER a chave do analista, e todas as capturas seguintes ficariam
+    ilegiveis para quem deveria analisa-las, sem nenhum aviso.
+    """
+    if not os.path.exists(public_key_path):
+        print("[!] Public key not found. Auto-provisioning identity...")
 
         # Ensure directory exists with secure permissions
         config_dir = os.path.dirname(public_key_path)
