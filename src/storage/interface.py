@@ -10,7 +10,6 @@
 #
 # AUTHOR: Mario Luz (Refactoring Sys-Inspector Project)
 # CHANGELOG:
-# VERSION: v0.90.16
 # ==============================================================================
 
 from abc import ABC, abstractmethod

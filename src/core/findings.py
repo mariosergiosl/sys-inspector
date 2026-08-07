@@ -12,7 +12,6 @@
 # NOTES:       Kept compatible with Python 3.6 (no dataclasses).
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
 import hashlib

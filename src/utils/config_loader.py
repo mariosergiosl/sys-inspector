@@ -13,7 +13,6 @@
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
 # CHANGELOG:
-# VERSION: 0.90.14
 # ==============================================================================
 
 import os

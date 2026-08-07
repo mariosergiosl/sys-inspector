@@ -22,7 +22,6 @@
 # NOTES:       Compativel com Python 3.6.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.92.0
 # ==============================================================================
 
 import logging

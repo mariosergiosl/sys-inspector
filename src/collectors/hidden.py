@@ -26,7 +26,6 @@
 #              externa: roda no host sob investigacao sem alterar estado.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.92.0
 # ==============================================================================
 
 import os

@@ -13,7 +13,6 @@
 # SOURCE:      https://attack.mitre.org/ (MITRE ATT&CK for Enterprise)
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.91.0
 # ==============================================================================
 
 # id -> (nome, tatica, descricao curta em uma frase)
