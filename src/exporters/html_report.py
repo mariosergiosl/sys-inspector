@@ -128,8 +128,10 @@ def _get_anomaly_reasons(node):
             if "SYNC" in mode:
                 reasons.append("IMPACT: Sync mode causes direct I/O latency on target processes.")
 
-    if node.cmd.startswith(("/tmp", "/dev/shm")) and not any("executed from unsafe path" in r for r in reasons):
-        reasons.append(f"LOCATION: Binary executed from temporary directory: {node.cmd}")
+    from src.collectors.process_tree import unsafe_path_in_cmdline
+    unsafe = unsafe_path_in_cmdline(node.cmd)
+    if unsafe and not any("unsafe path" in r for r in reasons):
+        reasons.append(f"LOCATION: Executed from temporary directory: {unsafe}")
 
     if "(deleted)" in node.cmd:
         reasons.append("INTEGRITY: Binary file has been deleted from disk while running")
@@ -594,9 +596,19 @@ def _get_details_html(node, mounts, tree=None):
 # ------------------------------------------------------------------------------
 # HEADER RENDERERS
 # ------------------------------------------------------------------------------
-def render_os_block(os_data, hw_data):
+def render_os_block(os_data, hw_data, agent_uuid=None):
+    """
+    Bloco SYSTEM do laudo.
+
+    O UUID do agente identifica a ORIGEM da captura de forma estavel: hostname
+    e endereco mudam, e num laudo e o identificador que amarra a evidencia ao
+    host que a produziu, junto da cadeia de custodia.
+    """
     html = "<div class='kv-list'>"
-    html += f"<div class='kv'><span class='kv-k'>Hostname</span><span class='kv-v'>{os_data.get('hostname')}</span></div>"
+    html += f"<div class='kv'><span class='kv-k'>Hostname</span><span class='kv-v'>{_esc(os_data.get('hostname'))}</span></div>"
+    if agent_uuid:
+        html += (f"<div class='kv'><span class='kv-k'>Agent UUID</span>"
+                 f"<span class='kv-v' style='font-family:monospace; font-size:11px'>{_esc(agent_uuid)}</span></div>")
     html += f"<div class='kv'><span class='kv-k'>Kernel</span><span class='kv-v'>{os_data.get('kernel')}</span></div>"
     html += f"<div class='kv'><span class='kv-k'>Uptime</span><span class='kv-v'>{os_data.get('uptime')}</span></div>"
     html += f"<div class='kv'><span class='kv-k'>OS</span><span class='kv-v'>{os_data.get('os_pretty_name')}</span></div>"
@@ -940,7 +952,8 @@ def render_attack_panel(findings):
 def generate_report(inventory, process_tree, output_file, version):
     """Full Static HTML Generator."""
     try:
-        os_c = render_os_block(inventory['os'], inventory['hw'])
+        os_c = render_os_block(inventory['os'], inventory['hw'],
+                               inventory.get('agent_uuid'))
         net_c = render_net_block(inventory['net'])
         disk_c = render_disk_block(inventory['storage'])
         mounts = inventory['storage'].get('mounts', {})

@@ -549,7 +549,8 @@ class WebController:
 
             try:
                 # Render Blocks using shared logic
-                os_html = render_os_block(inv.get('os', {}), inv.get('hw', {}))
+                os_html = render_os_block(inv.get('os', {}), inv.get('hw', {}),
+                                          inv.get('agent_uuid'))
                 net_html = render_net_block(inv.get('net', {}))
                 disk_html = render_disk_block(inv.get('storage', {}))
                 mounts = inv.get('storage', {}).get('mounts', {})

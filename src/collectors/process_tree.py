@@ -39,6 +39,30 @@ SCORE_NET_ISSUE = 64
 SCORE_ZOMBIE = 128
 SCORE_IMMUTABLE = 256
 
+# Diretorios de onde um binario legitimo normalmente NAO e executado.
+UNSAFE_EXEC_PREFIXES = ("/tmp/", "/dev/shm/", "/var/tmp/", "/run/shm/")
+
+
+def unsafe_path_in_cmdline(cmdline):
+    """
+    Procura um caminho de execucao suspeito em QUALQUER argumento da linha de
+    comando, devolvendo o primeiro encontrado.
+
+    Olhar so para o inicio da linha, ou so para /proc/PID/exe, deixa passar a
+    evasao mais simples que existe: executar o payload por um interpretador.
+    Em "/bin/bash /dev/shm/miner.sh" o executavel e o bash e a linha comeca com
+    /bin/bash, mas o codigo que roda esta em /dev/shm.
+    """
+    if not cmdline:
+        return None
+    for token in str(cmdline).split():
+        # Remove aspas e redirecionamentos coladas no argumento.
+        arg = token.strip("'\"")
+        if arg.startswith(UNSAFE_EXEC_PREFIXES):
+            return arg
+    return None
+
+
 # Get System Clock Ticks (usually 100) for uptime calc
 try:
     CLK_TCK = os.sysconf(os.sysconf_names['SC_CLK_TCK'])
@@ -457,9 +481,17 @@ class ProcessNode:
             if "DELETED" not in self.context_tags:
                 self.context_tags.append("DELETED")
 
+        # O executavel pode ser um interpretador legitimo (/bin/bash) rodando
+        # um payload que esta num diretorio inseguro; por isso a linha de
+        # comando inteira tambem e inspecionada.
+        unsafe = None
         if exe.startswith(("/tmp", "/dev/shm", "/var/tmp")):
+            unsafe = exe
+        else:
+            unsafe = unsafe_path_in_cmdline(self.cmd)
+        if unsafe:
             self.detection_reasons.append(
-                f"Binary executed from unsafe path: {exe} [+{SCORE_MALWARE}]")
+                f"Executed from unsafe path: {unsafe} [+{SCORE_MALWARE}]")
             if "UNSAFE" not in self.context_tags:
                 self.context_tags.append("UNSAFE")
 
@@ -669,7 +701,7 @@ class ProcessTree:
             if "EDR/AV" in n.context_tags: n.anomaly_score += SCORE_INSPECTOR
             if "NET_TOOL" in n.context_tags: n.anomaly_score += SCORE_NET_TOOL
             if "DELETED" in n.context_tags: n.anomaly_score += SCORE_DELETED
-            if n.cmd.startswith(("/tmp", "/dev/shm")): n.anomaly_score += SCORE_MALWARE
+            if unsafe_path_in_cmdline(n.cmd): n.anomaly_score += SCORE_MALWARE
 
             if n.pid not in self.kernel_pids and (n.tcp_retrans > 0 or n.tcp_drops > 0):
                 n.tags_accumulated = set(n.context_tags)

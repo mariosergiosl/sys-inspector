@@ -27,7 +27,7 @@ from bcc import BPF
 # Internal Modules
 from src.utils.config_loader import load_config
 from src.probes.loader import load_probe_source
-from src.collectors.process_tree import ProcessTree
+from src.collectors.process_tree import ProcessTree, unsafe_path_in_cmdline
 # from src.collectors.system_inventory import collect_full_inventory
 
 
@@ -108,7 +108,9 @@ class SysInspectorEngine:
     def _check_heuristics(self, node):
         """Applies static anomaly detection rules."""
         score = 0
-        if node.cmd.startswith(("/tmp", "/dev/shm")):
+        # Inspeciona a linha inteira: o payload pode estar num argumento,
+        # executado por um interpretador legitimo.
+        if unsafe_path_in_cmdline(node.cmd):
             score += 10
             if "UNSAFE" not in node.context_tags: node.context_tags.append("UNSAFE")
 
