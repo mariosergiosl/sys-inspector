@@ -46,10 +46,51 @@ JANELA_RELACAO = 300
 MIN_RECORRENCIA = 3
 
 
+# Interpretadores: quando o executavel e um deles, o risco esta no ARGUMENTO,
+# porque e ele que carrega o codigo.
+INTERPRETADORES = ("bash", "sh", "dash", "zsh", "python", "python3", "perl",
+                   "ruby", "node", "php", "lua", "awk")
+
+DIRETORIOS_GRAVAVEIS = ("/tmp/", "/dev/shm/", "/var/tmp/", "/run/user/")
+
+
+def _em_diretorio_gravavel(token):
+    return any((token or "").lower().startswith(d) for d in DIRETORIOS_GRAVAVEIS)
+
+
 def _e_caminho_gravavel(texto):
-    alvo = (texto or "").lower()
-    return any(d in alvo for d in ("/tmp/", "/dev/shm/", "/var/tmp/",
-                                   "/run/user/"))
+    """
+    Se a linha de comando EXECUTA algo de um diretorio gravavel.
+
+    A distincao aqui foi aprendida em campo, e nos dois sentidos.
+
+    Procurar o diretorio em qualquer parte do texto produz falso positivo: o
+    servico legitimo `/usr/lib/gvfs/gvfsd-fuse /run/user/0/gvfs -f` foi acusado
+    em quatro hosts de uma vez, porque o caminho gravavel aparecia como
+    argumento de DIRETORIO de trabalho, nao como codigo. Falso positivo nessa
+    regra e caro de um jeito especifico: ela afirma "campanha", e uma campanha
+    inventada manda o analista procurar vetor comum que nao existe.
+
+    Olhar apenas o executavel produz falso NEGATIVO, e ja produziu: rodar por
+    interpretador (`/bin/bash /dev/shm/miner.sh`) e evasao trivial, porque o
+    binario e legitimo e o codigo esta no argumento.
+
+    A regra que cobre os dois: o executavel esta em diretorio gravavel, OU o
+    executavel e um interpretador e algum argumento esta.
+    """
+    partes = (texto or "").split()
+    if not partes:
+        return False
+
+    executavel = partes[0]
+    if _em_diretorio_gravavel(executavel):
+        return True
+
+    nome = executavel.rsplit("/", 1)[-1].lower()
+    if any(nome.startswith(i) for i in INTERPRETADORES):
+        return any(_em_diretorio_gravavel(a) for a in partes[1:])
+
+    return False
 
 
 # ------------------------------------------------------------------------------

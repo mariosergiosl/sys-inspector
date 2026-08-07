@@ -366,3 +366,47 @@ def test_correlation_runs_over_what_is_displayed():
                     encoding="utf-8").read()
     bloco = fonte.split("def _serve_timeline")[1].split("def _serve_capabilities")[0]
     assert "correlate(eventos)" in bloco
+
+
+# ------------------------------------------------------------------------------
+# CAMINHO GRAVAVEL: OS DOIS ERROS OPOSTOS, APRENDIDOS EM CAMPO
+# ------------------------------------------------------------------------------
+def test_a_writable_directory_as_argument_is_not_execution():
+    """
+    Falso positivo real: `/usr/lib/gvfs/gvfsd-fuse /run/user/0/gvfs -f`, servico
+    legitimo, foi acusado em quatro hosts de uma vez porque o caminho gravavel
+    aparecia como argumento de DIRETORIO de trabalho. Nesta regra o custo e
+    especifico: ela afirma "campanha", e uma campanha inventada manda o analista
+    procurar vetor comum que nao existe.
+    """
+    from src.core.correlation import _e_caminho_gravavel
+    assert not _e_caminho_gravavel("/usr/lib/gvfs/gvfsd-fuse /run/user/0/gvfs -f")
+
+
+def test_an_executable_in_a_writable_directory_is_flagged():
+    from src.core.correlation import _e_caminho_gravavel
+    assert _e_caminho_gravavel("/tmp/chaos/miner --threads 4")
+
+
+def test_running_through_an_interpreter_is_still_caught():
+    """
+    O erro oposto, tambem observado em campo: olhar so o executavel deixa passar
+    `/bin/bash /dev/shm/miner.sh`, porque o binario e legitimo e o codigo esta
+    no argumento. Evasao trivial se a regra so olhasse o primeiro token.
+    """
+    from src.core.correlation import _e_caminho_gravavel
+    assert _e_caminho_gravavel("/bin/bash /dev/shm/miner.sh")
+    assert _e_caminho_gravavel("python3 /tmp/x/artifact.py")
+
+
+def test_a_system_service_with_no_writable_path_is_quiet():
+    from src.core.correlation import _e_caminho_gravavel
+    assert not _e_caminho_gravavel("/usr/sbin/sshd -D")
+    assert not _e_caminho_gravavel("")
+
+
+def test_the_campaign_rule_no_longer_fires_on_the_real_false_positive():
+    """Verificacao de ponta a ponta do caso que apareceu no laboratorio."""
+    linha = "/usr/lib/gvfs/gvfsd-fuse /run/user/0/gvfs -f"
+    eventos = [_proc(1000, linha, agente=h) for h in ("a", "b", "c", "d")]
+    assert rule_fleet_campaign(eventos) == []
