@@ -31,6 +31,7 @@ from src.core.findings import summarize_by_severity
 from src.core.crypto import load_public_key, encrypt_data
 from src.core.outbox import Outbox
 from src.core.custody import build_for_capture
+from src.core.commands import CMD_COLLECT, CMD_CHAOS_COLLECT, CMD_RESTART
 
 
 class DaemonController:
@@ -105,10 +106,13 @@ class DaemonController:
 
             # 3. Entrega o que estiver pendente. Falha aqui nunca interrompe a
             # coleta: a captura ja esta salva e sera reenviada no proximo ciclo.
+            # A mesma conversa com o servidor entrega o que ha e recolhe o que
+            # foi pedido, em vez de duas rotinas com relogios diferentes.
             try:
                 self.outbox.deliver_once()
+                self._handle_commands(engine, self.outbox.check_in())
             except Exception as e:
-                self.logger.error(f"[OUTBOX] Unexpected delivery error: {e}")
+                self.logger.error(f"[SYNC] Unexpected sync error: {e}")
 
             # 4. Sleep Interval (Idle Time)
             if not self.shutdown_event.is_set():
@@ -118,6 +122,66 @@ class DaemonController:
         # Cleanup on exit
         # engine.cleanup()  # on future
         self.logger.info("[DAEMON] Shutdown complete.")
+
+    def _handle_commands(self, engine, comandos):
+        """
+        Busca e executa os comandos pedidos pelo analista.
+
+        Cada desfecho volta ao servidor, para o pedido ter rastro: quem pediu,
+        quando chegou e o que aconteceu. Um comando que falha nao derruba o
+        laco de coleta, que continua sendo a funcao principal do agente.
+        """
+        for cmd in comandos or []:
+            nome = cmd.get("command")
+            ident = cmd.get("id")
+            self.logger.info("[CMD] Executing '%s' requested by the analyst", nome)
+            try:
+                if nome == CMD_COLLECT:
+                    self.collect_and_store(engine, "on-demand")
+                    self.outbox.deliver_once()
+                    self.outbox.report_command(ident, True, "capture collected and delivered")
+
+                elif nome == CMD_CHAOS_COLLECT:
+                    saida = self._run_chaos(cmd.get("params") or {})
+                    self.collect_and_store(engine, "chaos")
+                    self.outbox.deliver_once()
+                    self.outbox.report_command(ident, True, saida)
+
+                elif nome == CMD_RESTART:
+                    # Confirma ANTES de sair: depois do exit nao ha quem relate.
+                    self.outbox.report_command(ident, True, "restarting")
+                    self.logger.warning("[CMD] Restart requested; stopping agent")
+                    self.shutdown_event.set()
+                    return
+
+                else:
+                    self.outbox.report_command(ident, False, "unknown command")
+            except Exception as exc:
+                self.logger.error("[CMD] '%s' failed: %s", nome, exc)
+                self.outbox.report_command(ident, False, str(exc))
+
+    def _run_chaos(self, params):
+        """
+        Dispara o gerador de cenario de teste, quando presente.
+
+        E uma ferramenta de laboratorio: valida a deteccao ponta a ponta. Se o
+        script nao estiver instalado, o comando falha de forma explicita em vez
+        de fingir que rodou.
+        """
+        import os
+        import subprocess
+
+        duracao = str(int(params.get("duration", 300) or 300))
+        candidatos = ["/opt/sys-inspector/tools/chaos_maker.sh",
+                      "/usr/bin/chaos_maker.sh"]
+        script = next((c for c in candidatos if os.path.exists(c)), None)
+        if not script:
+            raise RuntimeError("chaos_maker.sh not installed on this host")
+
+        subprocess.Popen(["/bin/bash", script, "--all", "--duration", duracao],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+        return "chaos started for %ss" % duracao
 
     def collect_and_store(self, engine, cycle_id):
         """

@@ -42,6 +42,9 @@ LOG = logging.getLogger("Outbox")
 # agentes antigos ainda em campo.
 PATH_SLOT = "/api/v1/queue/request"
 PATH_INGEST = "/api/v1/ingest"
+# O agente PERGUNTA se ha algo para ele; o servidor nunca inicia conexao.
+PATH_COMMANDS = "/api/v1/commands"
+PATH_COMMAND_RESULT = "/api/v1/commands/result"
 
 # Backoff exponencial limitado: um servidor fora do ar nao pode virar uma
 # tempestade de tentativas vinda da frota inteira.
@@ -74,6 +77,8 @@ class Outbox(object):
 
         self._failures = 0
         self._next_attempt = 0.0
+        # Ordens trazidas pelo ultimo check-in.
+        self.pending_commands = []
 
     # --------------------------------------------------------------------------
     # ESTADO
@@ -115,6 +120,8 @@ class Outbox(object):
     def _register_success(self):
         self._failures = 0
         self._next_attempt = 0.0
+        # Ordens trazidas pelo ultimo check-in.
+        self.pending_commands = []
 
     # --------------------------------------------------------------------------
     # TRANSPORTE
@@ -187,10 +194,56 @@ class Outbox(object):
         answer = self._post(PATH_SLOT, {
             "agent_uuid": getattr(self.db, "agent_id", ""),
             "pending": pending,
+            "host": self._host_identity(),
         })
+        # A MESMA ida e volta ja traz o que o analista pediu. Perguntar por
+        # comandos numa requisicao separada dobraria o trafego e criaria dois
+        # relogios diferentes para a mesma conversa com o servidor.
+        self.pending_commands = answer.get("commands", []) or []
         if not answer.get("granted", True):
             return 0, int(answer.get("retry_after", BACKOFF_BASE) or BACKOFF_BASE)
         return int(answer.get("slots", self.batch_size) or self.batch_size), 0
+
+    def check_in(self):
+        """
+        Conversa periodica com o servidor: informa o que ha para entregar e
+        recolhe o que o analista pediu, na MESMA requisicao.
+
+        A conversa parte sempre do agente. O host inspecionado nao abre porta
+        nem mantem servico escutando, o que evita acrescentar superficie de
+        ataque justamente na maquina sob investigacao e funciona com agentes
+        atras de NAT ou firewall restritivo.
+
+        Acontece mesmo sem captura pendente: e assim que um agente ocioso
+        continua aparecendo vivo na frota e recebe ordens sem esperar o proximo
+        dado a enviar.
+        """
+        if not self.enabled or self._should_wait():
+            return []
+        self.pending_commands = []
+        try:
+            pendentes = len(self.db.get_pending_snapshots(limit=self.batch_size))
+        except Exception:
+            pendentes = 0
+        try:
+            self.request_slot(pendentes)
+            self._register_success()
+        except Exception as exc:
+            LOG.debug("[OUTBOX] Check-in failed: %s", exc)
+            self._register_failure()
+        return self.pending_commands
+
+    def report_command(self, command_id, ok, result=""):
+        """Devolve ao servidor o desfecho de um comando executado."""
+        if not self.enabled:
+            return
+        try:
+            self._post(PATH_COMMAND_RESULT, {
+                "agent_uuid": getattr(self.db, "agent_id", ""),
+                "id": command_id, "ok": bool(ok), "result": str(result)[:2000],
+            })
+        except Exception as exc:
+            LOG.debug("[OUTBOX] Could not report command %s: %s", command_id, exc)
 
     def deliver_once(self):
         """

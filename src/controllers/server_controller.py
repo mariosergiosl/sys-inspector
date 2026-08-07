@@ -32,8 +32,9 @@ from src.exporters.html_report import generate_report
 from src.collectors.process_tree import ProcessTree, ProcessNode
 from src.core.crypto import load_private_key, decrypt_data
 from src.core.ingest import IngestQueue, process_batch
+from src.core.commands import CommandQueue, ALLOWED
 from src.core.tls import ensure_self_signed_cert
-from src.core.outbox import PATH_SLOT, PATH_INGEST
+from src.core.outbox import PATH_SLOT, PATH_INGEST, PATH_COMMAND_RESULT
 
 
 
@@ -94,7 +95,23 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
         if self.path == '/':
             # --- DASHBOARD ---
-            self._serve_dashboard(controller.db)
+            self._serve_dashboard(controller.db, controller.commands)
+
+        elif self.path.startswith('/cmd/'):
+            # /cmd/<acao>/<uuid>: o analista enfileira; nada e executado aqui.
+            partes = self.path.strip('/').split('/')
+            if len(partes) == 3 and partes[1] in ALLOWED:
+                try:
+                    controller.commands.enqueue(partes[2], partes[1],
+                                                requested_by="dashboard")
+                    controller.logger.info("[CMD] '%s' queued for %s",
+                                           partes[1], partes[2])
+                except Exception as e:
+                    controller.logger.error("[CMD] Could not queue: %s", e)
+            self.send_response(302)
+            self.send_header("Location", "/")
+            self.end_headers()
+            return
 
         elif self.path.startswith('/agent/'):
             # --- VIEW AGENT SNAPSHOT ---
@@ -122,13 +139,29 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     # Com position:fixed o botao flutuava sobre o titulo e
                     # cobria o nome da ferramenta; ocupando espaco real ele
                     # apenas empurra o conteudo para baixo.
+                    # Barra de acoes do host: as mesmas acoes do gerente,
+                    # ao alcance de quem ja esta lendo o laudo daquele agente.
+                    def _acao(caminho, icone, titulo, extra=""):
+                        return ("<a href=\"/cmd/%s/%s\" title=\"%s\" "
+                                "style=\"color:#4ec9b0; border:1px solid #444; "
+                                "border-radius:4px; padding:4px 8px; margin-left:6px; "
+                                "text-decoration:none; font-size:14px;%s\">%s</a>"
+                                % (caminho, agent_uuid, titulo, extra, icone))
+
                     back = (
                         "<div style=\"background:#1a1a1a; border-bottom:1px solid #333; "
-                        "padding:8px 20px\">"
+                        "padding:8px 20px; display:flex; align-items:center\">"
                         "<a href=\"/\" style=\"color:#4ec9b0; border:1px solid #4ec9b0; "
                         "border-radius:4px; padding:5px 14px; font-size:12px; "
                         "font-family:sans-serif; text-decoration:none\">"
-                        "&larr; Fleet</a></div>")
+                        "&larr; Fleet</a>"
+                        + _acao("collect", "&#128248;",
+                                "Request a capture now (queued; the agent picks it "
+                                "up on its next check-in)")
+                        + _acao("chaos", "&#9760;",
+                                "LAB ONLY: run the chaos generator and capture")
+                        + _acao("restart", "&#128260;", "Restart the agent (queued)")
+                        + "</div>")
                     # Ancora o link no primeiro elemento do corpo, e nao na
                     # string "<body>": essa sequencia tambem aparece DENTRO do
                     # JavaScript do relatorio (win.document.write('</head><body>')),
@@ -182,7 +215,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
         # Rotas versionadas do transporte (Fase 2). O servidor controla a fila:
         # o agente pergunta quanto pode enviar antes de despejar o acumulo.
-        if self.path in (PATH_SLOT, PATH_INGEST):
+        if self.path in (PATH_SLOT, PATH_INGEST, PATH_COMMAND_RESULT):
             if not self._authorized(controller):
                 self._reply({"status": "unauthorized"}, status=401)
                 return
@@ -195,7 +228,25 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             agent_uuid = data.get('agent_uuid') or self.headers.get('X-Agent-Id') or 'remote'
 
             if self.path == PATH_SLOT:
-                self._reply(controller.queue.grant_slots(agent_uuid, data.get('pending', 0)))
+                resposta = controller.queue.grant_slots(agent_uuid, data.get('pending', 0))
+                # A mesma resposta leva o que o analista pediu, evitando uma
+                # segunda ida e volta so para perguntar por ordens.
+                resposta["commands"] = controller.commands.take_for(agent_uuid)
+                # Identidade do host chega tambem no check-in, para um agente
+                # ocioso continuar aparecendo corretamente na frota.
+                host = data.get('host') or {}
+                if host:
+                    controller.db.update_agent_status(
+                        agent_uuid, "ONLINE", hostname=host.get("hostname"),
+                        ip=host.get("ip_address"), os_info=host.get("os_info"),
+                        fqdn=host.get("fqdn"))
+                self._reply(resposta)
+                return
+
+            if self.path == PATH_COMMAND_RESULT:
+                controller.commands.report(data.get('id'), data.get('ok'),
+                                           data.get('result', ''))
+                self._reply({"status": "recorded"})
                 return
 
             result = controller.queue.enqueue(agent_uuid, data, origin="remote")
@@ -234,7 +285,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         else:
             self._set_headers(status=404)
 
-    def _serve_dashboard(self, db):
+    def _serve_dashboard(self, db, db_commands=None):
         """Renders the Server Manager Dashboard HTML."""
         # Envia a status line e os headers antes do corpo. Sem isto a resposta
         # sai sem cabecalho HTTP (o cliente ve conexao malformada / HTTP 000).
@@ -270,9 +321,6 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 last_ts = datetime.datetime.strptime(seen, "%Y-%m-%d %H:%M:%S")
                 idade = (datetime.datetime.utcnow() - last_ts).total_seconds()
                 is_online = idade < 90
-                # Mostra a hora LOCAL do servidor em destaque, que e a que o
-                # analista compara com o relogio dele, e mantem o UTC ao lado
-                # em texto menor, porque um laudo nao pode ter horario ambiguo.
                 # A coluna mostra a hora LOCAL curta, que e a que o analista
                 # compara com o relogio dele. O carimbo completo em UTC, que
                 # nao pode faltar num laudo, vai em letra miuda junto do host.
@@ -280,10 +328,16 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 seen = local.strftime("%H:%M:%S")
                 seen_full = "%s UTC (%s)" % (
                     last_ts.strftime("%Y-%m-%d %H:%M:%S"), _human_age(idade))
-                seen_full = ""
             except Exception:
                 is_online = str(a.get('status', '')).upper() == 'ONLINE'
                 seen_full = ""
+
+            # Quantos pedidos aguardam este agente perguntar. Deixa claro que a
+            # acao foi enfileirada e ainda nao executada: o servidor nao alcanca
+            # o agente, quem busca e ele.
+            aguardando = db_commands.pending_count(uuid) if db_commands else 0
+            cmd_badge = ("<span class='cmd-badge' title='queued, waiting for the "
+                         "agent to check in'>%d</span>" % aguardando) if aguardando else ""
 
             fqdn = a.get('fqdn') or ""
             # Mostra o FQDN so quando acrescenta informacao ao nome curto.
@@ -323,7 +377,13 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 {sev_cells}
                 <td style='color:#aaa'>{seen}</td>
                 <td><span style='{status_style}; font-weight:bold; font-size:11px; border:1px solid; padding:2px 6px; border-radius:3px'>{status_text}</span></td>
-                <td><a href='/agent/{uuid}' class='btn-view'>VIEW REPORT</a></td>
+                <td style='white-space:nowrap'>
+                    <a href='/agent/{uuid}' class='btn-ico' title='Open the forensic report'>&#128269;</a>
+                    <a href='/cmd/collect/{uuid}' class='btn-ico' title='Request a capture now (queued; the agent picks it up on its next check-in)'>&#128248;</a>
+                    <a href='/cmd/chaos/{uuid}' class='btn-ico btn-lab' title='LAB ONLY: run the chaos generator and capture'>&#9760;</a>
+                    <a href='/cmd/restart/{uuid}' class='btn-ico btn-warn' title='Restart the agent (queued)'>&#128260;</a>
+                    {cmd_badge}
+                </td>
             </tr>"""
 
         html = f"""
@@ -339,6 +399,11 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             tr {{ transition: transform 0.2s; }}
             tr:hover {{ transform: scale(1.01); background: #2a2d2e !important; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }}
             .btn-view {{ background: #333; color: #fff; text-decoration: none; padding: 6px 12px; font-size: 10px; border-radius: 3px; border: 1px solid #555; transition:0.2s; }}
+            .btn-ico {{ display:inline-block; text-decoration:none; font-size:15px; padding:3px 6px; border:1px solid #444; border-radius:4px; margin-right:3px; filter:grayscale(35%); }}
+            .btn-ico:hover {{ border-color:var(--acc); background:#2a2d2e; filter:none; }}
+            .btn-lab:hover {{ border-color:#ff8c42; }}
+            .btn-warn:hover {{ border-color:var(--red); }}
+            .cmd-badge {{ background:var(--acc); color:#fff; font-size:10px; padding:1px 7px; border-radius:8px; margin-left:4px; }}
             .btn-view:hover {{ background: #0078d4; border-color: #0078d4; }}
         </style>
         </head><body>
@@ -369,6 +434,9 @@ class ServerController:
         # guardada, venha da rede ou da coleta local. Um so mecanismo para os
         # modos server e live.
         self.queue = IngestQueue(config['storage']['sqlite_path'])
+        # Fila de comandos: o analista pede, o AGENTE recolhe quando fala com o
+        # servidor. O servidor nunca inicia conexao com o host inspecionado.
+        self.commands = CommandQueue(config['storage']['sqlite_path'])
         self.ingest_token = (config.get('server', {}) or {}).get('auth_token', '') or ''
         if not self.ingest_token:
             self.logger.warning(
