@@ -247,6 +247,7 @@ class DaemonController:
                     # relate, e sem o registro o pedido voltaria no proximo
                     # check-in, deixando o agente num ciclo de reinicios.
                     self._concluir(ident, nome, "restarting")
+                    self._reiniciar_processo()
                     self.logger.warning("[CMD] Restart requested; stopping agent")
                     self.shutdown_event.set()
                     return
@@ -268,6 +269,32 @@ class DaemonController:
         """
         self.ledger.remember(ident, nome, resultado)
         self.outbox.report_command(ident, True, resultado)
+
+    def _reiniciar_processo(self):
+        """
+        Reinicia o proprio agente, sem depender de supervisor.
+
+        Antes o comando apenas encerrava, na premissa de que o systemd traria o
+        agente de volta. Fora do systemd, e o laboratorio inteiro roda assim, o
+        agente simplesmente PARAVA: um pedido de reinicio derrubava a coleta do
+        host e ninguem percebia ate a frota acusar offline, minutos depois.
+
+        Trocar a propria imagem do processo funciona nos dois casos: sob
+        supervisor, o servico segue vivo com codigo novo; sem supervisor, o
+        agente volta por conta propria. Nao ha caminho em que o pedido termine
+        com o host descoberto.
+        """
+        import os
+        import sys
+        try:
+            self.logger.warning("[CMD] Re-executing agent to apply restart")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as exc:
+            # Se nem isso funcionar, o operador precisa saber que o host ficou
+            # sem coleta, e nao descobrir depois pelo silencio.
+            self.logger.critical(
+                "[CMD] Restart failed and the agent is stopping: %s. This host "
+                "is no longer being collected.", exc)
 
     def _run_chaos(self, params):
         """

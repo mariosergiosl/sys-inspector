@@ -165,3 +165,54 @@ def test_agent_records_before_reporting():
                     encoding="utf-8").read()
     bloco = fonte.split("def _concluir")[1].split("def _run_chaos")[0]
     assert bloco.index("remember") < bloco.index("report_command")
+
+
+# ------------------------------------------------------------------------------
+# REINICIO QUE DE FATO REINICIA
+# ------------------------------------------------------------------------------
+def test_restart_reexecutes_instead_of_just_stopping():
+    """
+    Observado em campo: o agente do laboratorio "morreu". Nao morreu, obedeceu a
+    um pedido de reinicio e encerrou, na premissa de que um supervisor o traria
+    de volta. Fora do systemd, e o laboratorio inteiro roda assim, o host
+    simplesmente ficou sem coleta ate a frota acusar offline minutos depois.
+
+    Trocar a propria imagem do processo cobre os dois casos e nao deixa caminho
+    em que o pedido termine com o host descoberto.
+    """
+    import io
+    import os
+    fonte = io.open(os.path.join("src", "controllers", "daemon_controller.py"),
+                    encoding="utf-8").read()
+    assert "_reiniciar_processo" in fonte
+    assert "os.execv" in fonte
+
+
+def test_a_failed_restart_is_reported_as_loss_of_collection():
+    """
+    Se nem a re-execucao funcionar, o operador precisa saber que aquele host
+    parou de ser coletado, e nao descobrir depois pelo silencio.
+    """
+    import io
+    import os
+    fonte = io.open(os.path.join("src", "controllers", "daemon_controller.py"),
+                    encoding="utf-8").read()
+    bloco = fonte.split("def _reiniciar_processo")[1].split("def _run_chaos")[0]
+    assert "critical" in bloco
+    assert "no longer being collected" in bloco
+
+
+def test_the_agent_purge_does_not_violate_the_schema(tmp_path):
+    """
+    O mesmo erro cometido na fila de ingestao, repetido no agente: gravar NULL
+    numa coluna NOT NULL. Falhava a cada ciclo em silencio, entao o banco local
+    NUNCA era liberado, que e exatamente o problema que a funcao existe para
+    resolver.
+    """
+    import io
+    import os
+    fonte = io.open(os.path.join("src", "core", "database.py"),
+                    encoding="utf-8").read()
+    bloco = fonte.split("def purge_confirmed")[1].split("def digests_present")[0]
+    assert "json_blob = NULL" not in bloco
+    assert "_purged" in bloco

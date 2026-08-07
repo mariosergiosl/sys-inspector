@@ -336,9 +336,15 @@ class DatabaseManager:
         try:
             with closing(self._get_conn()) as conn:
                 marcas = ",".join("?" * len(snapshot_ids))
+                # Marcador, nao NULL: a coluna e NOT NULL desde o esquema
+                # original. Eu ja tinha cometido este mesmo erro na fila de
+                # ingestao e o repeti aqui, com um agravante: falhava em
+                # silencio a cada ciclo, entao o banco local do agente NUNCA
+                # era liberado e crescia sem limite, exatamente o problema que
+                # esta funcao existe para resolver.
                 cur = conn.execute(
-                    "UPDATE snapshots SET json_blob = NULL WHERE id IN (%s)"
-                    % marcas, list(snapshot_ids))
+                    "UPDATE snapshots SET json_blob = ? WHERE id IN (%s)"
+                    % marcas, ['{"_purged": true}'] + list(snapshot_ids))
                 conn.commit()
                 return cur.rowcount
         except Exception as e:
