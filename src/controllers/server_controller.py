@@ -103,12 +103,17 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
                     # Retorno para a frota: sem isso o analista entra no
                     # relatorio de um host e fica sem caminho de volta.
+                    # Barra propria acima do relatorio, no fluxo do documento.
+                    # Com position:fixed o botao flutuava sobre o titulo e
+                    # cobria o nome da ferramenta; ocupando espaco real ele
+                    # apenas empurra o conteudo para baixo.
                     back = (
-                        "<a href='/' style=\"position:fixed; top:12px; left:12px; "
-                        "z-index:9999; background:#252526; color:#4ec9b0; "
-                        "border:1px solid #4ec9b0; border-radius:4px; "
-                        "padding:6px 14px; font-family:'Segoe UI',sans-serif; "
-                        "font-size:12px; text-decoration:none\">&larr; Fleet</a>")
+                        "<div style=\"background:#1a1a1a; border-bottom:1px solid #333; "
+                        "padding:8px 20px\">"
+                        "<a href=\"/\" style=\"color:#4ec9b0; border:1px solid #4ec9b0; "
+                        "border-radius:4px; padding:5px 14px; font-size:12px; "
+                        "font-family:sans-serif; text-decoration:none\">"
+                        "&larr; Fleet</a></div>")
                     # Ancora o link no primeiro elemento do corpo, e nao na
                     # string "<body>": essa sequencia tambem aparece DENTRO do
                     # JavaScript do relatorio (win.document.write('</head><body>')),

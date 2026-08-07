@@ -59,8 +59,21 @@ def test_report_offers_a_way_back_to_the_fleet(codigo):
     O relatorio de um agente precisa ter retorno para a frota; sem isso o
     analista fica preso na pagina.
     """
-    assert "Fleet</a>" in codigo
-    assert "href='/'" in codigo
+    inicio = codigo.index("back = (")
+    bloco = codigo[inicio:inicio + 700]
+    assert "Fleet</a>" in bloco
+    # Aponta para a raiz, independente de como as aspas aparecem no fonte.
+    assert "href=" in bloco and "/" in bloco
+
+
+def test_back_bar_does_not_float_over_the_title(codigo):
+    """
+    A barra de retorno ocupa espaco no fluxo do documento. Com position:fixed
+    ela flutuava sobre o cabecalho e cobria o nome da ferramenta.
+    """
+    inicio = codigo.index("back = (")
+    trecho = codigo[inicio:inicio + 700]
+    assert "position:fixed" not in trecho
 
 
 def test_back_link_is_injected_once_on_a_safe_anchor(codigo):
