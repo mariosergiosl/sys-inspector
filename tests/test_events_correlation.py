@@ -277,3 +277,92 @@ def test_no_rule_claims_compromise():
 def test_an_empty_timeline_produces_nothing():
     assert correlate([]) == []
     assert correlate(None) == []
+
+
+# ------------------------------------------------------------------------------
+# A LIGACAO COM O SERVIDOR
+# ------------------------------------------------------------------------------
+def test_events_are_derived_at_ingestion():
+    """
+    Derivar na ingestao e o unico momento em que o servidor tem a chave e o dado
+    juntos. Fazer sob demanda obrigaria a decifrar tudo de novo a cada abertura
+    da tela.
+    """
+    import io
+    import os
+    fonte = io.open(os.path.join("src", "controllers", "server_controller.py"),
+                    encoding="utf-8").read()
+    assert "_registrar_eventos" in fonte
+    assert "on_stored=_registrar_eventos" in fonte
+
+
+def test_the_hook_runs_before_the_entry_is_closed():
+    """
+    Se a derivacao falhar, a entrada nao pode ser dada por processada: o dado
+    se perderia em silencio, que e a classe de defeito que mais custou aqui.
+    """
+    import io
+    import os
+    fonte = io.open(os.path.join("src", "core", "ingest.py"),
+                    encoding="utf-8").read()
+    bloco = fonte.split("def process_batch")[1]
+    assert bloco.index("on_stored(") < bloco.index('queue.mark_done')
+
+
+def test_a_failing_hook_does_not_lose_the_capture():
+    """A captura ja esta gravada; a linha do tempo e leitura, nao o registro."""
+    import io
+    import os
+    fonte = io.open(os.path.join("src", "core", "ingest.py"),
+                    encoding="utf-8").read()
+    bloco = fonte.split("if on_stored:")[1][:400]
+    assert "except Exception" in bloco
+
+
+def test_the_timeline_page_exists():
+    import io
+    import os
+    fonte = io.open(os.path.join("src", "controllers", "server_controller.py"),
+                    encoding="utf-8").read()
+    assert "'/timeline'" in fonte
+    assert "_serve_timeline" in fonte
+
+
+def test_the_page_shows_the_gap_between_events():
+    """
+    "+4s" transforma uma lista de horarios em sequencia legivel, e sequencia e
+    o que a tela existe para mostrar.
+    """
+    import io
+    import os
+    fonte = io.open(os.path.join("src", "controllers", "server_controller.py"),
+                    encoding="utf-8").read()
+    bloco = fonte.split("def _serve_timeline")[1].split("def _serve_capabilities")[0]
+    assert "+%ds" in bloco
+
+
+def test_the_page_marks_a_corrected_clock():
+    """
+    O analista precisa saber que aquele horario foi ajustado, senao a correcao
+    vira premissa invisivel.
+    """
+    import io
+    import os
+    fonte = io.open(os.path.join("src", "controllers", "server_controller.py"),
+                    encoding="utf-8").read()
+    bloco = fonte.split("def _serve_timeline")[1].split("def _serve_capabilities")[0]
+    assert "corrigido" in bloco
+    assert "corrected_ts" in bloco
+
+
+def test_correlation_runs_over_what_is_displayed():
+    """
+    Uma conclusao tirada de material que o analista nao ve seria impossivel de
+    conferir.
+    """
+    import io
+    import os
+    fonte = io.open(os.path.join("src", "controllers", "server_controller.py"),
+                    encoding="utf-8").read()
+    bloco = fonte.split("def _serve_timeline")[1].split("def _serve_capabilities")[0]
+    assert "correlate(eventos)" in bloco

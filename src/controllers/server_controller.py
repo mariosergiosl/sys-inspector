@@ -35,6 +35,8 @@ from src.core.ingest import IngestQueue, process_batch
 from src.core.retention import RetentionPolicy
 from src.core.notify import Notifier
 from src.core.capabilities import summarize, missing_for_scenarios
+from src.core.events import EventStore, events_from_capture
+from src.core.correlation import correlate
 from src.core.commands import CommandQueue, ALLOWED
 from src.core.tls import ensure_self_signed_cert
 from src.core.outbox import PATH_SLOT, PATH_INGEST, PATH_COMMAND_RESULT
@@ -122,6 +124,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
         elif self.path == '/log':
             self._serve_command_log(controller.commands)
+
+        elif self.path.startswith('/timeline'):
+            self._serve_timeline(controller)
 
         elif self.path == '/capabilities':
             self._serve_capabilities(controller)
@@ -691,6 +696,116 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                                       voltar="/history/%s" % agent_uuid
                                       ).encode("utf-8"))
 
+    # Icone por tipo de evento. Uma linha do tempo densa se le por forma antes
+    # de se ler por texto; sem distincao visual ela vira paragrafo.
+    ICONE_EVENTO = {
+        "process.start": ("&#9654;", "#7fb3d5"),
+        "network.connect": ("&#127760;", "#4ec9b0"),
+        "persistence.created": ("&#128204;", "#ffd166"),
+        "finding.raised": ("&#9888;", "#ff4d4d"),
+        "capture.taken": ("&#128248;", "#555"),
+        "auth.session": ("&#128273;", "#c586c0"),
+    }
+
+    def _serve_timeline(self, controller):
+        """
+        Tudo que aconteceu, em ordem, atravessando a frota.
+
+        E o artefato central de uma pericia distribuida, e o unico que responde
+        a pergunta que decide um laudo: o que veio ANTES. Cada captura, por mais
+        completa, e um retrato; ordem nao e propriedade de retrato.
+
+        A ordenacao usa o instante corrigido pelo desvio de relogio de cada
+        host. Sem isso a sequencia entre maquinas sai plausivel e errada, que e
+        pior que nao ter sequencia, porque parece resposta.
+        """
+        _, _, consulta = self.path.partition("?")
+        args = urlparse.parse_qs(consulta or "")
+        agente = (args.get("agent") or [None])[0]
+        limite = int((args.get("limit") or ["300"])[0])
+
+        eventos = controller.events.timeline(agent_uuid=agente, limit=limite)
+        stats = controller.events.stats()
+
+        # A correlacao roda sobre a MESMA janela que esta sendo exibida: uma
+        # conclusao tirada de material que o analista nao ve seria impossivel de
+        # conferir.
+        conclusoes = correlate(eventos)
+
+        nomes = {}
+        for a in (controller.db.get_fleet_status() or []):
+            nomes[a.get("uuid")] = a.get("hostname") or (a.get("uuid") or "")[:8]
+
+        topo = ""
+        if conclusoes:
+            itens = ""
+            for c in conclusoes[:10]:
+                itens += ("<div style='background:#2a1a1a;border-left:3px solid "
+                          "#ff4d4d;padding:10px 14px;margin-bottom:8px'>"
+                          "<b style='color:#ff4d4d'>%s</b>"
+                          "<div style='color:#bbb;font-size:12px;margin-top:4px'>%s</div>"
+                          "<div style='color:#6a9955;font-size:11px;margin-top:6px'>"
+                          "&#8627; %s</div></div>"
+                          % (_esc(c.title), _esc(c.description),
+                             _esc(c.recommendation)))
+            topo = ("<h3 style='font-weight:300;color:#ff4d4d;margin-bottom:2px'>"
+                    "Leitura da sequencia</h3>"
+                    "<p style='color:#777;font-size:11px;margin:0 0 10px'>"
+                    "Sinais que isolados nao justificariam acao e que, juntos, "
+                    "descrevem uma so coisa. Nenhuma destas afirmacoes conclui "
+                    "comprometimento: dizem o que foi observado e o que "
+                    "verificar.</p>%s<hr style='border:none;border-top:1px "
+                    "solid #2a2a2a;margin:22px 0'>" % itens)
+
+        linhas = ""
+        anterior = None
+        for ev in eventos:
+            icone, cor = self.ICONE_EVENTO.get(ev["type"], ("&#8226;", "#888"))
+            momento = datetime.datetime.fromtimestamp(
+                ev["corrected_ts"]).strftime("%H:%M:%S")
+
+            # Intervalo desde o evento anterior: e o que transforma uma lista em
+            # sequencia legivel. "4s depois" diz mais que dois horarios.
+            delta = ""
+            if anterior is not None:
+                d = int(ev["corrected_ts"] - anterior)
+                if d:
+                    delta = ("<span style='color:#666;font-size:10px'>"
+                             "+%ds</span>" % d)
+            anterior = ev["corrected_ts"]
+
+            desvio = ""
+            if ev.get("clock_offset"):
+                desvio = ("<span title='Relogio deste host desviava %ss; o "
+                          "horario exibido ja esta corrigido' "
+                          "style='color:#c586c0;font-size:10px'>&#9201;</span>"
+                          % ev["clock_offset"])
+
+            linhas += ("<tr class='item'>"
+                       "<td style='width:90px;color:#888'>%s %s</td>"
+                       "<td style='width:30px;color:%s'>%s</td>"
+                       "<td style='width:120px;color:#4ec9b0;font-size:11px'>%s</td>"
+                       "<td><code>%s</code></td>"
+                       "<td style='width:60px'>%s</td></tr>"
+                       % (momento, delta, cor, icone,
+                          _esc(nomes.get(ev["agent_uuid"], ev["agent_uuid"][:8])),
+                          _esc((ev.get("subject") or "")[:150]), desvio))
+
+        if not linhas:
+            linhas = ("<tr><td colspan='5' style='color:#555;padding:30px;"
+                      "text-align:center'>Nenhum evento ainda. A linha do tempo "
+                      "e derivada das capturas conforme elas chegam.</td></tr>")
+
+        corpo = (topo
+                 + "<p style='color:#777;font-size:12px'>%d eventos registrados. "
+                   "Exibindo os %d mais recentes da janela, em ordem cronologica "
+                   "corrigida pelo desvio de relogio de cada host.</p>"
+                   "<table><tbody>%s</tbody></table>"
+                   % (stats["total"], len(eventos), linhas))
+
+        self._set_headers()
+        self.wfile.write(self._pagina("Linha do tempo", corpo).encode("utf-8"))
+
     def _serve_capabilities(self, controller):
         """
         O que cada host consegue medir, e o que consegue exercitar.
@@ -1064,6 +1179,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 <a href="/log" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#128220; Command log</a>
                 <a href="/queue" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#128203; Fila</a>
                 <a href="/capabilities" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#129513; Capacidades</a>
+                <a href="/timeline" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#128337; Linha do tempo</a>
                 {len(agents)} AGENTS</div>
         </div>
         <table>
@@ -1096,6 +1212,8 @@ class ServerController:
         # Aviso ativo. Desligado por padrao: um alerta que sai sem alguem ter
         # pedido e um vazamento, nao uma comodidade.
         self.notifier = Notifier(config)
+        # Linha do tempo, ao lado das capturas e no mesmo banco.
+        self.events = EventStore(config['storage']['sqlite_path'])
         rede = config.get('network', {}) or {}
         self.public_url = (rede.get('public_url')
                            or "https://%s:%s" % (rede.get('bind_address', 'localhost'),
@@ -1199,11 +1317,30 @@ class ServerController:
                              politica.max_age_days, politica.max_total_mb,
                              politica.max_per_agent)
 
+        def _registrar_eventos(snap_id, agent_uuid, payload):
+            """
+            Deriva a linha do tempo da captura recem-gravada.
+
+            Acontece na ingestao porque e o unico momento em que o servidor ja
+            tem a chave e o dado junto; derivar sob demanda obrigaria a
+            decifrar tudo de novo a cada abertura da tela.
+            """
+            dados = self.decrypt(payload.get("bundle"))
+            if not dados:
+                return
+            desvio = float((payload.get("host") or {}).get("clock_offset", 0.0))
+            n = self.events.add(events_from_capture(dados, agent_uuid,
+                                                    snap_id, desvio))
+            if n:
+                self.logger.debug("[EVENTS] %d event(s) from capture %s",
+                                  n, snap_id)
+
         def _drain():
             ciclos = 0
             while not self.shutdown_event.is_set():
                 try:
-                    done = process_batch(self.queue, self.db)
+                    done = process_batch(self.queue, self.db,
+                                         on_stored=_registrar_eventos)
                     if done:
                         self.logger.info("[INGEST] %d capture(s) stored from the queue", done)
                 except Exception as e:

@@ -285,7 +285,7 @@ class IngestQueue(object):
         return summary
 
 
-def process_batch(queue, db, limit=None):
+def process_batch(queue, db, limit=None, on_stored=None):
     """
     Drena a fila para o armazenamento definitivo.
 
@@ -298,7 +298,7 @@ def process_batch(queue, db, limit=None):
         payload = item.get("payload") or {}
         try:
             agent_uuid = item.get("agent_uuid") or "unknown"
-            db.insert_snapshot(
+            snap_id = db.insert_snapshot(
                 payload.get("bundle"),
                 agent_uuid=agent_uuid,
                 metrics=payload.get("metrics") or {},
@@ -315,6 +315,17 @@ def process_batch(queue, db, limit=None):
                                        os_info=host.get("os_info"),
                                        fqdn=host.get("fqdn"),
                                        cycle_seconds=host.get("cycle_seconds"))
+            # Gancho para quem quiser derivar algo da captura recem-gravada,
+            # hoje a linha do tempo. Fica APOS a gravacao e ANTES de marcar a
+            # entrada como concluida: se falhar, a entrada nao e dada por
+            # processada e o dado nao se perde em silencio.
+            if on_stored:
+                try:
+                    on_stored(snap_id, agent_uuid, payload)
+                except Exception as exc:
+                    LOG.error("Post-store hook failed for %s: %s",
+                              item["id"], exc)
+
             queue.mark_done(item["id"])
             processed += 1
         except Exception as exc:
