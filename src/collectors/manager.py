@@ -133,6 +133,11 @@ def collect_findings():
         findings.extend(collect_persistence())
     except Exception as exc:
         logging.getLogger("CollectorMgr").error(f"[COLLECT] Persistence failed: {exc}")
+    try:
+        from src.collectors.hidden import collect_hidden
+        findings.extend(collect_hidden())
+    except Exception as exc:
+        logging.getLogger("CollectorMgr").error(f"[COLLECT] Hidden scan failed: {exc}")
     return sort_findings(dedupe_findings(findings))
 
 
