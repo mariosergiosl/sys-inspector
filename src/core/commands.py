@@ -57,6 +57,12 @@ DEFAULT_TTL = 3600
 # indefinidamente um estado de execucao que nao existe.
 STUCK_LIMIT = 600
 
+# Quanto se espera pelo desfecho antes de reentregar o pedido. Precisa ser maior
+# que a execucao mais demorada prevista (o cenario de teste roda por 300s), senao
+# o servidor reentregaria um comando que esta simplesmente em andamento, e o
+# agente responderia "ja executei" quando ainda nem terminou.
+RETRY_AFTER = 420
+
 
 class CommandQueue(object):
     """Fila de comandos por agente, preenchida pelo analista."""
@@ -145,10 +151,17 @@ class CommandQueue(object):
         entregues = []
         try:
             with closing(self._conn()) as conn:
+                # Entrega o que nunca saiu E o que saiu mas nao teve desfecho ha
+                # mais de RETRY_AFTER. Sem a reentrega, um agente que morresse
+                # logo apos receber levaria o pedido junto, em silencio. A
+                # duplicidade que isso poderia causar e barrada do outro lado:
+                # o agente registra o que ja executou e reconfirma sem repetir.
                 linhas = conn.execute(
                     "SELECT id, command, params, created_at FROM agent_commands "
-                    "WHERE agent_uuid = ? AND status = ? ORDER BY id ASC",
-                    (agent_uuid, ST_PENDING)).fetchall()
+                    "WHERE agent_uuid = ? AND (status = ? OR "
+                    "(status = ? AND delivered_at < ?)) ORDER BY id ASC",
+                    (agent_uuid, ST_PENDING, ST_SENT,
+                     agora - RETRY_AFTER)).fetchall()
 
                 for linha in linhas:
                     if agora - linha["created_at"] > self.ttl:

@@ -33,6 +33,7 @@ from src.core.crypto import load_public_key, encrypt_data
 from src.core.outbox import Outbox
 from src.core.custody import build_for_capture
 from src.core.commands import CMD_COLLECT, CMD_CHAOS_COLLECT, CMD_RESTART
+from src.core.executed import ExecutionLedger
 
 
 class DaemonController:
@@ -74,6 +75,10 @@ class DaemonController:
         if self.outbox.enabled:
             self.logger.info("[OUTBOX] Forwarding captures to %s",
                              self.outbox._base_url())
+
+        # Registro do que ja foi executado. Permite ao servidor reentregar um
+        # comando sem que ele rode duas vezes no host inspecionado.
+        self.ledger = ExecutionLedger(getattr(db_manager, "db_path", ":memory:"))
 
         # Origem da configuracao e a marca de tempo do arquivo, para reler o que
         # o operador mudar sem exigir restart.
@@ -206,26 +211,43 @@ class DaemonController:
         for cmd in comandos or []:
             nome = cmd.get("command")
             ident = cmd.get("id")
+
+            # Reentrega e esperada: o servidor insiste enquanto nao souber o
+            # desfecho, e e assim que um pedido deixa de se perder quando o
+            # agente morre logo depois de receber. O preco disso e o mesmo
+            # comando poder chegar duas vezes, e e aqui que ele e cobrado: um
+            # pedido ja executado e confirmado de novo, NUNCA repetido. Repetir
+            # significaria plantar o cenario de teste em cima de si mesmo ou
+            # reiniciar o agente no meio de uma captura.
+            anterior = self.ledger.already_done(ident)
+            if anterior is not None:
+                self.logger.info("[CMD] '%s' (#%s) ja executado; reconfirmando "
+                                 "sem repetir", nome, ident)
+                self.outbox.report_command(ident, True, anterior)
+                continue
+
             self.logger.info("[CMD] Executing '%s' requested by the analyst", nome)
             try:
                 if nome == CMD_COLLECT:
                     self.collect_and_store(engine, "on-demand")
                     self.outbox.deliver_once()
-                    self.outbox.report_command(
-                        ident, True,
-                        "captura de %ss concluida e entregue" % self.capture_duration)
+                    self._concluir(ident, nome,
+                                   "captura de %ss concluida e entregue"
+                                   % self.capture_duration)
 
                 elif nome == CMD_CHAOS_COLLECT:
                     saida = self._run_chaos(cmd.get("params") or {})
                     self.collect_and_store(engine, "chaos")
                     self.outbox.deliver_once()
-                    self.outbox.report_command(
-                        ident, True,
-                        "%s; captura de %ss entregue" % (saida, self.capture_duration))
+                    self._concluir(ident, nome,
+                                   "%s; captura de %ss entregue"
+                                   % (saida, self.capture_duration))
 
                 elif nome == CMD_RESTART:
-                    # Confirma ANTES de sair: depois do exit nao ha quem relate.
-                    self.outbox.report_command(ident, True, "restarting")
+                    # Anota e confirma ANTES de sair: depois do exit nao ha quem
+                    # relate, e sem o registro o pedido voltaria no proximo
+                    # check-in, deixando o agente num ciclo de reinicios.
+                    self._concluir(ident, nome, "restarting")
                     self.logger.warning("[CMD] Restart requested; stopping agent")
                     self.shutdown_event.set()
                     return
@@ -235,6 +257,18 @@ class DaemonController:
             except Exception as exc:
                 self.logger.error("[CMD] '%s' failed: %s", nome, exc)
                 self.outbox.report_command(ident, False, str(exc))
+
+    def _concluir(self, ident, nome, resultado):
+        """
+        Fecha um comando: anota localmente e so entao reporta ao servidor.
+
+        A ordem importa. Anotar primeiro garante que, se a confirmacao se perder
+        na rede e o servidor reentregar, o agente ja sabe que executou. A ordem
+        inversa deixaria justamente a janela que este mecanismo existe para
+        fechar.
+        """
+        self.ledger.remember(ident, nome, resultado)
+        self.outbox.report_command(ident, True, resultado)
 
     def _run_chaos(self, params):
         """
