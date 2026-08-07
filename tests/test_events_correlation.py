@@ -157,6 +157,66 @@ def test_a_finding_is_marked_as_observed_not_originated():
     assert ev["detail"]["observed_only"] is True
 
 
+def test_a_persistence_finding_also_becomes_a_persistence_event():
+    """
+    Um achado de persistencia (systemd, cron, ld.so.preload) tambem e um evento
+    de persistencia, nao so um achado generico. Sem isto, a regra de correlacao
+    temporal que le EV_PERSISTENCE nunca tinha material para rodar em campo: o
+    tipo de evento que ela precisa nao era gerado. Foi o que apareceu ao conferir
+    os eventos no lab (so process.start, finding.raised e capture.taken).
+    """
+    payload = {"timestamp": 5000, "findings": [
+        {"title": "ld.so.preload is present", "severity": "Critical",
+         "source": "persistence", "target": "/etc/ld.so.preload",
+         "technique": "T1574.006",
+         "evidence": {"meta": {"mtime": 4980}}}]}
+    eventos = events_from_capture(payload, "a")
+    tipos = [e["type"] for e in eventos]
+    assert EV_PERSISTENCE in tipos
+
+    ev = [e for e in eventos if e["type"] == EV_PERSISTENCE][0]
+    # Usa o mtime do artefato, mais preciso que o instante da captura.
+    assert ev["ts"] == 4980
+    assert ev["detail"]["from_mtime"] is True
+    assert ev["subject"] == "/etc/ld.so.preload"
+
+
+def test_a_non_persistence_finding_does_not_become_a_persistence_event():
+    payload = {"timestamp": 5000, "findings": [
+        {"title": "x", "severity": "High", "source": "ebpf"}]}
+    tipos = [e["type"] for e in events_from_capture(payload, "a")]
+    assert EV_PERSISTENCE not in tipos
+
+
+def test_persistence_without_mtime_falls_back_to_capture_time():
+    payload = {"timestamp": 5000, "findings": [
+        {"title": "cron", "severity": "High", "source": "persistence",
+         "target": "/etc/cron.d/evil"}]}
+    ev = [e for e in events_from_capture(payload, "a")
+          if e["type"] == EV_PERSISTENCE][0]
+    assert ev["ts"] == 5000
+    assert ev["detail"]["from_mtime"] is False
+
+
+def test_persistence_event_enables_the_temporal_rule():
+    """
+    O fim pratico: com o evento de persistencia gerado, a regra de ordem
+    ("persistencia criada logo apos atividade suspeita") passa a ter o que ler.
+    Antes ela era codigo sem material em campo.
+    """
+    payload = {"timestamp": 1004,
+               "processes": {"1": {"pid": 1, "cmd": "/tmp/shell",
+                                   "start_time": 1000, "anomaly_score": 90}},
+               "findings": [
+                   {"title": "cron", "severity": "Critical",
+                    "source": "persistence", "target": "/etc/cron.d/evil",
+                    "evidence": {"meta": {"mtime": 1004}}}]}
+    eventos = events_from_capture(payload, "a")
+    achados = rule_persistence_after_activity(eventos)
+    assert achados
+    assert "Persistencia criada logo apos" in achados[0].title
+
+
 # ------------------------------------------------------------------------------
 # CORRELACAO: A CONCLUSAO QUE NENHUM SINAL SUSTENTA SOZINHO
 # ------------------------------------------------------------------------------

@@ -360,6 +360,28 @@ def events_from_capture(payload, agent_uuid, capture_id=None, clock_offset=0.0):
             severity=f.get("severity") or "",
             clock_offset=clock_offset, capture_id=capture_id))
 
+        # Um achado de PERSISTENCIA tambem e um evento de persistencia, e nao so
+        # um achado generico. Sem esta linha, a deteccao de persistencia
+        # (systemd, cron, ld.so.preload) so existia como finding.raised, e a
+        # regra de correlacao temporal que depende de EV_PERSISTENCE
+        # ("o cron surgiu logo depois do shell abrir") nunca tinha material para
+        # rodar em campo: o tipo de evento que ela le nao era gerado.
+        #
+        # O instante do artefato, quando conhecido (mtime na evidencia), e mais
+        # preciso que o da captura: e quando o artefato foi criado, nao quando
+        # passou a ser observado. A regra de ordem se beneficia disso.
+        if f.get("source") == "persistence":
+            meta = (f.get("evidence") or {}).get("meta") or {}
+            quando = meta.get("mtime") or ts_captura
+            eventos.append(make_event(
+                float(quando), EV_PERSISTENCE, agent_uuid,
+                subject=(f.get("target") or f.get("title") or "")[:300],
+                detail={"technique": f.get("technique"),
+                        "title": f.get("title"),
+                        "from_mtime": bool(meta.get("mtime"))},
+                severity=f.get("severity") or "",
+                clock_offset=clock_offset, capture_id=capture_id))
+
     eventos.append(make_event(
         ts_captura, EV_CAPTURE, agent_uuid,
         subject="captura #%s" % (capture_id or "?"),
