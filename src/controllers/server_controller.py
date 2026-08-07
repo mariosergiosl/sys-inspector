@@ -120,6 +120,24 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         elif self.path == '/log':
             self._serve_command_log(controller.commands)
 
+        elif self.path == '/queue':
+            self._serve_queue(controller)
+
+        elif self.path.startswith('/priority/'):
+            # /priority/<uuid>/<valor>: reposiciona um agente na fila.
+            partes = self.path.strip('/').split('/')
+            if len(partes) == 3:
+                try:
+                    controller.queue.set_priority(partes[1], int(partes[2]))
+                    controller.logger.info("[QUEUE] Priority of %s set to %s",
+                                           partes[1], partes[2])
+                except Exception as e:
+                    controller.logger.error("[QUEUE] Could not set priority: %s", e)
+            self.send_response(302)
+            self.send_header("Location", "/queue")
+            self.end_headers()
+            return
+
         elif self.path.startswith('/history/'):
             self._serve_history(controller, self.path.split('/')[-1])
 
@@ -461,6 +479,56 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                                       voltar="/history/%s" % agent_uuid
                                       ).encode("utf-8"))
 
+    def _serve_queue(self, controller):
+        """
+        Situacao da fila de ingestao e ordem de atendimento dos agentes.
+
+        A fila existe para o servidor nao ser derrubado por uma frota inteira
+        reportando ao mesmo tempo. Numa investigacao, porem, um host importa
+        mais que os outros: esta tela permite coloca-lo na frente sem parar a
+        coleta dos demais.
+
+        Numero MENOR e atendido primeiro; o padrao e 50, deixando espaco tanto
+        para adiantar quanto para atrasar um agente.
+        """
+        stats = controller.queue.stats()
+        agentes = controller.db.get_fleet_status() or []
+
+        linhas = ""
+        for a in agentes:
+            uuid = a.get("uuid") or a.get("agent_uuid") or ""
+            pendentes = (stats["by_agent"].get(uuid) or {}).get("pending", 0)
+            prioridade = controller.queue.get_priority(uuid)
+
+            botoes = ""
+            for valor, rotulo, titulo in (
+                    (10, "&#9650;", "Investigacao: atende este agente primeiro"),
+                    (50, "&#9679;", "Padrao"),
+                    (90, "&#9660;", "Baixa: atende depois dos demais")):
+                ativo = ("background:#333;" if prioridade == valor else "")
+                botoes += ("<a href='/priority/%s/%s' title='%s' class='btn' "
+                           "style='margin-left:4px;padding:3px 8px;%s'>%s</a>"
+                           % (uuid, valor, titulo, ativo, rotulo))
+
+            linhas += ("<tr class='item'><td>%s</td>"
+                       "<td style='color:#666;font-family:monospace;font-size:10px'>%s</td>"
+                       "<td style='color:%s;font-weight:bold'>%s</td>"
+                       "<td>%s</td><td>%s</td></tr>"
+                       % (_esc(a.get("hostname") or "?"), _esc(uuid[:8]),
+                          "#ffd166" if pendentes else "#666", pendentes,
+                          prioridade, botoes))
+
+        corpo = ("<p style='color:#777;font-size:12px'>Aguardando: <b>%d</b> "
+                 "&nbsp;|&nbsp; processadas: %d &nbsp;|&nbsp; com falha: %d<br>"
+                 "Numero menor e atendido primeiro. O padrao e 50.</p>"
+                 "<table><thead><tr><th>Agente</th><th>UUID</th>"
+                 "<th>Na fila</th><th>Prioridade</th><th>Ordem</th></tr></thead>"
+                 "<tbody>%s</tbody></table>"
+                 % (stats["pending"], stats["done"], stats["failed"], linhas))
+
+        self._set_headers()
+        self.wfile.write(self._pagina("Fila de ingestao", corpo).encode("utf-8"))
+
     def _serve_command_log(self, commands):
         """
         Registro de todos os pedidos feitos aos agentes.
@@ -709,6 +777,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             <h1>Sys-Inspector <span style="color:#0078d4; font-weight:bold">Manager</span></h1>
             <div style="font-size:0.9em; color:#aaa; font-weight:bold">
                 <a href="/log" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#128220; Command log</a>
+                <a href="/queue" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#128203; Fila</a>
                 {len(agents)} AGENTS</div>
         </div>
         <table>
