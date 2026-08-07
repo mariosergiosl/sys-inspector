@@ -269,13 +269,22 @@ def process_batch(queue, db, limit=None):
     for item in queue.next_batch(limit):
         payload = item.get("payload") or {}
         try:
+            agent_uuid = item.get("agent_uuid") or "unknown"
             db.insert_snapshot(
                 payload.get("bundle"),
-                agent_uuid=item.get("agent_uuid") or "unknown",
+                agent_uuid=agent_uuid,
                 metrics=payload.get("metrics") or {},
                 custody=payload.get("custody") or {},
                 findings_summary=payload.get("findings_summary") or {},
             )
+            # Registra quem e o host, para a frota nao listar tudo como
+            # "unknown": esses campos viajam em claro justamente para isso.
+            host = payload.get("host") or {}
+            if host:
+                db.update_agent_status(agent_uuid, "ONLINE",
+                                       hostname=host.get("hostname"),
+                                       ip=host.get("ip_address"),
+                                       os_info=host.get("os_info"))
             queue.mark_done(item["id"])
             processed += 1
         except Exception as exc:
