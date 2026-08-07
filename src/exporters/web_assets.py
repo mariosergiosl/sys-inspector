@@ -348,7 +348,10 @@ JS_BLOCK = r"""
         isLive: false,
         expandedPids: new Set(),
         detailsOpenPids: new Set(),
-        currentFilter: ""
+        currentFilter: "",
+        // Ordem original da arvore, guardada antes da primeira reordenacao para
+        // que o botao de reset devolva a hierarquia pai-filho sem recarregar.
+        originalOrder: null
     };
 
     // --- TREE INTERACTION ---
@@ -494,10 +497,52 @@ JS_BLOCK = r"""
         }
     }
 
+    function resetTree() {
+        // Devolve a arvore ao estado inicial SEM recarregar a pagina.
+        //
+        // Antes isto era um location.reload(): alem de reprocessar um relatorio
+        // que passa de 10MB, o recarregamento voltava para a aba padrao, de modo
+        // que quem pedia "resetar a arvore" era jogado para fora dela.
+        var tbody = document.querySelector(".table-container tbody");
+        if (tbody && state.originalOrder) {
+            state.originalOrder.forEach(function (n) { tbody.appendChild(n); });
+        }
+
+        state.expandedPids.clear();
+        state.detailsOpenPids.clear();
+        state.currentFilter = "";
+
+        var busca = document.getElementById("search");
+        if (busca) busca.value = "";
+
+        document.querySelectorAll(".proc-row").forEach(function (r) {
+            r.style.display = "";
+            if (r.classList.contains("root")) r.classList.remove("hidden");
+            else r.classList.add("hidden");
+            var btn = document.getElementById("b-" + r.dataset.pid);
+            if (btn) { btn.classList.remove("disabled"); btn.innerText = "+"; }
+        });
+        document.querySelectorAll(".det-row").forEach(function (d) {
+            d.classList.remove("show");
+        });
+
+        document.querySelectorAll(".filter-btn").forEach(function (b) {
+            b.classList.remove("active");
+        });
+        document.querySelectorAll(".btn-act").forEach(function (b) {
+            b.classList.remove("sort-active");
+        });
+    }
+
     function sortView(metric, el) {
         var tbody = document.querySelector(".table-container tbody");
         if (!tbody) return;
         var rows = Array.from(tbody.querySelectorAll(".proc-row"));
+        // A ordem hierarquica so existe no DOM inicial: se for perdida sem
+        // copia, a unica forma de recupera-la seria recarregar a pagina.
+        if (state.originalOrder === null) {
+            state.originalOrder = Array.from(tbody.children);
+        }
         rows.forEach(r => {
             r.classList.remove('hidden'); r.style.display="";
             var btn=document.getElementById('b-'+r.dataset.pid);
@@ -702,7 +747,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
                 <div class="leg-grp">
                     <span class="leg-lbl">Process By</span>
-                    <span class="btn-act" onclick="location.reload()" title="Reset Tree View">⟳</span>
+                    <span class="btn-act" onclick="resetTree()" title="Reset Tree View">⟳</span>
                     <span class="btn-act" onclick="sortView('cpu', this)" title="Top CPU Usage">🔥</span>
                     <span class="btn-act" onclick="sortView('io', this)" title="Top Disk I/O">💾</span>
                     <span class="btn-act" onclick="sortView('mem', this)" title="Top Memory (RSS)">🧠</span>

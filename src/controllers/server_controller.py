@@ -97,6 +97,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # --- DASHBOARD ---
             self._serve_dashboard(controller.db, controller.commands)
 
+        elif self.path == '/log':
+            self._serve_command_log(controller.commands)
+
         elif self.path.startswith('/cmd/'):
             # /cmd/<acao>/<uuid>: o analista enfileira; nada e executado aqui.
             partes = self.path.strip('/').split('/')
@@ -286,6 +289,72 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         else:
             self._set_headers(status=404)
 
+    def _serve_command_log(self, commands):
+        """
+        Registro de todos os pedidos feitos aos agentes.
+
+        Uma acao pedida a distancia precisa deixar rastro auditavel: quem pediu,
+        quando entrou na fila, quando o agente recolheu, quando terminou e qual
+        foi o resultado. Sem isso nao ha como responder "esse comando chegou a
+        rodar?", que foi exatamente a duvida que motivou esta tela.
+        """
+        commands.expire_stuck()
+        registros = commands.list_for(limit=200)
+
+        cores = {"PENDING": "#7fb3d5", "SENT": "#ffd166",
+                 "DONE": "#6bcB77", "FAILED": "#ff4d4d"}
+
+        def _hora(valor):
+            if not valor:
+                return "-"
+            return datetime.datetime.fromtimestamp(valor).strftime("%H:%M:%S")
+
+        linhas = ""
+        for r in registros:
+            cor = cores.get(r["status"], "#888")
+            duracao = "-"
+            if r.get("delivered_at") and r.get("finished_at"):
+                duracao = "%ds" % int(r["finished_at"] - r["delivered_at"])
+            espera = "-"
+            if r.get("delivered_at"):
+                espera = "%ds" % int(r["delivered_at"] - r["created_at"])
+            linhas += ("<tr style='background:#252526; border-bottom:1px solid #333'>"
+                       "<td style='color:#777'>%s</td>"
+                       "<td style='color:#4ec9b0'>%s</td>"
+                       "<td style='font-family:monospace; font-size:11px; color:#999'>%s</td>"
+                       "<td style='color:%s; font-weight:bold'>%s</td>"
+                       "<td>%s</td><td>%s</td><td>%s</td>"
+                       "<td style='color:#888'>%s</td>"
+                       "<td style='color:#aaa; font-size:11px'>%s</td></tr>"
+                       % (r["id"], r["command"], (r["agent_uuid"] or "")[:8],
+                          cor, r["status"], _hora(r["created_at"]),
+                          espera, duracao, r.get("requested_by") or "-",
+                          (r.get("result") or "")[:90]))
+
+        if not linhas:
+            linhas = ("<tr><td colspan='9' style='color:#555; padding:30px; "
+                      "text-align:center'>Nenhum pedido registrado.</td></tr>")
+
+        html = ("<html><head><meta charset='UTF-8'><title>Command log</title>"
+                "<meta http-equiv='refresh' content='15'>"
+                "<style>body{background:#121212;color:#e0e0e0;"
+                "font-family:'Segoe UI',sans-serif;padding:30px}"
+                "table{width:100%;border-collapse:separate;border-spacing:0 6px}"
+                "th{text-align:left;color:#777;text-transform:uppercase;"
+                "font-size:10px;padding:0 10px 8px}td{padding:8px 10px}"
+                "a{color:#4ec9b0;text-decoration:none;border:1px solid #4ec9b0;"
+                "border-radius:4px;padding:5px 14px;font-size:12px}</style></head>"
+                "<body><a href='/'>&larr; Fleet</a>"
+                "<h2 style='font-weight:300'>Command log</h2>"
+                "<p style='color:#777;font-size:12px'>Espera = tempo ate o agente "
+                "recolher o pedido. Duracao = tempo de execucao no agente.</p>"
+                "<table><thead><tr><th>#</th><th>Acao</th><th>Agente</th>"
+                "<th>Estado</th><th>Pedido</th><th>Espera</th><th>Duracao</th>"
+                "<th>Solicitante</th><th>Resultado</th></tr></thead><tbody>"
+                + linhas + "</tbody></table></body></html>")
+        self._set_headers()
+        self.wfile.write(html.encode("utf-8"))
+
     def _serve_dashboard(self, db, db_commands=None):
         """Renders the Server Manager Dashboard HTML."""
         # Envia a status line e os headers antes do corpo. Sem isto a resposta
@@ -465,7 +534,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         </head><body>
         <div class="header">
             <h1>Sys-Inspector <span style="color:#0078d4; font-weight:bold">Manager</span></h1>
-            <div style="font-size:0.9em; color:#aaa; font-weight:bold">{len(agents)} AGENTS</div>
+            <div style="font-size:0.9em; color:#aaa; font-weight:bold">
+                <a href="/log" style="color:#4ec9b0; text-decoration:none; border:1px solid #444; border-radius:4px; padding:4px 10px; margin-right:12px; font-size:11px">&#128220; Command log</a>
+                {len(agents)} AGENTS</div>
         </div>
         <table>
             <thead><tr><th>Hostname / UUID</th><th>IP Address</th><th>Crit</th><th>High</th><th>Med</th><th>Low</th><th>Last Seen</th><th>Next</th><th>Status</th><th>Action</th></tr></thead>

@@ -50,6 +50,13 @@ ST_FAILED = "FAILED"
 # contexto que o motivou nao existe mais.
 DEFAULT_TTL = 3600
 
+# Tempo maximo que um comando pode ficar entregue sem desfecho. Uma captura sob
+# demanda leva poucos minutos; passado este limite a hipotese realista nao e
+# "ainda esta rodando", e sim que o agente morreu, foi reiniciado ou roda uma
+# versao que nem entende o pedido. Melhor dizer isso ao analista do que exibir
+# indefinidamente um estado de execucao que nao existe.
+STUCK_LIMIT = 600
+
 
 class CommandQueue(object):
     """Fila de comandos por agente, preenchida pelo analista."""
@@ -183,6 +190,30 @@ class CommandQueue(object):
                 conn.commit()
         except Exception as exc:
             LOG.error("Recording command %s outcome failed: %s", command_id, exc)
+
+    def expire_stuck(self, limite=STUCK_LIMIT):
+        """
+        Fecha comandos entregues que nunca reportaram desfecho.
+
+        Acontece quando o agente e reiniciado ou morre no meio da execucao: o
+        pedido fica eternamente "em execucao" e o analista nunca sabe se rodou.
+        Marcar como falho com o motivo e mais honesto do que deixar um estado
+        que nao corresponde a nada.
+        """
+        limiar = time.time() - limite
+        try:
+            with closing(self._conn()) as conn:
+                cur = conn.execute(
+                    "UPDATE agent_commands SET status = ?, finished_at = ?, "
+                    "result = ? WHERE status = ? AND delivered_at < ?",
+                    (ST_FAILED, time.time(),
+                     "sem retorno do agente (provavel reinicio durante a execucao)",
+                     ST_SENT, limiar))
+                conn.commit()
+                return cur.rowcount
+        except Exception as exc:
+            LOG.error("Expiring stuck commands failed: %s", exc)
+            return 0
 
     def pending_count(self, agent_uuid):
         """Quantos pedidos ainda aguardam o agente perguntar."""
