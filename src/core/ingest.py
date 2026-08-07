@@ -284,7 +284,8 @@ def process_batch(queue, db, limit=None):
                 db.update_agent_status(agent_uuid, "ONLINE",
                                        hostname=host.get("hostname"),
                                        ip=host.get("ip_address"),
-                                       os_info=host.get("os_info"))
+                                       os_info=host.get("os_info"),
+                                       fqdn=host.get("fqdn"))
             queue.mark_done(item["id"])
             processed += 1
         except Exception as exc:

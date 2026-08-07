@@ -273,13 +273,24 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 # Mostra a hora LOCAL do servidor em destaque, que e a que o
                 # analista compara com o relogio dele, e mantem o UTC ao lado
                 # em texto menor, porque um laudo nao pode ter horario ambiguo.
+                # A coluna mostra a hora LOCAL curta, que e a que o analista
+                # compara com o relogio dele. O carimbo completo em UTC, que
+                # nao pode faltar num laudo, vai em letra miuda junto do host.
                 local = last_ts + (datetime.datetime.now() - datetime.datetime.utcnow())
-                seen = ("<b>%s</b> <span style='color:#666; font-size:10px'>"
-                        "(%s UTC &middot; %s)</span>"
-                        % (local.strftime("%Y-%m-%d %H:%M:%S"),
-                           last_ts.strftime("%H:%M:%S"), _human_age(idade)))
+                seen = local.strftime("%H:%M:%S")
+                seen_full = "%s UTC (%s)" % (
+                    last_ts.strftime("%Y-%m-%d %H:%M:%S"), _human_age(idade))
+                seen_full = ""
             except Exception:
                 is_online = str(a.get('status', '')).upper() == 'ONLINE'
+                seen_full = ""
+
+            fqdn = a.get('fqdn') or ""
+            # Mostra o FQDN so quando acrescenta informacao ao nome curto.
+            fqdn_html = ("<br><small style='color:#777; font-family:monospace'>%s</small>"
+                         % fqdn) if fqdn and fqdn != host else ""
+            seen_html = ("<br><small style='color:#666; font-family:monospace'>%s</small>"
+                         % seen_full) if seen_full else ""
 
             # Contagem por severidade, vinda em claro com a captura.
             findings = a.get('findings') or {}
@@ -306,6 +317,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 <td>
                     <a href='/agent/{uuid}' style='color:#4ec9b0; font-size:1.1em; font-weight:bold; text-decoration:none;'>{host}</a>
                     <br><small style='color:#666; font-family:monospace'>{uuid}</small>
+                    {fqdn_html}{seen_html}
                 </td>
                 <td style='color:#ccc'>{ip}</td>
                 {sev_cells}

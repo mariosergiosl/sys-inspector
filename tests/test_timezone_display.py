@@ -37,14 +37,32 @@ def test_comparison_uses_utc(codigo):
     assert "datetime.datetime.now() - last_ts" not in codigo
 
 
-def test_local_time_is_the_prominent_value(codigo):
+def test_last_seen_column_shows_short_local_time(codigo):
     """
-    O analista compara com o relogio dele, entao a hora LOCAL do servidor vem
-    em destaque; o UTC fica ao lado, menor, para o laudo nao ficar ambiguo.
+    A coluna traz a hora local curta, que e a que o analista compara com o
+    relogio dele, sem obriga-lo a converter fuso de cabeca.
     """
     assert "datetime.datetime.now() - datetime.datetime.utcnow()" in codigo
-    assert "UTC" in codigo
-    assert "<b>%s</b>" in codigo
+    assert 'local.strftime("%H:%M:%S")' in codigo
+
+
+def test_full_utc_stamp_is_kept_in_small_print(codigo):
+    """
+    O carimbo completo em UTC nao pode sumir: num laudo o horario precisa ser
+    absoluto e sem ambiguidade. Ele fica em letra miuda junto do host.
+    """
+    assert "seen_full" in codigo
+    assert "UTC (%s)" in codigo
+    assert "seen_html" in codigo
+
+
+def test_fqdn_is_shown_when_it_adds_information(codigo):
+    """
+    O FQDN identifica o host no dominio; exibi-lo quando e igual ao nome curto
+    so repetiria a mesma informacao.
+    """
+    assert "fqdn_html" in codigo
+    assert "fqdn != host" in codigo
 
 
 def test_relative_age_is_shown(codigo):

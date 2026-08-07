@@ -144,6 +144,13 @@ class DatabaseManager:
                         pass  # ja existe
 
                 # 3. Indexes
+                # FQDN do agente, em claro como os demais metadados de
+                # inventario. ALTER guardado: bancos antigos ganham a coluna.
+                try:
+                    conn.execute("ALTER TABLE agents ADD COLUMN fqdn TEXT")
+                except Exception:
+                    pass
+
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_snap_synced ON snapshots(synced)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_snap_agent_ts ON snapshots(agent_uuid, timestamp)")
 
@@ -259,7 +266,8 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Mark Synced Failed: {e}")
 
-    def update_agent_status(self, uuid, status, hostname=None, ip=None, os_info=None):
+    def update_agent_status(self, uuid, status, hostname=None, ip=None,
+                            os_info=None, fqdn=None):
         try:
             with closing(self._get_conn()) as conn:
                 sql = "UPDATE agents SET status=?, last_seen=CURRENT_TIMESTAMP"
@@ -274,6 +282,9 @@ class DatabaseManager:
                 if os_info:
                     sql += ", os_info=?"
                     params.append(os_info)
+                if fqdn:
+                    sql += ", fqdn=?"
+                    params.append(fqdn)
 
                 sql += " WHERE uuid=?"
                 params.append(uuid)
@@ -380,7 +391,7 @@ class DatabaseManager:
             with closing(self._get_conn()) as conn:
                 cursor = conn.execute("""
                     SELECT a.uuid, a.hostname, a.ip_address, a.os_info,
-                           a.status, a.last_seen,
+                           a.fqdn, a.status, a.last_seen,
                            s.timestamp AS last_capture,
                            s.alert_score, s.is_alert, s.cpu_avg,
                            s.mem_used_mb, s.pids_count, s.findings_summary

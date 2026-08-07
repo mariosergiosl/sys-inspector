@@ -165,7 +165,15 @@ class Outbox(object):
                         break
         except Exception:
             pass
-        return {"hostname": hostname, "ip_address": address, "os_info": os_info}
+        # O FQDN identifica o host no dominio, e frequentemente e o nome que
+        # aparece em inventarios e chamados; o hostname curto sozinho pode ser
+        # ambiguo entre redes.
+        try:
+            fqdn = socket.getfqdn()
+        except Exception:
+            fqdn = ""
+        return {"hostname": hostname, "ip_address": address,
+                "os_info": os_info, "fqdn": fqdn}
 
     def request_slot(self, pending):
         """

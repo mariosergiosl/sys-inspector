@@ -606,6 +606,22 @@ def render_os_block(os_data, hw_data, agent_uuid=None):
     """
     html = "<div class='kv-list'>"
     html += f"<div class='kv'><span class='kv-k'>Hostname</span><span class='kv-v'>{_esc(os_data.get('hostname'))}</span></div>"
+
+    # Um host costuma ter mais de um nome (FQDN, aliases de /etc/hosts, DNS
+    # reverso por interface). Numa pericia isso importa: o mesmo host aparece
+    # com nomes diferentes nos logs de sistemas diferentes, e correlacionar
+    # esses registros exige conhecer todos.
+    fqdn = os_data.get('fqdn') or ''
+    nomes = [n for n in (os_data.get('hostnames') or [])
+             if n and n != os_data.get('hostname')]
+    if fqdn and fqdn != os_data.get('hostname'):
+        html += (f"<div class='kv'><span class='kv-k'>FQDN</span>"
+                 f"<span class='kv-v'>{_esc(fqdn)}</span></div>")
+    outros = [n for n in nomes if n != fqdn]
+    if outros:
+        html += (f"<div class='kv'><span class='kv-k'>Other names</span>"
+                 f"<span class='kv-v' style='font-size:11px'>{_esc(', '.join(outros))}</span></div>")
+
     if agent_uuid:
         html += (f"<div class='kv'><span class='kv-k'>Agent UUID</span>"
                  f"<span class='kv-v' style='font-family:monospace; font-size:11px'>{_esc(agent_uuid)}</span></div>")
