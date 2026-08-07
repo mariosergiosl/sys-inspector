@@ -30,6 +30,8 @@ from socketserver import ThreadingMixIn
 from src.exporters.html_report import generate_report
 from src.collectors.process_tree import ProcessTree, ProcessNode
 from src.core.crypto import load_private_key, decrypt_data
+from src.core.ingest import IngestQueue, process_batch
+from src.core.outbox import PATH_SLOT, PATH_INGEST
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -113,9 +115,60 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             self._set_headers(status=404)
             self.wfile.write(b"Not Found")
 
+    def _read_json(self):
+        """Le o corpo da requisicao como JSON; None se invalido."""
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            return json.loads(self.rfile.read(length)) if length else {}
+        except Exception:
+            return None
+
+    def _reply(self, payload, status=200):
+        self._set_headers(status=status, content_type="application/json")
+        self.wfile.write(json.dumps(payload).encode('utf-8'))
+
+    def _authorized(self, controller):
+        """
+        Confere o token compartilhado enviado pelo agente.
+
+        Sem token configurado no servidor a ingestao fica ABERTA, o que so faz
+        sentido em laboratorio; o log avisa para isso nao passar despercebido.
+        """
+        expected = controller.ingest_token
+        if not expected:
+            return True
+        header = self.headers.get('Authorization', '')
+        return header == ('Bearer ' + expected)
+
     def do_POST(self):
         # --- API INGESTION ---
         controller = self.server.controller
+
+        # Rotas versionadas do transporte (Fase 2). O servidor controla a fila:
+        # o agente pergunta quanto pode enviar antes de despejar o acumulo.
+        if self.path in (PATH_SLOT, PATH_INGEST):
+            if not self._authorized(controller):
+                self._reply({"status": "unauthorized"}, status=401)
+                return
+
+            data = self._read_json()
+            if data is None:
+                self._reply({"status": "bad_request"}, status=400)
+                return
+
+            agent_uuid = data.get('agent_uuid') or self.headers.get('X-Agent-Id') or 'remote'
+
+            if self.path == PATH_SLOT:
+                self._reply(controller.queue.grant_slots(agent_uuid, data.get('pending', 0)))
+                return
+
+            result = controller.queue.enqueue(agent_uuid, data, origin="remote")
+            if result == "error":
+                self._reply({"status": "error"}, status=500)
+                return
+            controller.logger.info("[INGEST] %s from %s", result, agent_uuid)
+            self._reply({"status": result}, status=201 if result == "received" else 200)
+            return
 
         if self.path == '/upload':
             try:
@@ -223,6 +276,16 @@ class ServerController:
         self.shutdown_event = shutdown_event
         self.logger = logging.getLogger("ServerCtrl")
 
+        # Fila de ingestao: TODA captura passa por ela antes de virar evidencia
+        # guardada, venha da rede ou da coleta local. Um so mecanismo para os
+        # modos server e live.
+        self.queue = IngestQueue(config['storage']['sqlite_path'])
+        self.ingest_token = (config.get('server', {}) or {}).get('auth_token', '') or ''
+        if not self.ingest_token:
+            self.logger.warning(
+                "[INGEST] No auth_token configured: ingestion is OPEN. Set "
+                "server.auth_token before using this outside a lab.")
+
         # Modelo unico cifrado: para renderizar o snapshot de um agente, o
         # server descriptografa com a chave privada local, se presente. Num
         # cenario zero-knowledge a chave pode nao existir aqui (o analista
@@ -257,6 +320,22 @@ class ServerController:
         t_server = threading.Thread(target=server.serve_forever)
         t_server.daemon = True
         t_server.start()
+
+        # Processador da fila: drena para o armazenamento definitivo em ritmo
+        # proprio, para uma rajada de entregas nao bloquear quem esta recebendo.
+        def _drain():
+            while not self.shutdown_event.is_set():
+                try:
+                    done = process_batch(self.queue, self.db)
+                    if done:
+                        self.logger.info("[INGEST] %d capture(s) stored from the queue", done)
+                except Exception as e:
+                    self.logger.error(f"[INGEST] Queue processing error: {e}")
+                self.shutdown_event.wait(3)
+
+        t_queue = threading.Thread(target=_drain)
+        t_queue.daemon = True
+        t_queue.start()
 
         self.logger.info(f"[HTTP] Server Manager listening on port {port}")
         self.logger.info("[INFO] Dashboard available at http://localhost:" + str(port))

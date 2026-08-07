@@ -289,12 +289,34 @@ class DatabaseManager:
     def get_pending_snapshots(self, limit=50):
         try:
             with closing(self._get_conn()) as conn:
+                # Leva junto metricas, custodia e resumo de achados: o servidor
+                # precisa deles para montar a triagem da frota sem
+                # descriptografar, e a custodia carrega o digest que identifica
+                # a captura de forma idempotente no reenvio.
                 cursor = conn.execute("""
-                    SELECT id, json_blob FROM snapshots
+                    SELECT id, json_blob, cpu_avg, mem_used_mb, pids_count,
+                           alert_score, custody, findings_summary
+                    FROM snapshots
                     WHERE synced=0
                     ORDER BY id ASC LIMIT ?
                 """, (limit,))
-                return [{'id': r['id'], 'data': json.loads(r['json_blob'])} for r in cursor]
+                pending = []
+                for r in cursor:
+                    def _load(raw):
+                        try:
+                            return json.loads(raw) if raw else {}
+                        except Exception:
+                            return {}
+                    pending.append({
+                        'id': r['id'],
+                        'data': json.loads(r['json_blob']),
+                        'metrics': {'cpu': r['cpu_avg'], 'mem': r['mem_used_mb'],
+                                    'pids': r['pids_count'],
+                                    'score': r['alert_score']},
+                        'custody': _load(r['custody']),
+                        'findings_summary': _load(r['findings_summary']),
+                    })
+                return pending
         except Exception as e:
             self.logger.error(f"Get Pending Failed: {e}")
             return []
