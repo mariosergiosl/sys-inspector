@@ -265,7 +265,14 @@ class DaemonController:
         """
         self.logger.info(f"[CYCLE #{cycle_id}] Starting Capture Phase ({self.capture_duration}s)...")
 
-        # A. Start eBPF Polling
+        # A. Cada captura precisa descrever a janela dela, e nao a soma de tudo
+        # que ja passou pelo agente. O motor e reaproveitado entre ciclos para
+        # evitar recompilar os probes, mas a arvore que ele carrega tem que
+        # comecar limpa: sem isso o laudo lista processos ha muito encerrados e a
+        # comparacao entre capturas nunca acusa desaparecimento.
+        engine.tree.reset()
+
+        # B. Start eBPF Polling
         engine.start()
 
         # Wait for capture duration (responsive sleep)

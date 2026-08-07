@@ -419,60 +419,124 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Capture not found or could not be decrypted.")
             return
 
+        # Momento de cada captura: comparar "#467 com #469" nao diz nada sobre
+        # o intervalo, e o intervalo e o que da sentido a diferenca.
+        momentos = dict((c["id"], c["timestamp"]) for c in
+                        controller.db.get_history(0, time.time(),
+                                                  agent_filter=agent_uuid))
+        ts_a = momentos.get(id_a)
+        ts_b = momentos.get(id_b)
+
         resultado = diff_snapshots(antes, depois)
         resumo = resultado["summary"]
 
-        def _tabela_procs(itens, cor, rotulo):
-            if not itens:
-                return ""
-            linhas = ""
-            for p in itens[:200]:
-                mudancas = ""
-                for campo, val in (p.get("changes") or {}).items():
-                    mudancas += ("<div style='color:#888;font-size:11px'>%s: "
-                                 "<code>%s</code> &rarr; <code>%s</code></div>"
-                                 % (_esc(campo), _esc(val["antes"]),
-                                    _esc(val["depois"])))
-                linhas += ("<tr class='item'><td style='color:%s'>%s</td>"
-                           "<td>%s</td><td><code>%s</code>%s</td></tr>"
-                           % (cor, p.get("pid"), _esc(p.get("name")),
-                              _esc((p.get("cmdline") or "")[:160]), mudancas))
-            return ("<h3 style='font-weight:300;color:%s'>%s (%d)</h3>"
-                    "<table><tbody>%s</tbody></table>"
-                    % (cor, rotulo, len(itens), linhas))
+        def _linha_proc(p, cor):
+            """
+            Uma linha de processo com o que basta para julgar sem abrir o laudo.
 
-        def _tabela_findings(itens, cor, rotulo):
-            if not itens:
-                return ""
-            linhas = ""
-            for f in itens[:200]:
-                linhas += ("<tr class='item'><td style='color:%s'>%s</td>"
-                           "<td>%s</td></tr>"
-                           % (cor, _esc(f.get("source") or ""),
-                              _esc(f.get("title") or f.get("description") or "")))
-            return ("<h3 style='font-weight:300;color:%s'>%s (%d)</h3>"
-                    "<table><tbody>%s</tbody></table>"
-                    % (cor, rotulo, len(itens), linhas))
+            A primeira versao mostrava so o PID. Um numero sozinho nao diz nada:
+            o analista precisava voltar ao relatorio completo para descobrir de
+            que processo se tratava, o que anula a razao de existir desta tela.
+            """
+            motivos = ""
+            for r in (p.get("reasons") or []):
+                motivos += ("<div style='color:#a06; font-size:11px'>&bull; %s</div>"
+                            % _esc(r))
+            for campo, val in (p.get("changes") or {}).items():
+                motivos += ("<div style='color:#7fb3d5;font-size:11px'>%s: "
+                            "<code>%s</code> &rarr; <code>%s</code></div>"
+                            % (_esc(campo), _esc(val["antes"]), _esc(val["depois"])))
 
-        cabecalho = ("<p style='color:#777;font-size:12px'>Captura #%s &rarr; #%s "
-                     "&nbsp;|&nbsp; %d processos antes, %d depois</p>"
-                     % (id_a, id_b, resumo["total_before"], resumo["total_after"]))
+            risco = p.get("alert_score") or 0
+            selo = ("<span style='background:%s;color:#000;border-radius:3px;"
+                    "padding:1px 6px;font-size:10px;font-weight:bold'>%s</span>"
+                    % ("#ff4d4d" if risco >= 70 else
+                       "#ffd166" if risco >= 30 else "#444", risco)) if risco else ""
 
-        if not has_changes(resultado):
-            corpo = cabecalho + ("<p style='color:#6bcB77'>Nada mudou entre as "
-                                 "duas capturas.</p>")
-        else:
-            corpo = (cabecalho
-                     + _tabela_findings(resultado["findings"]["new"], "#ff4d4d",
-                                        "Achados novos")
-                     + _tabela_procs(resultado["processes"]["appeared"], "#ffd166",
-                                     "Processos que apareceram")
-                     + _tabela_procs(resultado["processes"]["changed"], "#7fb3d5",
-                                     "Processos alterados")
-                     + _tabela_procs(resultado["processes"]["disappeared"], "#888",
-                                     "Processos que sumiram")
-                     + _tabela_findings(resultado["findings"]["gone"], "#888",
-                                        "Achados que deixaram de aparecer"))
+            return ("<tr class='item'>"
+                    "<td style='color:%s;font-weight:bold;width:70px'>%s</td>"
+                    "<td style='color:#888;width:90px'>%s</td>"
+                    "<td style='color:#888;width:70px'>%s</td>"
+                    "<td><code>%s</code>%s</td>"
+                    "<td style='width:60px;text-align:right'>%s</td></tr>"
+                    % (cor, p.get("pid"), _esc(p.get("user") or "-"),
+                       _esc(p.get("duration") or "-"),
+                       _esc(p.get("cmd") or "(sem linha de comando)"),
+                       motivos, selo))
+
+        def _secao(titulo, explicacao, itens, cor, render):
+            """
+            Uma secao SEMPRE aparece, mesmo vazia.
+
+            Omitir a secao sem itens deixava o analista sem saber se nada
+            desapareceu ou se a tela nao trata desaparecimento. Numa ferramenta
+            forense, "verifiquei e nao ha" e uma resposta diferente de silencio.
+            """
+            if itens:
+                corpo = "<table><tbody>%s</tbody></table>" % "".join(
+                    render(i, cor) for i in itens[:300])
+                if len(itens) > 300:
+                    corpo += ("<p style='color:#666;font-size:11px'>Exibindo 300 "
+                              "de %d.</p>" % len(itens))
+            else:
+                corpo = ("<p style='color:#555;font-size:12px;padding:6px 10px'>"
+                         "Nenhum.</p>")
+            return ("<h3 style='font-weight:300;color:%s;margin-bottom:2px'>%s "
+                    "<span style='color:#666'>(%d)</span></h3>"
+                    "<p style='color:#777;font-size:11px;margin:0 0 8px'>%s</p>%s"
+                    % (cor, titulo, len(itens), explicacao, corpo))
+
+        def _linha_finding(f, cor):
+            return ("<tr class='item'><td style='color:%s;width:110px'>%s</td>"
+                    "<td style='width:90px;color:#888'>%s</td><td>%s</td></tr>"
+                    % (cor, _esc(f.get("severity") or ""),
+                       _esc(f.get("source") or ""),
+                       _esc(f.get("title") or f.get("description") or "")))
+
+        def _bloco(rotulo, valor, cor):
+            return ("<div style='background:#252526;border-left:3px solid %s;"
+                    "padding:10px 16px;min-width:120px'>"
+                    "<div style='font-size:22px;color:%s'>%s</div>"
+                    "<div style='color:#777;font-size:10px;text-transform:uppercase'>"
+                    "%s</div></div>" % (cor, cor, valor, rotulo))
+
+        cabecalho = (
+            "<p style='color:#777;font-size:12px'>Captura #%s (%s) &rarr; #%s (%s)"
+            "<br>%d processos antes, %d depois</p>"
+            "<div style='display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 26px'>"
+            "%s%s%s%s%s</div>"
+            % (id_a, _fmt_ts(ts_a), id_b, _fmt_ts(ts_b),
+               resumo["total_before"], resumo["total_after"],
+               _bloco("achados novos", resumo["findings_new"], "#ff4d4d"),
+               _bloco("apareceram", resumo["appeared"], "#ffd166"),
+               _bloco("alterados", resumo["changed"], "#7fb3d5"),
+               _bloco("sumiram", resumo["disappeared"], "#888"),
+               _bloco("achados que sumiram", resumo["findings_gone"], "#666")))
+
+        corpo = (cabecalho
+                 + _secao("Achados novos",
+                          "Apareceram na captura mais recente e nao existiam antes.",
+                          resultado["findings"]["new"], "#ff4d4d", _linha_finding)
+                 + _secao("Processos que apareceram",
+                          "Nao existiam na captura anterior. Um processo novo com "
+                          "risco alto e o ponto de partida usual da investigacao.",
+                          resultado["processes"]["appeared"], "#ffd166", _linha_proc)
+                 + _secao("Processos alterados",
+                          "Continuaram vivos, mas algo mudo neles: executavel, "
+                          "dono, processo pai ou linha de comando. Uso de CPU e "
+                          "memoria sao ignorados de proposito, porque oscilam a "
+                          "cada ciclo e afogariam o que importa.",
+                          resultado["processes"]["changed"], "#7fb3d5", _linha_proc)
+                 + _secao("Processos que sumiram",
+                          "Existiam antes e nao existem mais. Importa tanto quanto "
+                          "o que surgiu: pode ser o artefato que se apagou depois "
+                          "de agir.",
+                          resultado["processes"]["disappeared"], "#888", _linha_proc)
+                 + _secao("Achados que deixaram de aparecer",
+                          "Sumir nao significa resolvido: o artefato pode ter sido "
+                          "removido para encobrir rastro. O fato e relatado; a "
+                          "conclusao cabe ao analista.",
+                          resultado["findings"]["gone"], "#666", _linha_finding))
 
         self._set_headers()
         self.wfile.write(self._pagina("Comparacao de capturas", corpo,

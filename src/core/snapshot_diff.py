@@ -32,7 +32,7 @@ LOG = logging.getLogger("Diff")
 # Campos cuja mudanca em um processo que permaneceu vivo tem valor para a
 # investigacao. Nao se compara uso de CPU ou memoria: oscilam por natureza e
 # afogariam o que importa.
-CAMPOS_VIGIADOS = ("exe_path", "uid", "ppid", "cmdline")
+CAMPOS_VIGIADOS = ("exe_path", "uid", "ppid", "cmd")
 
 
 def _identidade(proc):
@@ -43,19 +43,30 @@ def _identidade(proc):
     nao passe por continuidade do mesmo processo.
     """
     return (proc.get("pid"),
-            proc.get("name") or "",
+            proc.get("cmd") or "",
             proc.get("start_time") or 0)
 
 
 def _resumo(proc):
-    """Versao enxuta de um processo, suficiente para o painel de diferencas."""
+    """
+    Versao enxuta de um processo, suficiente para o painel de diferencas.
+
+    Os nomes dos campos seguem ProcessNode: a linha de comando e `cmd` e o risco
+    e `anomaly_score`. Ler campos que nao existem devolve vazio em silencio, e
+    foi exatamente o que aconteceu na primeira versao desta tela: a comparacao
+    funcionava, mas mostrava so numeros de PID, sem dizer de que processo se
+    tratava.
+    """
     return {"pid": proc.get("pid"),
             "ppid": proc.get("ppid"),
-            "name": proc.get("name") or "",
-            "cmdline": proc.get("cmdline") or "",
+            "cmd": proc.get("cmd") or "",
+            "user": proc.get("username") or "",
             "uid": proc.get("uid"),
             "exe_path": proc.get("exe_path") or "",
-            "alert_score": proc.get("alert_score") or 0}
+            "duration": proc.get("duration_str") or "",
+            "started": proc.get("start_ts_abs") or "",
+            "reasons": (proc.get("detection_reasons") or [])[:6],
+            "alert_score": proc.get("anomaly_score") or 0}
 
 
 def _mapear_processos(payload):

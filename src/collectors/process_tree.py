@@ -525,6 +525,27 @@ class ProcessTree:
         except:
             self.boot_time = datetime.now()
 
+    def reset(self):
+        """
+        Esvazia a arvore para que a proxima captura represente uma janela.
+
+        Sem isto, um agente de longa duracao acumula indefinidamente processos
+        que ja morreram: cada ciclo varre /proc de novo e apenas ACRESCENTA ao
+        que ja estava la. As consequencias sao todas ruins e nenhuma e obvia.
+
+        A pior delas e forense: o laudo passa a afirmar que um processo existe
+        quando ele terminou horas antes, e a comparacao entre capturas nunca
+        registra desaparecimento, escondendo justamente o artefato que se apagou
+        depois de agir. Junto vem o crescimento sem limite do relatorio e da
+        memoria do agente.
+
+        O tempo de inicializacao e preservado: ele descreve o host, nao a
+        captura, e recalcula-lo a cada ciclo so introduziria imprecisao.
+        """
+        self.nodes = {}
+        self.prev_udp_out = 0
+        self.first_scan = True
+
     def add_or_update(self, pid, ppid, cmd, uid, prio, loginuid=None, state="R", duration_str="", start_ts_abs=""):
         if pid == 0: return None
 

@@ -14,10 +14,13 @@
 from src.core.snapshot_diff import diff_snapshots, has_changes
 
 
-def _proc(pid, name="bash", cmdline="bash", start=100, **extra):
-    base = {"pid": pid, "ppid": 1, "name": name, "cmdline": cmdline,
+def _proc(pid, name="bash", cmdline=None, start=100, **extra):
+    # Os nomes seguem ProcessNode: a linha de comando e `cmd` e o risco e
+    # `anomaly_score`. Usar nomes inventados aqui deixaria o teste passar
+    # enquanto a tela real ficaria vazia, que foi o que aconteceu em campo.
+    base = {"pid": pid, "ppid": 1, "cmd": cmdline or name,
             "start_time": start, "uid": 0, "exe_path": "/bin/" + name,
-            "alert_score": 0}
+            "username": "root", "anomaly_score": 0}
     base.update(extra)
     return base
 
@@ -36,7 +39,7 @@ def test_new_process_is_reported():
     depois = _captura([_proc(1, "systemd"), _proc(42, "miner")])
 
     r = diff_snapshots(antes, depois)
-    assert [p["name"] for p in r["processes"]["appeared"]] == ["miner"]
+    assert [p["cmd"] for p in r["processes"]["appeared"]] == ["miner"]
     assert r["summary"]["appeared"] == 1
 
 
@@ -49,7 +52,7 @@ def test_process_that_vanished_is_reported():
     depois = _captura([_proc(1, "systemd")])
 
     r = diff_snapshots(antes, depois)
-    assert [p["name"] for p in r["processes"]["disappeared"]] == ["miner"]
+    assert [p["cmd"] for p in r["processes"]["disappeared"]] == ["miner"]
 
 
 def test_unchanged_process_is_not_noise():
@@ -73,8 +76,8 @@ def test_pid_reuse_is_not_read_as_continuity():
     depois = _captura([_proc(500, "nc", start=999)])
 
     r = diff_snapshots(antes, depois)
-    assert [p["name"] for p in r["processes"]["appeared"]] == ["nc"]
-    assert [p["name"] for p in r["processes"]["disappeared"]] == ["nginx"]
+    assert [p["cmd"] for p in r["processes"]["appeared"]] == ["nc"]
+    assert [p["cmd"] for p in r["processes"]["disappeared"]] == ["nginx"]
     assert r["summary"]["changed"] == 0
 
 
@@ -97,8 +100,8 @@ def test_volatile_metrics_do_not_count_as_change():
     CPU e memoria oscilam a cada ciclo. Se contassem como mudanca, todo processo
     vivo apareceria na lista e o painel perderia a serventia.
     """
-    antes = _captura([_proc(7, "sshd", cpu_percent=1.0, mem_rss=100)])
-    depois = _captura([_proc(7, "sshd", cpu_percent=90.0, mem_rss=900)])
+    antes = _captura([_proc(7, "sshd", cpu_usage_pct=1.0, rss=100)])
+    depois = _captura([_proc(7, "sshd", cpu_usage_pct=90.0, rss=900)])
 
     assert diff_snapshots(antes, depois)["summary"]["changed"] == 0
 
@@ -106,11 +109,11 @@ def test_volatile_metrics_do_not_count_as_change():
 def test_riskiest_new_process_comes_first():
     """Quem abre a tela precisa ver primeiro o que merece atencao."""
     antes = _captura([])
-    depois = _captura([_proc(10, "calc", alert_score=1),
-                       _proc(11, "backdoor", alert_score=90)])
+    depois = _captura([_proc(10, "calc", anomaly_score=1),
+                       _proc(11, "backdoor", anomaly_score=90)])
 
     r = diff_snapshots(antes, depois)
-    assert r["processes"]["appeared"][0]["name"] == "backdoor"
+    assert r["processes"]["appeared"][0]["cmd"] == "backdoor"
 
 
 # ------------------------------------------------------------------------------
@@ -197,13 +200,50 @@ def test_comparison_runs_on_the_server(codigo):
 
 def test_diff_output_is_escaped(codigo):
     """
-    Nome e linha de comando vem do host inspecionado, que pode estar
-    comprometido. Sem escapar, um processo com nome malicioso injetaria HTML na
-    tela de quem esta investigando justamente aquele host.
+    A linha de comando vem do host inspecionado, que pode estar comprometido.
+    Sem escapar, um processo com nome malicioso injetaria HTML na tela de quem
+    esta investigando justamente aquele host.
     """
     bloco = codigo.split("def _serve_diff")[1].split("def _serve_command_log")[0]
-    assert "_esc(p.get(\"name\"))" in bloco
-    assert "_esc((p.get(\"cmdline\")" in bloco
+    assert "_esc(p.get(\"cmd\")" in bloco
+    assert "_esc(p.get(\"user\")" in bloco
+
+
+def test_diff_reads_the_real_field_names():
+    """
+    Ler um campo que nao existe devolve vazio em silencio. Foi o que derrubou a
+    primeira versao da tela: a comparacao funcionava, mas cada linha mostrava so
+    o numero do PID, sem dizer de que processo se tratava.
+    """
+    from src.collectors.process_tree import ProcessNode
+    from src.core.snapshot_diff import _resumo
+
+    node = ProcessNode(42, 1, "/usr/bin/nc -l 4444", 0)
+    node.anomaly_score = 90
+    resumo = _resumo(vars(node))
+
+    assert resumo["cmd"] == "/usr/bin/nc -l 4444"
+    assert resumo["alert_score"] == 90
+
+
+def test_every_section_is_shown_even_when_empty(codigo):
+    """
+    Omitir a secao vazia deixava o analista sem saber se nada desapareceu ou se
+    a tela nem trata desaparecimento. Numa ferramenta forense, "verifiquei e nao
+    ha" e uma resposta diferente de silencio.
+    """
+    bloco = codigo.split("def _serve_diff")[1].split("def _serve_command_log")[0]
+    assert "Nenhum." in bloco
+    assert "Processos que sumiram" in bloco
+
+
+def test_diff_shows_when_each_capture_was_taken(codigo):
+    """
+    "#467 para #469" nao diz nada sobre o intervalo, e o intervalo e o que da
+    sentido a diferenca observada.
+    """
+    bloco = codigo.split("def _serve_diff")[1].split("def _serve_command_log")[0]
+    assert "_fmt_ts(ts_a)" in bloco
 
 
 def test_history_is_reachable_from_the_fleet(codigo):

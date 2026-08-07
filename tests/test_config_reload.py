@@ -30,6 +30,18 @@ class BancoFalso(object):
         return []
 
 
+def _tocar(caminho):
+    """
+    Avanca a marca de tempo do arquivo de forma explicita.
+
+    Reescrever o arquivo nao garante mtime diferente: as duas escritas podem
+    cair na mesma resolucao de relogio do sistema de arquivos, e o teste
+    passaria a depender de quao rapido a maquina e.
+    """
+    futuro = time.time() + 10
+    os.utime(caminho, (futuro, futuro))
+
+
 def _escrever(caminho, destino="10.0.0.1", intervalo=15, captura=15):
     dados = {"general": {"mode": "daemon"},
              "security": {"public_key_path": "chave.pub",
@@ -70,9 +82,8 @@ def test_untouched_file_is_not_reread(controller):
 
 def test_new_interval_takes_effect_without_restart(controller):
     ctrl, caminho = controller
-    time.sleep(0.01)
     _escrever(caminho, intervalo=90, captura=45)
-    os.utime(caminho, None)
+    _tocar(caminho)
 
     assert ctrl.reload_config_if_changed() is True
     assert ctrl.interval == 90
@@ -88,7 +99,7 @@ def test_new_destination_takes_effect_without_restart(controller):
     assert "10.0.0.1" in ctrl.outbox._base_url()
 
     _escrever(caminho, destino="10.0.0.9")
-    os.utime(caminho, None)
+    _tocar(caminho)
     ctrl.reload_config_if_changed()
 
     assert "10.0.0.9" in ctrl.outbox._base_url()
@@ -105,7 +116,7 @@ def test_reload_clears_backoff_from_the_old_destination(controller):
     ctrl.outbox._next_attempt = time.time() + 300
 
     _escrever(caminho, destino="10.0.0.9")
-    os.utime(caminho, None)
+    _tocar(caminho)
     ctrl.reload_config_if_changed()
 
     assert ctrl.outbox._failures == 0
@@ -125,7 +136,7 @@ def test_broken_file_does_not_stop_collection(controller):
 
     with io.open(caminho, "w", encoding="utf-8") as fh:
         fh.write("isto: nao: e: yaml: valido:\n  - [")
-    os.utime(caminho, None)
+    _tocar(caminho)
 
     ctrl.reload_config_if_changed()
     assert ctrl.interval == intervalo_anterior
@@ -136,7 +147,7 @@ def test_broken_file_is_not_retried_every_cycle(controller):
     ctrl, caminho = controller
     with io.open(caminho, "w", encoding="utf-8") as fh:
         fh.write("[[[")
-    os.utime(caminho, None)
+    _tocar(caminho)
 
     ctrl.reload_config_if_changed()
     assert ctrl.reload_config_if_changed() is False
@@ -162,6 +173,6 @@ def test_a_typo_in_the_file_never_kills_a_running_agent(controller):
     ctrl, caminho = controller
     with io.open(caminho, "w", encoding="utf-8") as fh:
         fh.write("chave: [sem fechar\n")
-    os.utime(caminho, None)
+    _tocar(caminho)
 
     ctrl.reload_config_if_changed()   # nao pode levantar SystemExit
