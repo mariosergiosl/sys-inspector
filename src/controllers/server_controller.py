@@ -26,6 +26,7 @@ import logging
 import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
+import urllib.parse as urlparse
 
 # Internal Modules
 from src.exporters.html_report import generate_report
@@ -35,7 +36,26 @@ from src.core.ingest import IngestQueue, process_batch
 from src.core.commands import CommandQueue, ALLOWED
 from src.core.tls import ensure_self_signed_cert
 from src.core.outbox import PATH_SLOT, PATH_INGEST, PATH_COMMAND_RESULT
+from src.core.snapshot_diff import diff_snapshots, has_changes
+from src.exporters.html_report import _esc
 
+
+
+def _fmt_ts(valor):
+    """
+    Momento da captura em hora local, com o carimbo UTC ao lado.
+
+    As duas formas juntas porque servem a leitores diferentes: o analista compara
+    com o proprio relogio, e o laudo precisa de referencia absoluta.
+    """
+    try:
+        momento = datetime.datetime.fromtimestamp(float(valor))
+    except (TypeError, ValueError):
+        return "-"
+    return ("%s <span style='color:#666;font-size:10px'>%s UTC</span>"
+            % (momento.strftime("%Y-%m-%d %H:%M:%S"),
+               datetime.datetime.utcfromtimestamp(float(valor)
+                                                  ).strftime("%H:%M:%S")))
 
 
 def _human_age(seconds):
@@ -100,6 +120,12 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         elif self.path == '/log':
             self._serve_command_log(controller.commands)
 
+        elif self.path.startswith('/history/'):
+            self._serve_history(controller, self.path.split('/')[-1])
+
+        elif self.path.startswith('/diff/'):
+            self._serve_diff(controller)
+
         elif self.path.startswith('/cmd/'):
             # /cmd/<acao>/<uuid>: o analista enfileira; nada e executado aqui.
             partes = self.path.strip('/').split('/')
@@ -158,6 +184,12 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                         "border-radius:4px; padding:5px 14px; font-size:12px; "
                         "font-family:sans-serif; text-decoration:none\">"
                         "&larr; Fleet</a>"
+                        + ("<a href=\"/history/%s\" title=\"Capturas anteriores "
+                           "deste agente e comparacao entre duas\" "
+                           "style=\"color:#4ec9b0; border:1px solid #444; "
+                           "border-radius:4px; padding:4px 8px; margin-left:12px; "
+                           "text-decoration:none; font-size:14px\">&#128337;</a>"
+                           % agent_uuid)
                         + _acao("collect", "&#128248;",
                                 "Solicitar captura agora: entra na fila, o agente "
                                 "executa no proximo check-in (ate ~1 ciclo)")
@@ -288,6 +320,146 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 self.wfile.write(f'{{"status": "error", "msg": "{str(e)}"}}'.encode())
         else:
             self._set_headers(status=404)
+
+    # --------------------------------------------------------------------------
+    # HISTORICO E COMPARACAO
+    # --------------------------------------------------------------------------
+    def _pagina(self, titulo, corpo, voltar="/"):
+        """Moldura comum das telas auxiliares, no mesmo tema do painel."""
+        return ("<html><head><meta charset='UTF-8'><title>%s</title>"
+                "<style>body{background:#121212;color:#e0e0e0;"
+                "font-family:'Segoe UI',sans-serif;padding:30px}"
+                "table{width:100%%;border-collapse:separate;border-spacing:0 6px}"
+                "th{text-align:left;color:#777;text-transform:uppercase;"
+                "font-size:10px;padding:0 10px 8px}td{padding:8px 10px}"
+                "tr.item{background:#252526}"
+                "a.btn{color:#4ec9b0;text-decoration:none;border:1px solid #4ec9b0;"
+                "border-radius:4px;padding:5px 14px;font-size:12px}"
+                "code{color:#ce9178;font-size:11px;word-break:break-all}"
+                "h2{font-weight:300}</style></head><body>"
+                "<a class='btn' href='%s'>&larr; Voltar</a>"
+                "<h2>%s</h2>%s</body></html>" % (titulo, voltar, titulo, corpo))
+
+    def _serve_history(self, controller, agent_uuid):
+        """
+        Capturas de um agente, para escolher duas e compara-las.
+
+        Um laudo isolado responde como o host estava num instante. A pergunta
+        que a investigacao faz e outra: o que mudou entre dois instantes.
+        """
+        capturas = controller.db.get_history(0, time.time(),
+                                             agent_filter=agent_uuid)[:100]
+        if not capturas:
+            self._set_headers(status=404)
+            self.wfile.write(b"No captures for this agent yet.")
+            return
+
+        linhas = ""
+        for i, c in enumerate(capturas):
+            # Compara com a captura imediatamente anterior, que e a comparacao
+            # pedida na esmagadora maioria das vezes. As demais ficam a um
+            # clique, escolhendo outra linha de partida.
+            anterior = capturas[i + 1]["id"] if i + 1 < len(capturas) else None
+            botao = ("<a class='btn' href='/diff/%s?a=%s&b=%s'>comparar com a "
+                     "anterior</a>" % (agent_uuid, anterior, c["id"])
+                     ) if anterior else "<span style='color:#555'>primeira</span>"
+            linhas += ("<tr class='item'><td style='color:#777'>%s</td>"
+                       "<td>%s</td><td style='color:#888'>%s%%</td>"
+                       "<td style='color:%s'>%s</td><td>%s</td></tr>"
+                       % (c["id"], _fmt_ts(c["timestamp"]),
+                          round(c.get("cpu_avg") or 0, 1),
+                          "#ff4d4d" if c.get("is_alert") else "#6bcB77",
+                          c.get("alert_score") or 0, botao))
+
+        corpo = ("<p style='color:#777;font-size:12px'>%d capturas. "
+                 "A comparacao roda no servidor: o laudo completo passa de 10MB "
+                 "e nao caberia no navegador.</p>"
+                 "<table><thead><tr><th>#</th><th>Momento</th><th>CPU</th>"
+                 "<th>Risco</th><th></th></tr></thead><tbody>%s</tbody></table>"
+                 % (len(capturas), linhas))
+        self._set_headers()
+        self.wfile.write(self._pagina("Historico do agente", corpo).encode("utf-8"))
+
+    def _serve_diff(self, controller):
+        """Mostra o que mudou entre duas capturas do mesmo agente."""
+        caminho, _, consulta = self.path.partition("?")
+        agent_uuid = caminho.strip("/").split("/")[-1]
+        args = urlparse.parse_qs(consulta or "")
+
+        try:
+            id_a = int(args.get("a", [""])[0])
+            id_b = int(args.get("b", [""])[0])
+        except (ValueError, IndexError):
+            self._set_headers(status=400)
+            self.wfile.write(b"Informe as duas capturas a comparar.")
+            return
+
+        antes = controller.decrypt(controller.db.get_snapshot_details(id_a))
+        depois = controller.decrypt(controller.db.get_snapshot_details(id_b))
+        if not antes or not depois:
+            self._set_headers(status=404)
+            self.wfile.write(b"Capture not found or could not be decrypted.")
+            return
+
+        resultado = diff_snapshots(antes, depois)
+        resumo = resultado["summary"]
+
+        def _tabela_procs(itens, cor, rotulo):
+            if not itens:
+                return ""
+            linhas = ""
+            for p in itens[:200]:
+                mudancas = ""
+                for campo, val in (p.get("changes") or {}).items():
+                    mudancas += ("<div style='color:#888;font-size:11px'>%s: "
+                                 "<code>%s</code> &rarr; <code>%s</code></div>"
+                                 % (_esc(campo), _esc(val["antes"]),
+                                    _esc(val["depois"])))
+                linhas += ("<tr class='item'><td style='color:%s'>%s</td>"
+                           "<td>%s</td><td><code>%s</code>%s</td></tr>"
+                           % (cor, p.get("pid"), _esc(p.get("name")),
+                              _esc((p.get("cmdline") or "")[:160]), mudancas))
+            return ("<h3 style='font-weight:300;color:%s'>%s (%d)</h3>"
+                    "<table><tbody>%s</tbody></table>"
+                    % (cor, rotulo, len(itens), linhas))
+
+        def _tabela_findings(itens, cor, rotulo):
+            if not itens:
+                return ""
+            linhas = ""
+            for f in itens[:200]:
+                linhas += ("<tr class='item'><td style='color:%s'>%s</td>"
+                           "<td>%s</td></tr>"
+                           % (cor, _esc(f.get("source") or ""),
+                              _esc(f.get("title") or f.get("description") or "")))
+            return ("<h3 style='font-weight:300;color:%s'>%s (%d)</h3>"
+                    "<table><tbody>%s</tbody></table>"
+                    % (cor, rotulo, len(itens), linhas))
+
+        cabecalho = ("<p style='color:#777;font-size:12px'>Captura #%s &rarr; #%s "
+                     "&nbsp;|&nbsp; %d processos antes, %d depois</p>"
+                     % (id_a, id_b, resumo["total_before"], resumo["total_after"]))
+
+        if not has_changes(resultado):
+            corpo = cabecalho + ("<p style='color:#6bcB77'>Nada mudou entre as "
+                                 "duas capturas.</p>")
+        else:
+            corpo = (cabecalho
+                     + _tabela_findings(resultado["findings"]["new"], "#ff4d4d",
+                                        "Achados novos")
+                     + _tabela_procs(resultado["processes"]["appeared"], "#ffd166",
+                                     "Processos que apareceram")
+                     + _tabela_procs(resultado["processes"]["changed"], "#7fb3d5",
+                                     "Processos alterados")
+                     + _tabela_procs(resultado["processes"]["disappeared"], "#888",
+                                     "Processos que sumiram")
+                     + _tabela_findings(resultado["findings"]["gone"], "#888",
+                                        "Achados que deixaram de aparecer"))
+
+        self._set_headers()
+        self.wfile.write(self._pagina("Comparacao de capturas", corpo,
+                                      voltar="/history/%s" % agent_uuid
+                                      ).encode("utf-8"))
 
     def _serve_command_log(self, commands):
         """
@@ -503,6 +675,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 <td><span style='{status_style}; font-weight:bold; font-size:11px; border:1px solid; padding:2px 6px; border-radius:3px'>{status_text}</span></td>
                 <td style='white-space:nowrap'>
                     <a href='/agent/{uuid}' class='btn-ico' title='Open the forensic report'>&#128269;</a>
+                    <a href='/history/{uuid}' class='btn-ico' title='Capturas anteriores deste agente e comparacao entre duas: mostra o que mudou de uma para a outra'>&#128337;</a>
                     <a href='/cmd/collect/{uuid}' class='btn-ico' title='Solicitar captura agora. Entra na fila e o agente executa no proximo check-in (ate ~1 ciclo); a captura leva o tempo configurado (capture_duration)'>&#128248;</a>
                     <a href='/cmd/chaos/{uuid}' class='btn-ico btn-lab' title='APENAS LAB: gera cenario de teste por 300s e captura em seguida. Entra na fila; o agente executa no proximo check-in'>&#9760;</a>
                     <a href='/cmd/restart/{uuid}' class='btn-ico btn-warn' title='Restart the agent (queued)'>&#128260;</a>
