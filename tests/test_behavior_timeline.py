@@ -19,8 +19,8 @@ import os
 import pytest
 
 from src.core.snapshot_diff import (build_timeline, classify, summarize_risk,
-                                    LIMIAR_CRITICO, ROTULO_CRITICO,
-                                    ROTULO_REDE, ROTULO_ROOT, ROTULO_ORFAO)
+                                    ROTULO_CRITICO, ROTULO_REDE, ROTULO_ROOT,
+                                    ROTULO_ORFAO)
 
 FONTE = os.path.join("src", "controllers", "server_controller.py")
 
@@ -104,7 +104,17 @@ def test_empty_history_does_not_break():
 # LEITURA DE CADA PROCESSO
 # ------------------------------------------------------------------------------
 def test_high_risk_is_labelled():
-    assert ROTULO_CRITICO in classify({"alert_score": LIMIAR_CRITICO})
+    """
+    O criterio e o SINAL presente, nao o tamanho do numero: 8+2 e binario
+    apagado executando de diretorio gravavel. O limiar numerico que existia aqui
+    (>= 70) media a soma de um campo de bits e por isso deixava justamente este
+    caso de fora, enquanto promovia um processo defunto (128).
+    """
+    assert ROTULO_CRITICO in classify({"alert_score": 8 + 2})
+
+
+def test_a_defunct_process_alone_is_not_critical():
+    assert ROTULO_CRITICO not in classify({"alert_score": 128})
 
 
 def test_a_quiet_process_gets_no_labels():
@@ -137,7 +147,15 @@ def test_init_itself_is_not_called_reparented():
 
 
 def test_risk_summary_counts_what_needs_attention():
-    itens = [{"alert_score": 90}, {"alert_score": 10}, {"alert_score": 75}]
+    """
+    Conta pelos SINAIS presentes. Os valores usados antes (90, 10, 75) eram
+    numeros escolhidos em torno de um limiar que nao existe mais, porque o campo
+    e um conjunto de bits e nao uma magnitude.
+    """
+    itens = [{"alert_score": 8 + 2},    # binario apagado em /dev/shm: sim
+             {"alert_score": 128},      # processo defunto: nao
+             {"alert_score": 4},        # ferramenta de rede: nao
+             {"alert_score": 32 + 256}]  # mineracao + imutavel juntos: sim
     assert summarize_risk(itens) == 2
 
 

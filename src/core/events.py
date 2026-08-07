@@ -38,6 +38,8 @@ import logging
 import sqlite3
 from contextlib import closing
 
+from src.core.risk import level as risk_level, summary as risk_summary
+
 LOG = logging.getLogger("Events")
 
 # ------------------------------------------------------------------------------
@@ -329,8 +331,15 @@ def events_from_capture(payload, agent_uuid, capture_id=None, clock_offset=0.0):
             subject=(proc.get("cmd") or "")[:300],
             detail={"pid": proc.get("pid"), "ppid": proc.get("ppid"),
                     "user": proc.get("username"),
-                    "score": proc.get("anomaly_score") or 0},
-            severity="High" if (proc.get("anomaly_score") or 0) >= 70 else "",
+                    "score": proc.get("anomaly_score") or 0,
+                    # Os sinais por extenso viajam com o evento: a linha do tempo
+                    # exibe o motivo sem precisar reabrir a captura.
+                    "signals": risk_summary(proc.get("anomaly_score"))},
+            # A severidade sai do NIVEL dos sinais presentes. O corte anterior
+            # (score >= 70) lia um campo de bits como magnitude e marcava como
+            # High todo processo defunto (128), enquanto um binario apagado
+            # executando de /dev/shm (8+2=10) entrava sem severidade alguma.
+            severity=(risk_level(proc.get("anomaly_score")) or ""),
             clock_offset=clock_offset, capture_id=capture_id))
 
         for conexao in (proc.get("connections") or [])[:10]:

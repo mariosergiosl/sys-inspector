@@ -26,6 +26,8 @@
 
 import logging
 
+from src.core.risk import needs_attention, rank as risk_rank
+
 LOG = logging.getLogger("Diff")
 
 # Campos cuja mudanca em um processo que permaneceu vivo tem valor para a
@@ -134,8 +136,13 @@ def diff_snapshots(anterior, atual):
     # reportado como "sumiu", nao como "corrigido".
     sumidos = [f_antes[k] for k in f_antes if k not in f_depois]
 
-    surgiram.sort(key=lambda p: (-(p.get("alert_score") or 0), p.get("pid") or 0))
-    sumiram.sort(key=lambda p: (-(p.get("alert_score") or 0), p.get("pid") or 0))
+    # Ordenado pelo NIVEL de risco, nao pelo valor do score: ordenar pelo inteiro
+    # colocava um processo defunto acima de um binario apagado.
+    def _ordem(proc):
+        return (-risk_rank(proc.get("alert_score")), proc.get("pid") or 0)
+
+    surgiram.sort(key=_ordem)
+    sumiram.sort(key=_ordem)
 
     return {
         "processes": {"appeared": surgiram,
@@ -173,7 +180,10 @@ ROTULO_ORFAO = ("reparentado", "&#128128;",
                 "Pai e o init: perdeu o processo que o criou, o que apaga a "
                 "origem")
 
-LIMIAR_CRITICO = 70
+# Quem merece exame imediato e decidido por src/core/risk.py, a partir dos SINAIS
+# presentes no score. O limiar numerico que existia aqui (>= 70) media a soma de
+# um campo de bits: promovia um processo defunto (128) e rebaixava um binario
+# apagado executando de diretorio gravavel (8+2=10).
 
 
 def classify(proc):
@@ -185,7 +195,7 @@ def classify(proc):
     """
     rotulos = []
 
-    if (proc.get("alert_score") or 0) >= LIMIAR_CRITICO:
+    if needs_attention(proc.get("alert_score")):
         rotulos.append(ROTULO_CRITICO)
 
     if proc.get("connections"):
@@ -208,8 +218,7 @@ def classify(proc):
 
 def summarize_risk(itens):
     """Conta quantos dos processos listados merecem atencao imediata."""
-    return sum(1 for p in itens
-               if (p.get("alert_score") or 0) >= LIMIAR_CRITICO)
+    return sum(1 for p in itens if needs_attention(p.get("alert_score")))
 
 
 def build_timeline(capturas, minimo=2):
@@ -240,15 +249,22 @@ def build_timeline(capturas, minimo=2):
                       "max_score": 0, "pids": []})
             registro["count"] += 1
             registro["captures"].append(indice)
-            registro["max_score"] = max(registro["max_score"],
-                                        proc.get("anomaly_score") or 0)
+            # Guarda o score da ocorrencia de MAIOR RISCO, e nao o maior
+            # inteiro. Sao coisas diferentes num campo de bits: 128 (defunto) e
+            # numericamente maior que 10 (binario apagado em /dev/shm) e
+            # substituia justamente o que importava. Nao se combinam os bits de
+            # processos distintos, que descreveria um processo que nunca existiu.
+            score = proc.get("anomaly_score") or 0
+            if risk_rank(score) > risk_rank(registro["max_score"]):
+                registro["max_score"] = score
             if len(registro["pids"]) < 12:
                 registro["pids"].append(proc.get("pid"))
 
     resultado = [r for r in ocorrencias.values() if r["count"] >= minimo]
     # O que reaparece muito e com risco alto vem primeiro: e a combinacao que
-    # descreve persistencia ativa.
-    resultado.sort(key=lambda r: (-r["max_score"], -r["count"]))
+    # descreve persistencia ativa. O criterio de "alto" e o nivel dos sinais
+    # presentes, nao o valor do campo de bits.
+    resultado.sort(key=lambda r: (-risk_rank(r["max_score"]), -r["count"]))
     return resultado
 
 

@@ -13,32 +13,44 @@
 # AUTHOR: Mario Luz (Sys-Inspector Project)
 # ==============================================================================
 
+from src.core import risk
+
 # ------------------------------------------------------------------------------
-# 1. LEGEND COMPONENT (Updated Tooltip)
+# 1. LEGEND COMPONENT
 # ------------------------------------------------------------------------------
-LEGEND_HTML = r"""
+# Gerada a partir de src/core/risk.py, e nao escrita a mao.
+#
+# A tabela que existia aqui era uma copia mantida em paralelo e ja tinha se
+# afastado da origem: anunciava "+512 EDR Latency (Process Frozen)", um bit que
+# nenhum coletor atribui, e omitia o nivel de cada sinal. Um laudo que descreve
+# uma regra que a ferramenta nao aplica e pior que um laudo sem legenda.
+
+
+def _linhas_legenda():
+    linhas = ""
+    for bit, _chave, rotulo, severidade, _explicacao in risk.SINAIS:
+        linhas += ("<tr><td>+%d</td><td>%s</td>"
+                   "<td style='color:%s'>%s</td></tr>"
+                   % (bit, rotulo, risk.CORES.get(severidade, "#888"),
+                      severidade))
+    return linhas
+
+
+LEGEND_HTML = ("""
 <div class="score-legend-wrapper">
     <span class="legend-icon" title="Anomaly Score Rules">?</span>
     <div class="score-tooltip">
-        <h4>Anomaly Score Rules (Bitmask)</h4>
-        <table>
-            <tr><td>+01</td><td>Unsafe Lib (/tmp, /dev/shm)</td></tr>
-            <tr><td>+02</td><td>Malware Pattern (Exec /tmp)</td></tr>
-            <tr><td>+04</td><td>Network Tool (nc, socat)</td></tr>
-            <tr><td>+08</td><td>Deleted Binary</td></tr>
-            <tr><td>+16</td><td>EDR (Endpoint Detection and Response) / AV (Antivirus)</td></tr>
-            <tr><td>+32</td><td>GPU Usage (Mining)</td></tr>
-            <tr><td>+64</td><td>Network Issue (Drops/Retrans)</td></tr>
-            <tr><td>+128</td><td>Zombie/Defunct Process</td></tr>
-            <tr><td>+256</td><td>Immutable File Anomaly</td></tr>
-            <tr><td>+512</td><td>EDR Latency (Process Frozen)</td></tr>
-        </table>
-        <div style="font-size:9px; color:#777; margin-top:5px; border-top:1px solid #333; padding-top:2px;">
-            * Score is unique sum of triggers.
+        <h4>Sinais do anomaly score (campo de bits)</h4>
+        <table>%s</table>
+        <div style="font-size:9px; color:#777; margin-top:5px;
+                    border-top:1px solid #333; padding-top:2px;">
+            * Cada bit e um sinal observado. O VALOR somado nao mede gravidade:
+            o nivel exibido vem dos sinais presentes, e sobe um degrau quando
+            dois ou mais de peso coincidem.
         </div>
     </div>
 </div>
-"""
+""" % _linhas_legenda())
 
 # ------------------------------------------------------------------------------
 # 2. CSS STYLES (Supports New Badges & Dark Theme)

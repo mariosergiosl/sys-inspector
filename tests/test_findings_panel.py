@@ -26,11 +26,16 @@ def _finding(**kw):
 # Escala unica de severidade
 # ------------------------------------------------------------------------------
 def test_severity_uses_the_shared_scale():
-    """A arvore usa os mesmos rotulos do Finding, nao uma escala paralela."""
-    assert _severity_label(128) == SEV_CRITICAL
-    assert _severity_label(64) == SEV_HIGH
-    assert _severity_label(8) == SEV_MEDIUM
-    assert _severity_label(1) == SEV_LOW
+    """
+    A arvore usa os mesmos rotulos do Finding, nao uma escala paralela.
+
+    Os valores mudaram porque o criterio mudou: nao e mais a faixa em que o
+    numero cai, e sim o sinal que cada bit declara (src/core/risk.py).
+    """
+    assert _severity_label(8 + 2) == SEV_CRITICAL   # apagado + /dev/shm
+    assert _severity_label(8) == SEV_HIGH           # binario apagado
+    assert _severity_label(1) == SEV_MEDIUM         # biblioteca nao confiavel
+    assert _severity_label(4) == SEV_LOW            # ferramenta de rede
     assert _severity_label(0) is None
 
 

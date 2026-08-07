@@ -17,8 +17,8 @@ import re
 import datetime
 import html as html_lib
 from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, JS_BLOCK, LEGEND_HTML
-from src.core.findings import (SEV_INFO, SEV_LOW, SEV_MEDIUM, SEV_HIGH,
-                               SEV_CRITICAL, SEVERITY_ORDER)
+from src.core.findings import SEV_INFO, SEVERITY_ORDER
+from src.core import risk
 from src.core.attack import describe, technique_url, used_techniques
 
 
@@ -256,34 +256,23 @@ def _esc(value):
 # ancestral do pior processo mostrava o mesmo valor (ex.: 64 = SCORE_NET_ISSUE),
 # dando falsa impressao de contagem.
 #
-# O mapeamento numerico abaixo continua sendo uma aproximacao: converte o
-# anomaly_score (bitfield/soma dos SCORE_* de process_tree) para a escala. A
-# normalizacao definitiva por tipo de deteccao acontece quando as heuristicas de
-# runtime virarem Findings proprios.
-SEVERITY_COLORS = {
-    SEV_CRITICAL: "#ff4d4d",
-    SEV_HIGH: "#ff8c42",
-    SEV_MEDIUM: "#ffd166",
-    SEV_LOW: "#6bcB77",
-    SEV_INFO: "#7fb3d5",
-}
+# A traducao do anomaly_score para a escala vive em src/core/risk.py, e nao
+# aqui. O que existia neste ponto era um corte por faixa (>=128, >=32, >=8) que
+# tratava como magnitude um valor que e campo de bits, e por isso classificava um
+# processo defunto (128) acima de um binario apagado executando de /dev/shm
+# (8+2=10). Havia ainda um segundo corte, em 70, no diff e na linha do tempo: o
+# mesmo numero recebia tres leituras diferentes em tres telas.
+SEVERITY_COLORS = dict(risk.CORES)
 
 
 def _severity_label(score):
-    """Traduz um anomaly_score inteiro na escala unica (ou None se 0)."""
-    try:
-        score = int(score or 0)
-    except (TypeError, ValueError):
-        return None
-    if score <= 0:
-        return None
-    if score >= 128:
-        return SEV_CRITICAL
-    if score >= 32:
-        return SEV_HIGH
-    if score >= 8:
-        return SEV_MEDIUM
-    return SEV_LOW
+    """
+    Traduz um anomaly_score na escala unica (ou None se nenhum sinal presente).
+
+    Mantido como funcao deste modulo porque o laudo inteiro a chama; o criterio,
+    porem, e um so para o produto e mora em src/core/risk.py.
+    """
+    return risk.level(score)
 
 
 # ------------------------------------------------------------------------------
