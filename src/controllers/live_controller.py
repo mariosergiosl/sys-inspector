@@ -123,7 +123,10 @@ class LiveHTTPHandler(BaseHTTPRequestHandler):
                     });
                 </script>
                 """
-                html_content = html_content.replace('<body>', f'<body>{injection}')
+                # Mesma armadilha do modo server: "<body>" tambem ocorre dentro
+                # do JavaScript do relatorio, e injetar la quebraria o script.
+                anchor = '<div class="sticky-wrapper">'
+                html_content = html_content.replace(anchor, injection + anchor, 1)
 
                 self._set_headers()
                 self.wfile.write(html_content.encode('utf-8'))

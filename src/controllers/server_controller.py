@@ -101,6 +101,22 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     with open(tmp_filename, 'r', encoding='utf-8') as f:
                         html_content = f.read()
 
+                    # Retorno para a frota: sem isso o analista entra no
+                    # relatorio de um host e fica sem caminho de volta.
+                    back = (
+                        "<a href='/' style=\"position:fixed; top:12px; left:12px; "
+                        "z-index:9999; background:#252526; color:#4ec9b0; "
+                        "border:1px solid #4ec9b0; border-radius:4px; "
+                        "padding:6px 14px; font-family:'Segoe UI',sans-serif; "
+                        "font-size:12px; text-decoration:none\">&larr; Fleet</a>")
+                    # Ancora o link no primeiro elemento do corpo, e nao na
+                    # string "<body>": essa sequencia tambem aparece DENTRO do
+                    # JavaScript do relatorio (win.document.write('</head><body>')),
+                    # e injetar ali quebrava a sintaxe do script inteiro,
+                    # derrubando as abas e todos os controles da arvore.
+                    anchor = '<div class="sticky-wrapper">'
+                    html_content = html_content.replace(anchor, back + anchor, 1)
+
                     self._set_headers()
                     self.wfile.write(html_content.encode('utf-8'))
 
@@ -205,7 +221,18 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         self._set_headers()
         # Usa a tabela 'agents' (colunas em claro) via get_agents, em vez de
         # extrair campos com json_extract do blob, que agora esta cifrado.
-        agents = db.get_agents()
+        # Estado de RISCO da frota, nao apenas a lista de agentes: com
+        # achados criticos acontecendo, o gerente precisa mostrar isso na
+        # primeira tela, senao o analista so descobre entrando host a host.
+        agents = db.get_fleet_status()
+
+        def _risk(item):
+            f = item.get('findings') or {}
+            return (f.get('Critical', 0) * 1000 + f.get('High', 0) * 100
+                    + f.get('Medium', 0) * 10 + f.get('Low', 0))
+
+        # Mais comprometido primeiro: a ordem responde "por onde comeco?".
+        agents = sorted(agents, key=_risk, reverse=True)
 
         rows = ""
         for a in agents:
@@ -221,9 +248,25 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             except Exception:
                 is_online = str(a.get('status', '')).upper() == 'ONLINE'
 
+            # Contagem por severidade, vinda em claro com a captura.
+            findings = a.get('findings') or {}
+            sev_colors = {'Critical': '#ff4d4d', 'High': '#ff8c42',
+                          'Medium': '#ffd166', 'Low': '#6bcB77'}
+            sev_cells = ""
+            for level, color in sev_colors.items():
+                qty = findings.get(level, 0)
+                style = (f"background:{color}; color:#1e1e1e; font-weight:bold"
+                         if qty else "background:#2a2a2a; color:#555")
+                sev_cells += (f"<td><span style='{style}; padding:2px 8px; "
+                              f"border-radius:3px; font-size:11px'>{qty}</span></td>")
+
+            # A borda da linha acompanha a pior severidade encontrada.
+            worst = next((c for lv, c in sev_colors.items() if findings.get(lv)), None)
+            risk_border = f"border-left: 4px solid {worst};" if worst else ""
+
             status_style = "color:#51cf66" if is_online else "color:#ff6b6b"
             status_text = "ONLINE" if is_online else "OFFLINE"
-            border_style = "border-left: 4px solid #51cf66;" if is_online else "border-left: 4px solid #ff6b6b;"
+            border_style = risk_border or ("border-left: 4px solid #51cf66;" if is_online else "border-left: 4px solid #ff6b6b;")
 
             rows += f"""
             <tr style='background:#252526; border-bottom:1px solid #333; {border_style}'>
@@ -232,6 +275,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     <br><small style='color:#666; font-family:monospace'>{uuid}</small>
                 </td>
                 <td style='color:#ccc'>{ip}</td>
+                {sev_cells}
                 <td style='color:#aaa'>{seen}</td>
                 <td><span style='{status_style}; font-weight:bold; font-size:11px; border:1px solid; padding:2px 6px; border-radius:3px'>{status_text}</span></td>
                 <td><a href='/agent/{uuid}' class='btn-view'>VIEW REPORT</a></td>
@@ -258,7 +302,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             <div style="font-size:0.9em; color:#aaa; font-weight:bold">{len(agents)} AGENTS</div>
         </div>
         <table>
-            <thead><tr><th>Hostname / UUID</th><th>IP Address</th><th>Last Seen</th><th>Status</th><th>Action</th></tr></thead>
+            <thead><tr><th>Hostname / UUID</th><th>IP Address</th><th>Crit</th><th>High</th><th>Med</th><th>Low</th><th>Last Seen</th><th>Status</th><th>Action</th></tr></thead>
             <tbody>{rows}</tbody>
         </table>
         </body></html>

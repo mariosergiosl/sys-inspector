@@ -24,7 +24,8 @@ import logging
 from src.core.engine import SysInspectorEngine
 # [FIXED] Importing the function directly, not a non-existent class
 from src.collectors.system_inventory import collect_full_inventory
-from src.collectors.manager import summarize_metrics, collect_findings
+from src.collectors.manager import (summarize_metrics, collect_findings,
+                                    correlate_findings_with_processes)
 from src.core.findings import summarize_by_severity
 # from src.core.database import DatabaseManager
 from src.core.crypto import load_public_key, encrypt_data
@@ -157,7 +158,12 @@ class DaemonController:
 
         # Achados estaticos (persistencia), mesmo conjunto dos demais modos.
         findings = collect_findings()
-        full_data['findings'] = [f.to_dict() for f in findings]
+        serialized = [f.to_dict() for f in findings]
+        # Liga o achado estatico ao runtime, como no modo snapshot: sem isso a
+        # captura do agente nunca oferece o atalho do achado para o processo
+        # que esta executando o caminho denunciado.
+        correlate_findings_with_processes(serialized, full_data['processes'])
+        full_data['findings'] = serialized
         full_data['findings_summary'] = summarize_by_severity(findings)
 
         # D. Metricas quentes (mesmo helper compartilhado do snapshot).
