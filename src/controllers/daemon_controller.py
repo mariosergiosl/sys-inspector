@@ -338,7 +338,7 @@ class DaemonController:
         full_data['cycle'] = cycle_id
 
         # Achados estaticos (persistencia), mesmo conjunto dos demais modos.
-        findings = collect_findings()
+        findings = collect_findings(full_data['processes'])
         serialized = [f.to_dict() for f in findings]
         # Liga o achado estatico ao runtime, como no modo snapshot: sem isso a
         # captura do agente nunca oferece o atalho do achado para o processo

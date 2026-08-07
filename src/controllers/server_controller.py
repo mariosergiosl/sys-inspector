@@ -34,6 +34,7 @@ from src.collectors.process_tree import ProcessTree, ProcessNode
 from src.core.crypto import load_private_key, decrypt_data
 from src.core.ingest import IngestQueue, process_batch
 from src.core.retention import RetentionPolicy
+from src.core.notify import Notifier
 from src.core.commands import CommandQueue, ALLOWED
 from src.core.tls import ensure_self_signed_cert
 from src.core.outbox import PATH_SLOT, PATH_INGEST, PATH_COMMAND_RESULT
@@ -287,6 +288,13 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 # A mesma resposta leva o que o analista pediu, evitando uma
                 # segunda ida e volta so para perguntar por ordens.
                 resposta["commands"] = controller.commands.take_for(agent_uuid)
+                # Confirma o que ESTA GUARDADO, nao o que foi recebido. E o que
+                # autoriza o agente a liberar espaco sem risco de a captura se
+                # perder dos dois lados.
+                pedidos = data.get("confirm_digests") or []
+                if pedidos:
+                    resposta["stored_digests"] = controller.db.digests_present(
+                        pedidos[:500])
                 # Identidade do host chega tambem no check-in, para um agente
                 # ocioso continuar aparecendo corretamente na frota.
                 host = data.get('host') or {}
@@ -310,6 +318,20 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 self._reply({"status": "error"}, status=500)
                 return
             controller.logger.info("[INGEST] %s from %s", result, agent_uuid)
+
+            # Avisa quem precisa agir. O resumo de achados chega em claro junto
+            # da captura, entao o alerta sai sem decifrar nada e sem esperar a
+            # fila ser drenada: um aviso que chega depois do incidente terminar
+            # nao serve para agir.
+            try:
+                resumo = (data.get("findings_summary") or {}).get("items") or []
+                if resumo:
+                    controller.notifier.notify(
+                        (data.get("host") or {}).get("hostname") or agent_uuid,
+                        resumo,
+                        url="%s/agent/%s" % (controller.public_url, agent_uuid))
+            except Exception as e:
+                controller.logger.error("[NOTIFY] Failed: %s", e)
             self._reply({"status": result}, status=201 if result == "received" else 200)
             return
 
@@ -991,6 +1013,17 @@ class ServerController:
         # Fila de comandos: o analista pede, o AGENTE recolhe quando fala com o
         # servidor. O servidor nunca inicia conexao com o host inspecionado.
         self.commands = CommandQueue(config['storage']['sqlite_path'])
+
+        # Aviso ativo. Desligado por padrao: um alerta que sai sem alguem ter
+        # pedido e um vazamento, nao uma comodidade.
+        self.notifier = Notifier(config)
+        rede = config.get('network', {}) or {}
+        self.public_url = (rede.get('public_url')
+                           or "https://%s:%s" % (rede.get('bind_address', 'localhost'),
+                                                 rede.get('bind_port', 8080)))
+        if self.notifier.enabled:
+            self.logger.info("[NOTIFY] Alerts enabled from severity %s",
+                             self.notifier.min_severity)
         self.ingest_token = (config.get('server', {}) or {}).get('auth_token', '') or ''
         if not self.ingest_token:
             self.logger.warning(

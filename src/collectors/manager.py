@@ -119,7 +119,7 @@ def correlate_findings_with_processes(findings, processes):
     return findings
 
 
-def collect_findings():
+def collect_findings(processos=None):
     """
     Executa os coletores de achados estaticos e devolve a lista normalizada,
     deduplicada e ordenada por severidade (mais grave primeiro).
@@ -138,6 +138,15 @@ def collect_findings():
         findings.extend(collect_hidden())
     except Exception as exc:
         logging.getLogger("CollectorMgr").error(f"[COLLECT] Hidden scan failed: {exc}")
+    # Reusa a arvore ja coletada em vez de varrer /proc de novo: o custo extra
+    # no host inspecionado fica proximo de zero.
+    if processos:
+        try:
+            from src.collectors.memory_forensics import collect_memory_forensics
+            findings.extend(collect_memory_forensics(processos))
+        except Exception as exc:
+            logging.getLogger("CollectorMgr").error(
+                f"[COLLECT] Memory forensics failed: {exc}")
     return sort_findings(dedupe_findings(findings))
 
 

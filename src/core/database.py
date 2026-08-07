@@ -302,6 +302,71 @@ class DatabaseManager:
     # --------------------------------------------------------------------------
     # READ OPERATIONS
     # --------------------------------------------------------------------------
+    def get_confirmed_candidates(self, limit=200):
+        """
+        Capturas ja entregues cujo digest ainda nao foi confirmado pelo servidor.
+
+        Sao as candidatas a liberar espaco no agente. Entregue nao significa
+        guardado: a entrega termina na fila de ingestao do servidor, e entre a
+        fila e o disco ainda ha um passo que pode falhar. Apagar aqui com base
+        no aceite da entrega perderia a captura nas DUAS pontas.
+        """
+        try:
+            with closing(self._get_conn()) as conn:
+                cursor = conn.execute("""
+                    SELECT id, digest FROM snapshots
+                    WHERE synced = 1 AND digest IS NOT NULL
+                      AND json_blob IS NOT NULL
+                    ORDER BY id ASC LIMIT ?
+                """, (limit,))
+                return [{"id": r[0], "digest": r[1]} for r in cursor]
+        except Exception as e:
+            self.logger.error(f"Listing confirmed candidates failed: {e}")
+            return []
+
+    def purge_confirmed(self, snapshot_ids):
+        """
+        Libera o conteudo local das capturas que o servidor confirmou guardar.
+
+        A LINHA permanece, com digest e encadeamento: e o mesmo cuidado da
+        retencao no servidor, porque apagar o elo romperia a cadeia de custodia
+        do proprio agente e a verificacao local passaria a falhar.
+        """
+        if not snapshot_ids:
+            return 0
+        try:
+            with closing(self._get_conn()) as conn:
+                marcas = ",".join("?" * len(snapshot_ids))
+                cur = conn.execute(
+                    "UPDATE snapshots SET json_blob = NULL WHERE id IN (%s)"
+                    % marcas, list(snapshot_ids))
+                conn.commit()
+                return cur.rowcount
+        except Exception as e:
+            self.logger.error(f"Purging confirmed snapshots failed: {e}")
+            return 0
+
+    def digests_present(self, digests):
+        """
+        Quais destes digests estao de fato guardados aqui.
+
+        Chamada no SERVIDOR para responder ao agente. Conferir o digest, e nao o
+        id, e o que torna a resposta confiavel: o id e local de cada lado, o
+        digest identifica o conteudo.
+        """
+        if not digests:
+            return []
+        try:
+            with closing(self._get_conn()) as conn:
+                marcas = ",".join("?" * len(digests))
+                cursor = conn.execute(
+                    "SELECT digest FROM snapshots WHERE digest IN (%s) "
+                    "AND json_blob IS NOT NULL" % marcas, list(digests))
+                return [r[0] for r in cursor]
+        except Exception as e:
+            self.logger.error(f"Checking digests failed: {e}")
+            return []
+
     def get_pending_snapshots(self, limit=50):
         try:
             with closing(self._get_conn()) as conn:

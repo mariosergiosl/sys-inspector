@@ -196,11 +196,34 @@ class Outbox(object):
         assume-se o lote configurado, para um servidor antigo continuar
         funcionando com um agente novo.
         """
+        # Aproveita a MESMA ida e volta para perguntar o que ja esta guardado
+        # no servidor. Uma rotina separada so para isso criaria um segundo
+        # relogio e mais trafego, quando a conversa ja acontece a cada ciclo.
+        candidatos = []
+        try:
+            candidatos = self.db.get_confirmed_candidates()
+        except Exception:
+            pass
+
         answer = self._post(PATH_SLOT, {
             "agent_uuid": getattr(self.db, "agent_id", ""),
             "pending": pending,
             "host": self._host_identity(),
+            "confirm_digests": [c["digest"] for c in candidatos],
         })
+
+        # Libera localmente SOMENTE o que o servidor afirma ter guardado.
+        # Entregue nao e o mesmo que guardado: a entrega termina na fila de
+        # ingestao, e entre a fila e o disco ha um passo que pode falhar. Apagar
+        # com base no aceite da entrega perderia a captura nas duas pontas.
+        guardados = set(answer.get("stored_digests") or [])
+        if guardados:
+            liberar = [c["id"] for c in candidatos if c["digest"] in guardados]
+            if liberar:
+                n = self.db.purge_confirmed(liberar)
+                if n:
+                    LOG.info("[OUTBOX] %d capture(s) released locally after the "
+                             "server confirmed storage", n)
         # A MESMA ida e volta ja traz o que o analista pediu. Perguntar por
         # comandos numa requisicao separada dobraria o trafego e criaria dois
         # relogios diferentes para a mesma conversa com o servidor.
