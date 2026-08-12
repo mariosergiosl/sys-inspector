@@ -1,0 +1,53 @@
+== RODADA 9  START=1786565290 ==
+  [ OK ] systemd unit (T1543.002)
+  [ OK ] cron (T1053.003)
+  [ OK ] ld.so.preload (T1574.006)
+  [ OK ] binario em local gravavel (miner)
+  [ OK ] GPU/mineracao
+  [ OK ] falha de rede (NET ERR)
+  [ OK ] processo zumbi
+  [ OK ] binario apagado (DELETED)
+  [ OK ] EDR/AV (fanotify)
+  [ OK ] container
+  [ OK ] arquivo imutavel (T1222.002)  (detectado como Finding de persistencia)
+  janela: 5 capturas | max_score=369 | tags=CONTAINER,DELETED,EDR-WAIT,EDR/AV,GPU,MINER,NET ERR,SSH,SUDO,UNSAFE,WARN,ZOMBIE,🧊
+RESULT 161 PASS
+  [ OK ] systemd unit (T1543.002)
+  [ OK ] cron (T1053.003)
+  [ OK ] ld.so.preload (T1574.006)
+  [ OK ] binario em local gravavel (miner)
+  [ OK ] GPU/mineracao
+  [ OK ] falha de rede (NET ERR)
+  [ OK ] processo zumbi
+  [ OK ] binario apagado (DELETED)
+  [ OK ] EDR/AV (fanotify)
+  [N/A ] container  (N/A: host sem podman)
+  [ OK ] arquivo imutavel (T1222.002)  (detectado como Finding de persistencia)
+  janela: 6 capturas | max_score=369 | tags=DELETED,EDR-WAIT,EDR/AV,GPU,MINER,NET ERR,SSH,SUDO,UNSAFE,WARN,ZOMBIE,🧊
+RESULT 167 PASS
+  [ OK ] systemd unit (T1543.002)
+  [ OK ] cron (T1053.003)
+  [N/A ] ld.so.preload (T1574.006)  (N/A: host sem gcc nao planta a lib)
+  [ OK ] binario em local gravavel (miner)
+  [ OK ] GPU/mineracao
+  [ OK ] falha de rede (NET ERR)
+  [ OK ] processo zumbi
+  [ OK ] binario apagado (DELETED)
+  [ OK ] EDR/AV (fanotify)
+  [N/A ] container  (N/A: host sem podman)
+  [ OK ] arquivo imutavel (T1222.002)  (detectado como Finding de persistencia)
+  janela: 5 capturas | max_score=305 | tags=DELETED,EDR/AV,GPU,MINER,NET ERR,SSH,SUDO,UNSAFE,WARN,ZOMBIE
+RESULT 168 PASS
+  [ OK ] systemd unit (T1543.002)
+  [ OK ] cron (T1053.003)
+  [ OK ] ld.so.preload (T1574.006)
+  [ OK ] binario em local gravavel (miner)
+  [ OK ] GPU/mineracao
+  [ OK ] falha de rede (NET ERR)
+  [ OK ] processo zumbi
+  [ OK ] binario apagado (DELETED)
+  [ OK ] EDR/AV (fanotify)
+  [N/A ] container  (N/A: host sem podman)
+  [ OK ] arquivo imutavel (T1222.002)  (detectado como Finding de persistencia)
+  janela: 5 capturas | max_score=305 | tags=DELETED,EDR/AV,GPU,MINER,NET ERR,SSH,SUDO,UNSAFE,WARN,ZOMBIE
+RESULT 200 PASS

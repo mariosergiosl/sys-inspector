@@ -194,6 +194,59 @@ def _escalate(meta, base=SEV_LOW):
 # ------------------------------------------------------------------------------
 # COLLECTORS (um por mecanismo de persistencia)
 # ------------------------------------------------------------------------------
+# Diretorios gravaveis onde um arquivo imutavel e anomalo (persistencia/anti-
+# remocao). Sistema legitimo raramente marca +i em arquivo de /tmp.
+IMMUTABLE_WATCH_DIRS = ("/tmp", "/dev/shm", "/var/tmp")
+
+
+def _collect_immutable_files():
+    """
+    Arquivos imutaveis (chattr +i) ou append-only (+a) em diretorios gravaveis.
+
+    Um arquivo que nao pode ser removido nem por root sem antes remover o
+    atributo e tecnica de ANTI-REMOCAO: o artefato resiste a limpeza pelos meios
+    normais. Em /tmp isso e anomalo, porque sistema legitimo nao marca +i ali.
+
+    POR QUE E UM FINDING, e nao um rotulo colado no processo init: a deteccao
+    tem que rodar DETERMINISTICA em toda captura, decifrada no servidor pelo
+    mesmo caminho que os demais achados de persistencia. A versao anterior somava
+    um bit ao anomaly_score do PID 1 dentro do motor eBPF, e ali a deteccao saia
+    intermitente. Achado no coletor e a fonte unica e confiavel.
+
+    Usa o mesmo scanner limitado (teto de arquivos, orcamento de tempo, sem
+    seguir socket/FIFO) de process_tree, para nao manter duas varreduras do mesmo
+    fato divergindo.
+    """
+    from src.collectors.process_tree import _immutable_files_in
+
+    findings = []
+    for entrada in _immutable_files_in(IMMUTABLE_WATCH_DIRS):
+        caminho = entrada.rsplit(" (", 1)[0]
+        atributos = entrada.rsplit(" (", 1)[-1].rstrip(")")
+        meta = _stat_info(caminho)
+        findings.append(Finding(
+            title="Immutable file in a writable directory",
+            severity=SEV_HIGH,
+            source=SRC_PERSISTENCE,
+            category="persistence",
+            target=caminho,
+            description=(
+                "A file under a world-writable directory carries the immutable "
+                "or append-only attribute. It cannot be removed, even by root, "
+                "until the attribute is cleared, which is an anti-removal "
+                "technique: the artifact survives ordinary cleanup. Legitimate "
+                "software does not mark files immutable under /tmp."),
+            evidence={"attributes": atributos, "meta": meta},
+            technique="T1222.002",
+            recommendation=(
+                "Inspect the file before removing it. To delete, clear the "
+                "attribute first ('chattr -i <path>'), then remove. Investigate "
+                "what created it and whether it is referenced by a persistence "
+                "mechanism."),
+        ))
+    return findings
+
+
 def _collect_ld_preload():
     """
     /etc/ld.so.preload force o carregamento de uma biblioteca em TODO processo
@@ -602,6 +655,7 @@ def collect_persistence():
     """
     collectors = (
         ("ld.so.preload", _collect_ld_preload),
+        ("immutable files", _collect_immutable_files),
         ("systemd", _collect_systemd_units),
         ("cron", _collect_cron),
         ("startup scripts", _collect_startup_scripts),

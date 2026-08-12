@@ -32,6 +32,12 @@ TECHNIQUES = {
         "Execution, Persistence, Privilege Escalation",
         "A scheduling mechanism re-launches the payload on its own, which is "
         "what turns a one-off execution into something that comes back."),
+    "T1222.002": (
+        "File and Directory Permissions Modification: Linux",
+        "Defense Evasion",
+        "Changing file attributes such as the immutable flag makes an artifact "
+        "resist removal and inspection, a common anti-forensics and anti-removal "
+        "technique on the file itself."),
     "T1055": (
         "Process Injection",
         "Defense Evasion, Privilege Escalation",

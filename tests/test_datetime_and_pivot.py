@@ -164,6 +164,23 @@ def test_run_chaos_procura_o_maker_em_varios_caminhos():
     assert "CHAOS_MAKER_NOT_FOUND" in texto
 
 
+def test_gateway_guard_e_opt_in_e_local_only():
+    """
+    Por padrao roda --all em todo host (o caos de rede e transitorio: tc e
+    iptables sao desfeitos ao fim e zerados por reboot). A trava de gateway
+    existe opt-in (SAFE_ON_GATEWAY=1) e, quando ligada, no host que possui o IP
+    de gateway do lab roda so modulos locais, sem --net nem --firewall.
+
+    ip_forward NAO e usado: vem ligado por padrao em toda VM VirtualBox.
+    """
+    texto = io.open(CHAOS, encoding="utf-8").read()
+    assert 'modulos="--all"' in texto
+    assert "SAFE_ON_GATEWAY" in texto
+    assert "LAB_GATEWAY_IP" in texto
+    m = re.search(r'modulos="(--disk[^"]*)"', texto)
+    assert m and "--net" not in m.group(1) and "--firewall" not in m.group(1)
+
+
 def test_apenas_um_processo_carrega_lib_de_local_estranho():
     """
     So o processo plantado carrega a lib de /dev/shm, via seu proprio ambiente.

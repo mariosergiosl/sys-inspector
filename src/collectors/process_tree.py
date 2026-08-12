@@ -16,6 +16,7 @@
 import os
 import pwd
 import grp
+import stat
 import hashlib
 import glob
 import re
@@ -243,6 +244,119 @@ def _check_immutable_path(path):
                 return attrs
     except: pass
     return False
+
+
+def _immutable_files_in(dirs, cap=20, max_scan=50000, budget_s=2.5):
+    """
+    Arquivos imutaveis (i) ou append-only (a) DENTRO dos diretorios gravaveis.
+
+    A checagem anterior olhava so o atributo do PROPRIO diretorio (`lsattr -d`),
+    e por isso nao via o caso mais comum e mais relevante: um ARQUIVO tornado
+    imutavel dentro de um diretorio gravavel. E tecnica corrente de anti-remocao
+    -- o artefato nao pode ser apagado pelos meios normais nem por root sem antes
+    remover o atributo. Foi o que o cenario de teste plantava
+    (`/tmp/chaos_artifacts/immutable.dat`) e que passava despercebido.
+
+    RECENTES PRIMEIRO: um artefato de anti-remocao acabou de ser criado, entao a
+    travessia visita cada diretorio em ordem de modificacao decrescente. Assim o
+    arquivo recem-marcado e checado no comeco, e a deteccao nao depende de quantos
+    arquivos ANTIGOS enchem o /tmp nem da ordem arbitraria do os.walk. Foi a falha
+    que a certificacao do chaos pegou: com ~17 mil arquivos em /tmp o artefato
+    (planto ha segundos) ficava para o fim da varredura e o orcamento de tempo se
+    esgotava antes de alcanca-lo, num host, enquanto noutro com /tmp enxuto era
+    detectado. Ordenando por recencia, o artefato aparece primeiro nos dois.
+    """
+    if not shutil.which("lsattr"):
+        return []
+
+    deadline = time.time() + budget_s
+    achados = []
+    escaneados = [0]
+
+    def _checar(caminho):
+        """
+        lsattr num UNICO arquivo, com timeout proprio.
+
+        Por arquivo, e nao em lote, de proposito. Um lsattr sobre um arquivo sob
+        I/O pesado (medido: o io_test.dat de 5MB reescrito com fsync em loop faz
+        o lsattr do lote levar ~50s) BLOQUEIA. Em lote, esse unico arquivo lento
+        estoura o timeout e leva junto o RESULTADO do artefato que estava no
+        mesmo lote. Isolado, o arquivo lento custa so o proprio timeout e nao
+        contamina o achado. Foi a causa raiz que a certificacao do chaos revelou.
+        """
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                ["lsattr", "-d", caminho],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                universal_newlines=True)
+            out, _ = proc.communicate(timeout=1)
+        except Exception:
+            if proc:
+                try: proc.kill()
+                except Exception: pass
+            return
+        for line in (out or "").splitlines():
+            partes = line.split(None, 1)
+            if len(partes) != 2:
+                continue
+            attrs, achado = partes[0], partes[1]
+            if 'i' in attrs or 'a' in attrs:
+                achados.append("%s (%s)" % (achado, attrs))
+
+    def _mtime(entrada):
+        try:
+            return entrada.stat(follow_symlinks=False).st_mtime
+        except OSError:
+            return 0
+
+    def _varrer(raiz):
+        """
+        Travessia recursiva. Subdiretorios sao visitados por RECENCIA (o artefato
+        recem-plantado primeiro), para a deteccao nao depender de quantos
+        arquivos velhos enchem o /tmp. Arquivos sao checados um a um.
+
+        So arquivos REGULARES entram: imutabilidade nao se aplica a socket ou
+        FIFO, e o lsattr sobre socket BLOQUEIA ate o timeout.
+        """
+        if time.time() > deadline or escaneados[0] >= max_scan:
+            return True
+        try:
+            entradas = list(os.scandir(raiz))
+        except OSError:
+            return False
+
+        subdirs = []
+        for e in entradas:
+            try:
+                if e.is_symlink():
+                    continue
+                if e.is_dir(follow_symlinks=False):
+                    subdirs.append(e)
+                    continue
+                if not e.is_file(follow_symlinks=False):
+                    continue
+            except OSError:
+                continue
+            _checar(e.path)
+            escaneados[0] += 1
+            if len(achados) >= cap or time.time() > deadline \
+                    or escaneados[0] >= max_scan:
+                return True
+
+        subdirs.sort(key=_mtime, reverse=True)
+        for sd in subdirs:
+            if _varrer(sd.path):
+                return True
+        return False
+
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        if _varrer(d):
+            break
+
+    return achados[:cap]
 
 
 def _get_udp_stats():
@@ -683,10 +797,15 @@ class ProcessTree:
         self.first_scan = False
 
         bad_dirs = []
-        for d in ["/tmp", "/dev/shm"]:
+        watch_dirs = ["/tmp", "/dev/shm", "/var/tmp"]
+        for d in watch_dirs:
             attrs = _check_immutable_path(d)
             if attrs:
                 bad_dirs.append(f"{d} ({attrs})")
+
+        # Alem do atributo do PROPRIO diretorio, os ARQUIVOS imutaveis dentro
+        # dele: e o caso comum de anti-remocao, e era o que passava despercebido.
+        bad_dirs.extend(_immutable_files_in(watch_dirs))
 
         self.immutable_alert = bad_dirs if bad_dirs else []
 

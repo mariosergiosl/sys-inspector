@@ -56,6 +56,9 @@ CRON_EVIL="/etc/cron.d/evil-cron"
 CRON_HIDDEN="/etc/cron.d/.hidden-cron"
 MINER="/dev/shm/miner.sh"
 CHAOS_HOME="/opt/sys-inspector"
+# Endereco do gateway do lab: o host que o possui roteia a rede das outras VMs,
+# entao nao pode rodar o caos de REDE (derrubaria a frota e o proprio SSH).
+LAB_GATEWAY_IP="${LAB_GATEWAY_IP:-192.168.56.200}"
 
 #=== FUNCTION ==========================================================================
 # NAME:         usage
@@ -200,11 +203,31 @@ run_chaos() {
         echo "CHAOS_MAKER_NOT_FOUND $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/chaos.log
         return 0
     fi
-    echo "--- Launching chaos_maker from ${maker} for ${dur}s ---"
+    # MODULOS.
+    #
+    # Padrao: --all, inclusive nos hosts que roteiam a rede das outras VMs. O
+    # caos de rede (--net via tc) e de firewall (--firewall via iptables) e
+    # TRANSITORIO: o proprio chaos_maker o desfaz ao fim da duracao, e um reboot
+    # o zera. O que exige cuidado num gateway nao e o caos de rede, e sim
+    # mudanca de configuracao PERSISTENTE; por isso a limpeza ao fim precisa ser
+    # rigorosa (ver cleanup_previous e o script de limpeza do certificador).
+    #
+    # A trava de gateway continua disponivel para uso deliberado: exportar
+    # SAFE_ON_GATEWAY=1 antes de chamar roda so os modulos locais no host que
+    # possui o IP de gateway do lab.
+    local modulos="--all"
+    if [ "${SAFE_ON_GATEWAY:-0}" = "1" ] \
+       && ip -o addr 2>/dev/null | grep -q "${LAB_GATEWAY_IP}"; then
+        modulos="--disk --proc --gpu --fanotify --container"
+        echo "--- SAFE_ON_GATEWAY: host possui ${LAB_GATEWAY_IP}, so modulos locais ---"
+    fi
+
+    echo "--- Launching chaos_maker from ${maker} (${modulos}) for ${dur}s ---"
     {
-        echo "CHAOS_MAKER_START $(date -u +%Y-%m-%dT%H:%M:%SZ) using ${maker} dur=${dur}"
+        echo "CHAOS_MAKER_START $(date -u +%Y-%m-%dT%H:%M:%SZ) using ${maker}" \
+             "modules=${modulos} dur=${dur} gateway_guard=${motivo:-none}"
     } > /tmp/chaos.log
-    setsid nohup bash "${maker}" --all --duration "${dur}" \
+    setsid nohup bash "${maker}" ${modulos} --duration "${dur}" \
         >>/tmp/chaos.log 2>&1 </dev/null &
 }
 
