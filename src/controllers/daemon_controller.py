@@ -296,15 +296,30 @@ class DaemonController:
                 "[CMD] Restart failed and the agent is stopping: %s. This host "
                 "is no longer being collected.", exc)
 
+    # Marcador que o chaos_maker imprime quando TODOS os artefatos ja estao
+    # plantados e vivos. Capturar antes disso pega a cena vazia: o cenario ainda
+    # esta compilando os artefatos em C, plantando arquivos e subindo processos.
+    CHAOS_READY_MARK = "SYSTEM READY FOR COLLECTION"
+    CHAOS_SETUP_TIMEOUT = 40
+
     def _run_chaos(self, params):
         """
-        Dispara o gerador de cenario de teste, quando presente.
+        Dispara o gerador de cenario de teste e ESPERA ele ficar pronto.
 
         E uma ferramenta de laboratorio: valida a deteccao ponta a ponta. Se o
         script nao estiver instalado, o comando falha de forma explicita em vez
         de fingir que rodou.
+
+        A espera pelo "SYSTEM READY" e o ponto central: o chaos_maker roda em
+        background e leva alguns segundos para montar tudo (compila artefatos em
+        C, planta arquivos, sobe processos). Capturar no instante em que ele e
+        LANCADO pega uma cena que ainda nao existe -- foi o que fazia a captura
+        logo apos o chaos parecer "nao detectar", enquanto pedir a captura depois
+        do READY pegava tudo. Aqui a captura que vem em seguida (collect_and_store)
+        so comeca quando o cenario esta de pe.
         """
         import os
+        import time
         import subprocess
 
         duracao = str(int(params.get("duration", 300) or 300))
@@ -314,10 +329,49 @@ class DaemonController:
         if not script:
             raise RuntimeError("chaos_maker.sh not installed on this host")
 
+        log_path = "/tmp/si_chaos_cmd.log"
+        try:
+            log_fh = open(log_path, "w")
+        except OSError:
+            log_fh = subprocess.DEVNULL
+        # stdout num arquivo (nao DEVNULL) para poder esperar o marcador de
+        # pronto sem bloquear o processo do chaos, que segue escrevendo la.
         subprocess.Popen(["/bin/bash", script, "--all", "--duration", duracao],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         stdout=log_fh, stderr=subprocess.STDOUT,
                          start_new_session=True)
-        return "chaos rodando por %ss" % duracao
+        if hasattr(log_fh, "close"):
+            try: log_fh.close()
+            except OSError: pass
+
+        pronto = self._esperar_chaos_pronto(log_path, self.CHAOS_SETUP_TIMEOUT)
+        estado = "pronto para captura" if pronto else \
+            "setup nao confirmado em %ss (capturando mesmo assim)" \
+            % self.CHAOS_SETUP_TIMEOUT
+        return "chaos rodando por %ss; %s" % (duracao, estado)
+
+    def _esperar_chaos_pronto(self, log_path, timeout):
+        """
+        Espera o chaos_maker imprimir o marcador de pronto, com teto de tempo.
+
+        Le o arquivo de log em vez de consumir o stdout do processo, para nao
+        arriscar um SIGPIPE que interromperia o cenario. Retorna True se o
+        marcador apareceu, False no timeout (a captura ainda ocorre, para o
+        comando nunca ficar sem desfecho).
+        """
+        import time
+
+        fim = time.time() + timeout
+        while time.time() < fim:
+            if self.shutdown_event.is_set():
+                return False
+            try:
+                with open(log_path, "r", errors="replace") as fh:
+                    if self.CHAOS_READY_MARK in fh.read():
+                        return True
+            except OSError:
+                pass
+            time.sleep(0.5)
+        return False
 
     def collect_and_store(self, engine, cycle_id):
         """
