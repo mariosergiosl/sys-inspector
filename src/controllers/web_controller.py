@@ -589,6 +589,8 @@ class WebController:
                 findings = inv.get('findings', []) or []
                 findings_html = render_findings_panel(findings)
                 actionable = sum(1 for f in findings if f.get('severity') != 'Info')
+                # Tecnicas ATT&CK distintas desta captura, para o rotulo da aba.
+                n_tec = len({f.get('technique') for f in findings if f.get('technique')})
 
                 return HTML_TEMPLATE.format(
                     VERSION="0.90 (Live)",
@@ -603,6 +605,7 @@ class WebController:
                     FINDINGS_CONTENT=findings_html,
                     FINDINGS_BADGE=(f"<span class='tab-count'>{actionable}</span>" if actionable else ""),
                     ATTACK_CONTENT=render_attack_panel(findings),
+                    ATTACK_BADGE=(f"<span class='tab-count'>{n_tec}</span>" if n_tec else ""),
                     TABLE_ROWS=rows_html
                 )
             except Exception as e:

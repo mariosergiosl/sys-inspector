@@ -17,7 +17,9 @@ import re
 import datetime
 import html as html_lib
 from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, JS_BLOCK, LEGEND_HTML
-from src.core.findings import SEV_INFO, SEVERITY_ORDER
+from src.core.findings import (SEV_INFO, SEVERITY_ORDER, confidence_label,
+                               custody_label, custody_level, CONF_CONFIRMED,
+                               CONF_PROBABLE, CONF_HEURISTIC, CUSTODY_NONE)
 from src.core import risk
 from src.core.attack import describe, technique_url, used_techniques
 
@@ -948,6 +950,75 @@ def _report_help(titulo, corpo_html, largura=340):
             "<h4>%s</h4>%s</span></span>" % (largura, titulo, corpo_html))
 
 
+# Explicacao curta de cada chave de evidencia, para o analista saber "para que
+# serve esta informacao" (pergunta do Mario). Chave desconhecida nao ganha
+# tooltip, e isso e honesto: nao inventamos significado.
+_EVIDENCE_HELP = {
+    "reference": "O alvo real que o mecanismo dispara: o que de fato roda.",
+    "content": "A linha literal encontrada no arquivo: a prova crua.",
+    "meta": "Metadados do arquivo (dono, permissao, datas mtime/ctime/atime): "
+            "permite datar o artefato e ver quem podia escrever.",
+    "provenance": "Veio de pacote? verificado? Separa o que pertence ao sistema "
+                  "do que foi plantado (packaged:false = fora do gerenciador).",
+    "attributes": "Atributos do arquivo lidos por lsattr (ex.: imutavel).",
+    "count": "Contagem de itens inventariados nesta captura (baseline).",
+    "user": "Usuario dono do mecanismo (ex.: dono do authorized_keys).",
+    "key_count": "Quantas chaves SSH aceitam login para este usuario.",
+    "key_comments": "Comentario/identidade de cada chave, para reconhecer o dono.",
+    "libraries": "Bibliotecas carregadas de local nao confiavel pelo processo.",
+    "regions": "Regioes de memoria gravaveis e executaveis ao mesmo tempo.",
+    "total_kb": "Tamanho total das regioes suspeitas, em KB.",
+    "jit_capable": "Se o processo gera codigo por natureza (JIT), o que explica "
+                   "o W+X sem inocenta-lo.",
+    "cmd": "Linha de comando do processo envolvido.",
+    "pid": "Identificador do processo envolvido.",
+    "mapped_inode": "Inode do binario que o processo esta executando em memoria.",
+    "disk_inode": "Inode do binario no disco agora: se difere, foi trocado.",
+}
+
+# Confianca: cor e explicacao do nivel (contrato, D-022). O selo modula como ler
+# a severidade: uma heuristica critica pede confirmacao antes de conclusao.
+_CONFIDENCE_STYLE = {
+    CONF_CONFIRMED: ("#6bcB77", "fato verificado: o objeto foi lido ou existe"),
+    CONF_PROBABLE: ("#ffd166", "forte indicio, coerente, mas nao confirmado"),
+    CONF_HEURISTIC: ("#7fb3d5", "regra local; admite falso positivo conhecido"),
+}
+
+
+def _confidence_badge(confidence):
+    """Selo de confianca do achado, ou vazio quando o coletor nao declarou."""
+    if confidence not in _CONFIDENCE_STYLE:
+        return ""
+    cor, tip = _CONFIDENCE_STYLE[confidence]
+    return ("<span class='fnd-conf' style='border-color:%s;color:%s' "
+            "title='Confianca (%s): %s'>%s</span>"
+            % (cor, cor, _esc(confidence_label(confidence)), _esc(tip),
+               _esc(confidence_label(confidence))))
+
+
+def _custody_line(custody):
+    """Linha de custodia: o que foi de fato preservado do artefato."""
+    nivel = custody_level(custody)
+    extra = ""
+    if isinstance(custody, dict) and custody.get("sha256"):
+        extra = " (sha256 %s...)" % _esc(str(custody["sha256"])[:12])
+    aviso = ("" if nivel != CUSTODY_NONE else
+             " &mdash; nada do artefato foi retido para pericia")
+    return ("<div class='fnd-custody' title='Custodia: o que foi preservado do "
+            "artefato para a pericia. Hoje a ferramenta coleta metadado; hash e "
+            "copia do artefato entram no roadmap.'><b>Custodia:</b> %s%s%s</div>"
+            % (_esc(custody_label(custody)), extra, aviso))
+
+
+def _evidence_key_html(key):
+    """Chave da evidencia com tooltip explicativo quando conhecida."""
+    ajuda = _EVIDENCE_HELP.get(key)
+    if ajuda:
+        return ("<span class='fnd-ev-k' style='cursor:help' title='%s'>%s</span>"
+                % (_esc(ajuda), _esc(key)))
+    return "<span class='fnd-ev-k'>%s</span>" % _esc(key)
+
+
 def render_findings_panel(findings):
     """
     Monta a aba Findings: resumo por severidade e a lista ranqueada de achados.
@@ -977,19 +1048,35 @@ def render_findings_panel(findings):
             f"style='border-color:{SEVERITY_COLORS.get(sev, '#888')}'>"
             f"<b style='color:{SEVERITY_COLORS.get(sev, '#888')}'>{qty}</b> {_esc(sev)}</span>")
 
-    # Ajuda "?" da aba, no mesmo padrao das demais telas.
+    # Ajuda "?" da aba, no mesmo padrao das demais telas. Inclui a legenda de
+    # severidade COM A ACAO esperada do operador (pedido do Mario: a
+    # classificacao Critical/High/Low nao dizia o que significa nem o que fazer).
     ajuda = _report_help(
         "Como ler os achados",
         "<div style='color:#bbb;font-size:11px;line-height:1.6'>"
         "Cada linha e um <b>achado</b>: o que foi encontrado, quao grave, QUEM "
         "encontrou (a fonte) e a evidencia bruta que sustenta a conclusao. "
-        "Clique num achado para abrir a evidencia e a acao recomendada.<br><br>"
-        "Os selos coloridos no topo sao a <b>legenda de prioridade E filtros</b>: "
-        "clique num deles para ver so aquela severidade; 'Mostrar todos' limpa o "
-        "filtro. A cor segue a escala unica do produto, do mais grave (Critical) "
-        "ao informativo (Info).<br><br>"
+        "Clique num achado para abrir a evidencia, a acao recomendada, a "
+        "<b>confianca</b> e a <b>custodia</b>.<br><br>"
+        "<b>Severidade e o que fazer:</b>"
+        "<table style='width:100%;border-collapse:collapse;margin:4px 0'>"
+        "<tr><td style='color:#ff4d4d'><b>Critical</b></td>"
+        "<td>artefato ativo de alto risco: conter agora (confirmar, preservar, isolar)</td></tr>"
+        "<tr><td style='color:#ff8c42'><b>High</b></td>"
+        "<td>forte indicio: investigar hoje</td></tr>"
+        "<tr><td style='color:#ffd166'><b>Medium</b></td>"
+        "<td>sinal relevante: revisar no turno</td></tr>"
+        "<tr><td style='color:#6bcB77'><b>Low</b></td>"
+        "<td>contexto de risco: registrar, baseline</td></tr>"
+        "<tr><td style='color:#7fb3d5'><b>Info</b></td>"
+        "<td>inventario: referencia, sem acao</td></tr></table>"
+        "A severidade sai da leitura unica do score (os sinais nomeados). A "
+        "<b>confianca</b> ao lado dela modula tudo: uma heuristica critica pede "
+        "confirmacao antes de conclusao.<br><br>"
+        "Os selos coloridos no topo sao <b>legenda E filtros</b>: clique para ver "
+        "so aquela severidade; 'Ver todos os niveis' limpa o filtro.<br><br>"
         "Quando o caminho denunciado esta sendo executado agora, aparece "
-        "'Ver processo', que leva ao processo na arvore.</div>", 380)
+        "'Ver processo', que leva ao processo na arvore.</div>", 420)
 
     # Legenda dos selos de prioridade, explicando que sao clicaveis (filtros).
     legenda = ("<div style='color:#777;font-size:11px;margin:0 0 8px'>"
@@ -997,8 +1084,10 @@ def render_findings_panel(findings):
 
     head = ("<div style='display:flex;align-items:center;justify-content:"
             "space-between'><div class='fnd-summary'>" + "".join(chips) +
-            "<span class='fnd-chip fnd-chip-all' onclick=\"filterFindings('')\">"
-            "Mostrar todos</span></div>" + ajuda + "</div>" + legenda)
+            "<span class='fnd-chip fnd-chip-all' onclick=\"filterFindings('')\" "
+            "title='Limpa o filtro de severidade e volta a mostrar todos os "
+            "achados desta captura'>Ver todos os niveis</span></div>"
+            + ajuda + "</div>" + legenda)
 
     # Lista ordenada: mais grave primeiro (rank), depois titulo, para ser estavel.
     ordered = sorted(findings,
@@ -1014,10 +1103,14 @@ def render_findings_panel(findings):
             info = describe(technique)
             if info:
                 name, tactic, _desc = info
-                tip = f"{technique} - {name}\nTatica: {tactic}\nVeja a aba ATT&CK para detalhes."
+                tip = f"{technique} - {name}\nTatica: {tactic}\nClique para ver na aba ATT&CK."
             else:
-                tip = f"{technique} (tecnica MITRE ATT&CK)"
-            tech_html = (f"<span class='fnd-tech' title='{_esc(tip)}'>{_esc(technique)}</span>")
+                tip = f"{technique} (tecnica MITRE ATT&CK). Clique para ver na aba ATT&CK."
+            # Clicavel: pivota para a aba ATT&CK na tecnica, sem abrir/fechar o
+            # achado (stopPropagation). E o acoplamento forte pedido.
+            tech_html = (f"<span class='fnd-tech' title='{_esc(tip)}' "
+                         f"onclick=\"pivotToAttack('{_esc(technique)}'); event.stopPropagation();\">"
+                         f"{_esc(technique)}</span>")
 
         # Pivo para o runtime: so aparece quando o caminho denunciado pelo
         # achado esta de fato sendo executado por algum processo capturado.
@@ -1037,7 +1130,7 @@ def render_findings_panel(findings):
             text = value if isinstance(value, str) else repr(value)
             if len(text) > 2000:
                 text = text[:2000] + " ... [truncated]"
-            ev_rows.append(f"<div class='fnd-ev-row'><span class='fnd-ev-k'>{_esc(key)}</span>"
+            ev_rows.append(f"<div class='fnd-ev-row'>{_evidence_key_html(key)}"
                            f"<pre class='fnd-ev-v'>{_esc(text)}</pre></div>")
         ev_html = ("".join(ev_rows) if ev_rows
                    else "<div class='d-na'>Sem evidencia bruta anexada.</div>")
@@ -1050,11 +1143,17 @@ def render_findings_panel(findings):
         refs_html = (f"<div class='fnd-refs'><b>Referencias:</b> {_esc(', '.join(str(r) for r in refs))}</div>"
                      if refs else "")
 
+        # Confianca (na cabeca, pois modula como ler a severidade) e custodia (no
+        # detalhe, junto da evidencia). Vem do contrato de resposta do achado.
+        conf_html = _confidence_badge(f.get("confidence"))
+        custody_html = _custody_line(f.get("custody"))
+
         items.append(f"""
-        <div class="fnd-item" data-sev="{_esc(sev)}" data-source="{_esc(f.get('source', ''))}">
+        <div class="fnd-item" data-sev="{_esc(sev)}" data-source="{_esc(f.get('source', ''))}" data-technique="{_esc(technique)}">
             <div class="fnd-head" onclick="toggleFinding({idx})">
                 <span class="fnd-sev" style="background:{color}">{_esc(sev)}</span>
                 <span class="fnd-title">{_esc(f.get('title', ''))}</span>
+                {conf_html}
                 {tech_html}
                 {pivot_html}
                 <span class="fnd-src" title="Qual coletor produziu este achado (ebpf, persistence, integrity, heuristic...)">{_esc(f.get('source', ''))}</span>
@@ -1063,6 +1162,7 @@ def render_findings_panel(findings):
             <div class="fnd-det" id="fnd-{idx}">
                 <div class="fnd-desc">{_esc(f.get('description', ''))}</div>
                 {rec_html}
+                {custody_html}
                 {refs_html}
                 <div class="fnd-ev-title">Evidencia</div>
                 {ev_html}
@@ -1130,12 +1230,21 @@ def render_attack_panel(findings):
         for t in [x.strip() for x in (tactic or "").split(",") if x.strip()]:
             taticas_selos += ("<span class='atk-tac-badge'>%s</span>"
                               % _esc(t))
+        # Link de volta: da tecnica para os achados que a citam (acoplamento
+        # bidirecional). So aparece quando ha achados desta captura citando-a.
+        back = ""
+        if qty:
+            back = (f"<span class='atk-back' "
+                    f"onclick=\"filterFindingsByTechnique('{_esc(tid)}')\" "
+                    f"title='Filtra a aba Findings para os {qty} achado(s) que "
+                    f"citam esta tecnica'>&#9664; Ver achados</span>")
         rows.append(f"""
-        <div class="atk-item">
+        <div class="atk-item" id="atk-{_esc(tid)}">
             <div class="atk-head">
                 <span class="atk-id">{_esc(tid)}</span>
                 <span class="atk-name">{_esc(name)}</span>
                 <span class="atk-qty" title="Quantos achados citam esta tecnica">{qty}x</span>
+                {back}
             </div>
             <div class="atk-tactic">Tatica(s): {taticas_selos or _esc(tactic)}</div>
             <div class="atk-desc">{_esc(desc)}</div>
@@ -1185,6 +1294,9 @@ def generate_report(inventory, process_tree, output_file, version):
         # Contagem de achados que exigem atencao, exibida na propria aba.
         actionable = sum(1 for f in findings if f.get('severity') != SEV_INFO)
         findings_badge = (f"<span class='tab-count'>{actionable}</span>" if actionable else "")
+        # Quantas tecnicas ATT&CK distintas esta captura cita, no rotulo da aba.
+        n_tec = len(used_techniques(findings))
+        attack_badge = (f"<span class='tab-count'>{n_tec}</span>" if n_tec else "")
 
         html = HTML_TEMPLATE.format(
             VERSION=version,
@@ -1199,6 +1311,7 @@ def generate_report(inventory, process_tree, output_file, version):
             FINDINGS_CONTENT=findings_html,
             FINDINGS_BADGE=findings_badge,
             ATTACK_CONTENT=render_attack_panel(findings),
+            ATTACK_BADGE=attack_badge,
             TABLE_ROWS=rows
         )
         with open(output_file, "w", encoding="utf-8") as f:

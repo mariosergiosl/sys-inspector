@@ -301,7 +301,9 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
 .fnd-tech {
     font-family: monospace; font-size: 10px; color: var(--yel);
     border: 1px solid #555; padding: 1px 6px; border-radius: 3px;
+    cursor: pointer; transition: 0.15s;
 }
+.fnd-tech:hover { background: var(--yel); color: #1e1e1e; }
 .fnd-src {
     font-size: 10px; color: #888; text-transform: uppercase;
     border: 1px dashed #555; padding: 1px 6px; border-radius: 3px;
@@ -311,6 +313,30 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
 .fnd-desc { color: #bbb; font-size: 12px; margin-bottom: 6px; }
 .fnd-rec { color: var(--grn); font-size: 12px; margin-bottom: 6px; }
 .fnd-refs { color: #999; font-size: 11px; margin-bottom: 6px; }
+.fnd-conf {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+    border: 1px solid #555; padding: 1px 6px; border-radius: 3px; cursor: help;
+}
+.fnd-custody { color: #999; font-size: 11px; margin-bottom: 6px; cursor: help; }
+/* Faixa guiada "como ler" (1 Achados -> 2 Processes -> 3 ATT&CK). */
+.read-guide {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin: 10px 0 0; padding: 6px 12px; font-size: 11px; color: #aaa;
+    background: #1f1f1f; border-radius: 4px;
+}
+.read-guide .rg-lbl { color: #777; text-transform: uppercase; letter-spacing: 1px; font-size: 10px; }
+.read-guide .rg-step { cursor: pointer; padding: 2px 6px; border-radius: 3px; transition: 0.15s; }
+.read-guide .rg-step:hover { background: #2d2d2d; color: #eee; }
+.read-guide .rg-step b { color: var(--acc); margin-right: 4px; }
+.read-guide .rg-step em { color: #777; font-style: normal; margin-left: 4px; }
+.read-guide .rg-arrow { color: #555; }
+/* Tecnica citada por um achado, clicada para pivotar de volta aos achados. */
+.atk-back {
+    font-size: 10px; color: #7fb3d5; cursor: pointer; margin-left: 8px;
+}
+.atk-back:hover { text-decoration: underline; }
+/* Destaque temporario da tecnica alvo, ao pivotar do achado para a aba ATT&CK. */
+.atk-flash { box-shadow: 0 0 0 2px var(--yel); transition: box-shadow 0.3s; }
 .fnd-ev-title { color: var(--acc); font-size: 10px; text-transform: uppercase; font-weight: bold; margin: 8px 0 4px 0; }
 .fnd-ev-row { display: flex; gap: 8px; margin-bottom: 3px; align-items: flex-start; }
 .fnd-ev-k { color: #888; font-size: 11px; min-width: 90px; font-family: monospace; }
@@ -736,6 +762,37 @@ JS_BLOCK = r"""
             chips[k].style.background = (sev && chips[k].getAttribute('data-sev') === sev) ? '#333' : '';
         }
     }
+
+    // Acoplamento entre abas (contrato D-022): do achado para a tecnica na aba
+    // ATT&CK, com a tecnica destacada, e da tecnica de volta para os achados que
+    // a citam. Sem isto o "?" nao bastava e as abas ficavam soltas.
+    function pivotToAttack(tid) {
+        showTab('attack', document.querySelector('.tab[data-tab="attack"]'));
+        var el = document.getElementById('atk-' + tid);
+        if (!el) {
+            avisaPivo('A tecnica ' + tid + ' nao esta listada nesta captura.');
+            return;
+        }
+        el.scrollIntoView({behavior: 'smooth', block: 'center'});
+        el.classList.add('atk-flash');
+        setTimeout(function () { el.classList.remove('atk-flash'); }, 2000);
+    }
+
+    function filterFindingsByTechnique(tid) {
+        showTab('findings', document.querySelector('.tab[data-tab="findings"]'));
+        var items = document.querySelectorAll('.fnd-item');
+        var achou = false;
+        for (var i = 0; i < items.length; i++) {
+            var t = items[i].getAttribute('data-technique') || '';
+            var match = (t === tid);
+            items[i].style.display = match ? '' : 'none';
+            if (match) { achou = true; }
+        }
+        if (achou) {
+            avisaPivo('Mostrando so os achados da tecnica ' + tid +
+                      '. Use "Ver todos os niveis" para limpar o filtro.');
+        }
+    }
 """
 
 # ------------------------------------------------------------------------------
@@ -785,10 +842,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             </div>
         </div>
 
+        <div class="read-guide" title="Ordem sugerida para ler este laudo">
+            <span class="rg-lbl">Como ler:</span>
+            <span class="rg-step" onclick="showTab('findings', document.querySelector('.tab[data-tab=findings]'))"><b>1</b> Achados <em>o que esta errado</em></span>
+            <span class="rg-arrow">&rarr;</span>
+            <span class="rg-step" onclick="showTab('processes', document.querySelector('.tab[data-tab=processes]'))"><b>2</b> Processes <em>quem executa</em></span>
+            <span class="rg-arrow">&rarr;</span>
+            <span class="rg-step" onclick="showTab('attack', document.querySelector('.tab[data-tab=attack]'))"><b>3</b> ATT&amp;CK <em>que tecnica e</em></span>
+        </div>
+
         <div class="tabbar">
             <span class="tab tab-active" data-tab="findings" onclick="showTab('findings', this)">Findings {FINDINGS_BADGE}</span>
             <span class="tab" data-tab="processes" onclick="showTab('processes', this)">Processes</span>
-            <span class="tab" data-tab="attack" onclick="showTab('attack', this)">ATT&amp;CK</span>
+            <span class="tab" data-tab="attack" onclick="showTab('attack', this)">ATT&amp;CK {ATTACK_BADGE}</span>
         </div>
 
         <div class="controls panel-hidden" data-panel="processes">
