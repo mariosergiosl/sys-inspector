@@ -11,35 +11,46 @@
 #              - MAINTAINED: All features, logic, and documentation from v0.61.00.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
+from src.core import risk
+
 # ------------------------------------------------------------------------------
-# 1. LEGEND COMPONENT (Updated Tooltip)
+# 1. LEGEND COMPONENT
 # ------------------------------------------------------------------------------
-LEGEND_HTML = r"""
+# Gerada a partir de src/core/risk.py, e nao escrita a mao.
+#
+# A tabela que existia aqui era uma copia mantida em paralelo e ja tinha se
+# afastado da origem: anunciava "+512 EDR Latency (Process Frozen)", um bit que
+# nenhum coletor atribui, e omitia o nivel de cada sinal. Um laudo que descreve
+# uma regra que a ferramenta nao aplica e pior que um laudo sem legenda.
+
+
+def _linhas_legenda():
+    linhas = ""
+    for bit, _chave, rotulo, severidade, _explicacao in risk.SINAIS:
+        linhas += ("<tr><td>+%d</td><td>%s</td>"
+                   "<td style='color:%s'>%s</td></tr>"
+                   % (bit, rotulo, risk.CORES.get(severidade, "#888"),
+                      severidade))
+    return linhas
+
+
+LEGEND_HTML = ("""
 <div class="score-legend-wrapper">
     <span class="legend-icon" title="Anomaly Score Rules">?</span>
     <div class="score-tooltip">
-        <h4>Anomaly Score Rules (Bitmask)</h4>
-        <table>
-            <tr><td>+01</td><td>Unsafe Lib (/tmp, /dev/shm)</td></tr>
-            <tr><td>+02</td><td>Malware Pattern (Exec /tmp)</td></tr>
-            <tr><td>+04</td><td>Network Tool (nc, socat)</td></tr>
-            <tr><td>+08</td><td>Deleted Binary</td></tr>
-            <tr><td>+16</td><td>EDR (Endpoint Detection and Response) / AV (Antivirus)</td></tr>
-            <tr><td>+32</td><td>GPU Usage (Mining)</td></tr>
-            <tr><td>+64</td><td>Network Issue (Drops/Retrans)</td></tr>
-            <tr><td>+128</td><td>Zombie/Defunct Process</td></tr>
-            <tr><td>+256</td><td>Immutable File Anomaly</td></tr>
-            <tr><td>+512</td><td>EDR Latency (Process Frozen)</td></tr>
-        </table>
-        <div style="font-size:9px; color:#777; margin-top:5px; border-top:1px solid #333; padding-top:2px;">
-            * Score is unique sum of triggers.
+        <h4>Sinais do anomaly score (campo de bits)</h4>
+        <table>%s</table>
+        <div style="font-size:9px; color:#777; margin-top:5px;
+                    border-top:1px solid #333; padding-top:2px;">
+            * Cada bit e um sinal observado. O VALOR somado nao mede gravidade:
+            o nivel exibido vem dos sinais presentes, e sobe um degrau quando
+            dois ou mais de peso coincidem.
         </div>
     </div>
 </div>
-"""
+""" % _linhas_legenda())
 
 # ------------------------------------------------------------------------------
 # 2. CSS STYLES (Supports New Badges & Dark Theme)
@@ -246,6 +257,130 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
 .score-tooltip table { width: 100%; border-collapse: collapse; }
 .score-tooltip td { padding: 3px 0; border-bottom: 1px solid #333; color: #ccc; font-size: 11px; }
 .score-tooltip td:first-child { color: var(--red); font-weight: bold; text-align: right; padding-right: 10px; width: 40px; }
+
+/* --- TABS (Findings / Processes) --- */
+/* A troca de aba usa esta classe, nunca o estilo inline: o cabecalho da tabela
+   declara display:flex inline, e zerar o inline o faria voltar para block,
+   empilhando as colunas na vertical. */
+.panel-hidden { display: none !important; }
+.tabbar { display: flex; gap: 4px; padding: 0 10px; border-bottom: 2px solid #444; }
+.tab {
+    padding: 8px 18px; cursor: pointer; font-size: 12px; font-weight: bold;
+    text-transform: uppercase; letter-spacing: 0.5px; color: #888;
+    border: 1px solid transparent; border-bottom: none; border-radius: 4px 4px 0 0;
+    user-select: none;
+}
+.tab:hover { color: #ddd; background: #2a2d2e; }
+.tab-active { color: var(--acc); background: #252526; border-color: #444; margin-bottom: -2px; }
+.tab-count {
+    display: inline-block; min-width: 16px; padding: 1px 5px; margin-left: 5px;
+    background: var(--red); color: #fff; border-radius: 8px; font-size: 10px;
+}
+
+/* --- FINDINGS PANEL --- */
+.findings-container { padding: 12px 16px 40px 16px; }
+.fnd-empty { color: #777; font-style: italic; padding: 20px; }
+.fnd-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.fnd-chip {
+    padding: 5px 12px; border: 1px solid #555; border-radius: 14px;
+    font-size: 11px; color: #ccc; cursor: pointer; user-select: none;
+}
+.fnd-chip:hover { background: #2a2d2e; }
+.fnd-chip b { margin-right: 4px; font-size: 13px; }
+.fnd-chip-zero { opacity: 0.4; }
+.fnd-chip-all { border-style: dashed; }
+.fnd-list { display: flex; flex-direction: column; gap: 8px; }
+.fnd-item { background: #252526; border-left: 4px solid #444; border-radius: 3px; padding: 8px 12px; }
+.fnd-item:hover { background: #2a2d2e; }
+.fnd-head { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.fnd-sev {
+    color: #1e1e1e; font-weight: bold; font-size: 10px; text-transform: uppercase;
+    padding: 2px 8px; border-radius: 3px; min-width: 60px; text-align: center;
+}
+.fnd-title { font-weight: bold; color: #eee; flex: 1; }
+.fnd-tech {
+    font-family: monospace; font-size: 10px; color: var(--yel);
+    border: 1px solid #555; padding: 1px 6px; border-radius: 3px;
+    cursor: pointer; transition: 0.15s;
+}
+.fnd-tech:hover { background: var(--yel); color: #1e1e1e; }
+.fnd-src {
+    font-size: 10px; color: #888; text-transform: uppercase;
+    border: 1px dashed #555; padding: 1px 6px; border-radius: 3px;
+}
+.fnd-target { font-family: monospace; font-size: 11px; color: #999; margin: 4px 0 0 70px; word-break: break-all; }
+.fnd-det { display: none; margin: 8px 0 4px 70px; padding-top: 8px; border-top: 1px dashed #444; }
+.fnd-desc { color: #bbb; font-size: 12px; margin-bottom: 6px; }
+.fnd-rec { color: var(--grn); font-size: 12px; margin-bottom: 6px; }
+.fnd-refs { color: #999; font-size: 11px; margin-bottom: 6px; }
+.fnd-conf {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+    border: 1px solid #555; padding: 1px 6px; border-radius: 3px; cursor: help;
+}
+.fnd-custody { color: #999; font-size: 11px; margin-bottom: 6px; cursor: help; }
+/* Faixa guiada "como ler" (1 Achados -> 2 Processes -> 3 ATT&CK). */
+.read-guide {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin: 10px 0 0; padding: 6px 12px; font-size: 11px; color: #aaa;
+    background: #1f1f1f; border-radius: 4px;
+}
+.read-guide .rg-lbl { color: #777; text-transform: uppercase; letter-spacing: 1px; font-size: 10px; }
+.read-guide .rg-step { cursor: pointer; padding: 2px 6px; border-radius: 3px; transition: 0.15s; }
+.read-guide .rg-step:hover { background: #2d2d2d; color: #eee; }
+.read-guide .rg-step b { color: var(--acc); margin-right: 4px; }
+.read-guide .rg-step em { color: #777; font-style: normal; margin-left: 4px; }
+.read-guide .rg-arrow { color: #555; }
+/* Tecnica citada por um achado, clicada para pivotar de volta aos achados. */
+.atk-back {
+    font-size: 10px; color: #7fb3d5; cursor: pointer; margin-left: 8px;
+}
+.atk-back:hover { text-decoration: underline; }
+/* Destaque temporario da tecnica alvo, ao pivotar do achado para a aba ATT&CK. */
+.atk-flash { box-shadow: 0 0 0 2px var(--yel); transition: box-shadow 0.3s; }
+.fnd-ev-title { color: var(--acc); font-size: 10px; text-transform: uppercase; font-weight: bold; margin: 8px 0 4px 0; }
+.fnd-ev-row { display: flex; gap: 8px; margin-bottom: 3px; align-items: flex-start; }
+.fnd-ev-k { color: #888; font-size: 11px; min-width: 90px; font-family: monospace; }
+.fnd-ev-v {
+    margin: 0; color: #ccc; font-size: 11px; font-family: monospace;
+    white-space: pre-wrap; word-break: break-all; flex: 1;
+    background: #1e1e1e; padding: 4px 6px; border-radius: 3px; max-height: 220px; overflow: auto;
+}
+/* Pivo para o processo em execucao (so aparece quando ha correspondencia). */
+.fnd-pivot {
+    font-size: 10px; color: var(--grn); border: 1px solid var(--grn);
+    padding: 2px 8px; border-radius: 3px; cursor: pointer; white-space: nowrap;
+}
+.fnd-pivot:hover { background: var(--grn); color: #1e1e1e; }
+
+/* Destaque temporario da linha alvo apos o pivo. */
+@keyframes pivotPulse {
+    0%   { background: rgba(78,201,176,0.55); }
+    100% { background: transparent; }
+}
+.pivot-target { animation: pivotPulse 2.5s ease-out; }
+.aviso-pivo {
+    display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 3000; background: #2a2a1a; border: 1px solid var(--yel);
+    color: var(--yel); padding: 10px 18px; border-radius: 4px; font-size: 12px;
+    max-width: 70%; box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+}
+
+/* --- ATT&CK REFERENCE --- */
+.atk-intro { color: #bbb; font-size: 13px; margin-bottom: 14px; max-width: 1000px; line-height: 1.6; }
+.atk-tac-badge { display:inline-block; background:#2a2a1a; border:1px solid var(--yel); color:var(--yel); font-size:10px; padding:1px 7px; border-radius:10px; margin-right:5px; }
+.atk-list { display: flex; flex-direction: column; gap: 8px; }
+.atk-item { background: #252526; border-left: 4px solid var(--yel); border-radius: 3px; padding: 10px 12px; }
+.atk-head { display: flex; align-items: center; gap: 10px; }
+.atk-id { font-family: monospace; font-weight: bold; color: var(--yel); font-size: 12px; }
+.atk-name { color: #eee; font-weight: bold; flex: 1; }
+.atk-qty {
+    background: #333; color: #ccc; font-size: 10px; padding: 1px 8px;
+    border-radius: 8px; border: 1px solid #555;
+}
+.atk-tactic { color: #999; font-size: 12px; margin-top: 6px; }
+.atk-desc { color: #ccc; font-size: 13.5px; margin-top: 8px; line-height: 1.65; }
+.atk-link { color: var(--acc); font-size: 10px; text-decoration: none; display: inline-block; margin-top: 6px; }
+.atk-link:hover { text-decoration: underline; }
 """
 
 # ------------------------------------------------------------------------------
@@ -257,7 +392,10 @@ JS_BLOCK = r"""
         isLive: false,
         expandedPids: new Set(),
         detailsOpenPids: new Set(),
-        currentFilter: ""
+        currentFilter: "",
+        // Ordem original da arvore, guardada antes da primeira reordenacao para
+        // que o botao de reset devolva a hierarquia pai-filho sem recarregar.
+        originalOrder: null
     };
 
     // --- TREE INTERACTION ---
@@ -403,10 +541,52 @@ JS_BLOCK = r"""
         }
     }
 
+    function resetTree() {
+        // Devolve a arvore ao estado inicial SEM recarregar a pagina.
+        //
+        // Antes isto era um location.reload(): alem de reprocessar um relatorio
+        // que passa de 10MB, o recarregamento voltava para a aba padrao, de modo
+        // que quem pedia "resetar a arvore" era jogado para fora dela.
+        var tbody = document.querySelector(".table-container tbody");
+        if (tbody && state.originalOrder) {
+            state.originalOrder.forEach(function (n) { tbody.appendChild(n); });
+        }
+
+        state.expandedPids.clear();
+        state.detailsOpenPids.clear();
+        state.currentFilter = "";
+
+        var busca = document.getElementById("search");
+        if (busca) busca.value = "";
+
+        document.querySelectorAll(".proc-row").forEach(function (r) {
+            r.style.display = "";
+            if (r.classList.contains("root")) r.classList.remove("hidden");
+            else r.classList.add("hidden");
+            var btn = document.getElementById("b-" + r.dataset.pid);
+            if (btn) { btn.classList.remove("disabled"); btn.innerText = "+"; }
+        });
+        document.querySelectorAll(".det-row").forEach(function (d) {
+            d.classList.remove("show");
+        });
+
+        document.querySelectorAll(".filter-btn").forEach(function (b) {
+            b.classList.remove("active");
+        });
+        document.querySelectorAll(".btn-act").forEach(function (b) {
+            b.classList.remove("sort-active");
+        });
+    }
+
     function sortView(metric, el) {
         var tbody = document.querySelector(".table-container tbody");
         if (!tbody) return;
         var rows = Array.from(tbody.querySelectorAll(".proc-row"));
+        // A ordem hierarquica so existe no DOM inicial: se for perdida sem
+        // copia, a unica forma de recupera-la seria recarregar a pagina.
+        if (state.originalOrder === null) {
+            state.originalOrder = Array.from(tbody.children);
+        }
         rows.forEach(r => {
             r.classList.remove('hidden'); r.style.display="";
             var btn=document.getElementById('b-'+r.dataset.pid);
@@ -441,6 +621,177 @@ JS_BLOCK = r"""
         win.document.write('</body></html>');
         win.document.close();
         win.print();
+    }
+
+    // --- TABS ---
+    // Alterna os paineis por data-panel. A arvore de processos e seus controles
+    // sao preservados integralmente: apenas mudam de visibilidade.
+    function showTab(name, el) {
+        var panels = document.querySelectorAll('[data-panel]');
+        for (var i = 0; i < panels.length; i++) {
+            var p = panels[i];
+            // Alterna pela classe: mexer em style.display apagaria o display
+            // inline original (o cabecalho da tabela e flex) e quebraria o layout.
+            if (p.getAttribute('data-panel') === name) {
+                p.classList.remove('panel-hidden');
+            } else {
+                p.classList.add('panel-hidden');
+            }
+        }
+        var tabs = document.querySelectorAll('.tab');
+        for (var j = 0; j < tabs.length; j++) {
+            tabs[j].classList.remove('tab-active');
+        }
+        if (el) { el.classList.add('tab-active'); }
+    }
+
+    // Expande/recolhe a evidencia de um achado.
+    function toggleFinding(idx) {
+        var d = document.getElementById('fnd-' + idx);
+        if (!d) { return; }
+        d.style.display = (d.style.display === 'block') ? 'none' : 'block';
+    }
+
+    // Aviso curto no topo da tela, para o pivo nunca falhar em silencio.
+    function avisaPivo(texto) {
+        var caixa = document.getElementById('aviso-pivo');
+        if (!caixa) {
+            caixa = document.createElement('div');
+            caixa.id = 'aviso-pivo';
+            caixa.className = 'aviso-pivo';
+            document.body.appendChild(caixa);
+        }
+        caixa.innerText = texto;
+        caixa.style.display = 'block';
+        clearTimeout(window.__avisoPivoTimer);
+        window.__avisoPivoTimer = setTimeout(function () {
+            caixa.style.display = 'none';
+        }, 9000);
+    }
+
+    // Entrada vinda de FORA do laudo: a linha do tempo do servidor aponta um
+    // processo com /agent/<uuid>#pid=1234. Sem isto, cruzar o evento com a
+    // arvore era copiar um PID a mao e procurar na lista.
+    window.addEventListener('load', function () {
+        var m = /(?:^|[#&])pid=(\d+)/.exec(window.location.hash || '');
+        if (!m) { return; }
+        // Espera a arvore terminar de montar antes de pivotar.
+        setTimeout(function () { pivotToProcess(m[1]); }, 80);
+    });
+
+    // Pivo: leva da aba Findings ate o processo que executa o caminho
+    // denunciado pelo achado, revelando toda a cadeia de ancestrais.
+    function pivotToProcess(pidList) {
+        var pids = String(pidList).split(',');
+        var targetPid = pids[0];
+
+        // 1. Vai para a aba Processes.
+        showTab('processes', document.querySelector('.tab[data-tab="processes"]'));
+
+        // 2. Limpa qualquer filtro ativo ANTES de expandir. Com filtro ligado a
+        //    arvore desabilita os botoes de ramo e esconde o que nao casa, entao
+        //    o alvo poderia ficar invisivel e os controles travados.
+        setFilter('');
+
+        var row = document.querySelector('tr[data-pid="' + targetPid + '"]');
+        if (!row) {
+            // O processo NAO esta nesta captura. Sair em silencio faria a tela
+            // parecer quebrada, e pior: quem veio da linha do tempo concluiria
+            // que o pivo nao funciona, quando a resposta correta e que aquele
+            // processo ja nao existia quando esta captura foi feita, o que e
+            // informacao, e nao falha.
+            avisaPivo('Processo ' + targetPid + ' nao esta nesta captura. Ele '
+                      + 'pode ter terminado antes dela: procure-o no historico '
+                      + 'de capturas deste agente.');
+            return;
+        }
+
+        // 3. Monta a cadeia de ancestrais subindo por data-ppid.
+        var chain = [];
+        var current = row;
+        var guard = 0;
+        while (current && guard < 64) {
+            guard++;
+            var ppid = current.getAttribute('data-ppid');
+            if (!ppid || ppid === '0') { break; }
+            var parent = document.querySelector('tr[data-pid="' + ppid + '"]');
+            if (!parent || parent === current) { break; }
+            chain.push(ppid);
+            current = parent;
+        }
+
+        // 4. Expande da raiz para baixo usando a funcao da PROPRIA arvore, para
+        //    o estado (botoes +/- e state.expandedPids) continuar coerente e a
+        //    navegacao seguir funcionando depois do pivo.
+        chain.reverse();
+        for (var i = 0; i < chain.length; i++) {
+            var btn = document.getElementById('b-' + chain[i]);
+            if (btn && btn.innerText === '+' && !btn.classList.contains('disabled')) {
+                toggleBranch(chain[i]);
+            }
+        }
+
+        // 5. Rola descontando o cabecalho fixo; sem isso a linha para embaixo
+        //    dele e parece que o pivo nao chegou a lugar nenhum.
+        var sticky = document.querySelector('.sticky-wrapper');
+        var offset = sticky ? sticky.getBoundingClientRect().height + 20 : 20;
+        var y = row.getBoundingClientRect().top + window.pageYOffset - offset;
+        window.scrollTo({top: y > 0 ? y : 0, behavior: 'smooth'});
+
+        // 6. Destaca o alvo e os demais processos correlacionados.
+        document.querySelectorAll('.pivot-target').forEach(function (e) {
+            e.classList.remove('pivot-target');
+        });
+        void row.offsetWidth;  // reinicia a animacao
+        row.classList.add('pivot-target');
+        for (var k = 1; k < pids.length; k++) {
+            var extra = document.querySelector('tr[data-pid="' + pids[k] + '"]');
+            if (extra) { extra.classList.add('pivot-target'); }
+        }
+    }
+
+    // Filtra a lista de achados por severidade ('' mostra todos).
+    function filterFindings(sev) {
+        var items = document.querySelectorAll('.fnd-item');
+        for (var i = 0; i < items.length; i++) {
+            var match = (!sev || items[i].getAttribute('data-sev') === sev);
+            items[i].style.display = match ? '' : 'none';
+        }
+        var chips = document.querySelectorAll('.fnd-chip');
+        for (var k = 0; k < chips.length; k++) {
+            chips[k].style.background = (sev && chips[k].getAttribute('data-sev') === sev) ? '#333' : '';
+        }
+    }
+
+    // Acoplamento entre abas (contrato D-022): do achado para a tecnica na aba
+    // ATT&CK, com a tecnica destacada, e da tecnica de volta para os achados que
+    // a citam. Sem isto o "?" nao bastava e as abas ficavam soltas.
+    function pivotToAttack(tid) {
+        showTab('attack', document.querySelector('.tab[data-tab="attack"]'));
+        var el = document.getElementById('atk-' + tid);
+        if (!el) {
+            avisaPivo('A tecnica ' + tid + ' nao esta listada nesta captura.');
+            return;
+        }
+        el.scrollIntoView({behavior: 'smooth', block: 'center'});
+        el.classList.add('atk-flash');
+        setTimeout(function () { el.classList.remove('atk-flash'); }, 2000);
+    }
+
+    function filterFindingsByTechnique(tid) {
+        showTab('findings', document.querySelector('.tab[data-tab="findings"]'));
+        var items = document.querySelectorAll('.fnd-item');
+        var achou = false;
+        for (var i = 0; i < items.length; i++) {
+            var t = items[i].getAttribute('data-technique') || '';
+            var match = (t === tid);
+            items[i].style.display = match ? '' : 'none';
+            if (match) { achou = true; }
+        }
+        if (achou) {
+            avisaPivo('Mostrando so os achados da tecnica ' + tid +
+                      '. Use "Ver todos os niveis" para limpar o filtro.');
+        }
     }
 """
 
@@ -491,7 +842,22 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             </div>
         </div>
 
-        <div class="controls">
+        <div class="read-guide" title="Ordem sugerida para ler este laudo">
+            <span class="rg-lbl">Como ler:</span>
+            <span class="rg-step" onclick="showTab('findings', document.querySelector('.tab[data-tab=findings]'))"><b>1</b> Achados <em>o que esta errado</em></span>
+            <span class="rg-arrow">&rarr;</span>
+            <span class="rg-step" onclick="showTab('processes', document.querySelector('.tab[data-tab=processes]'))"><b>2</b> Processes <em>quem executa</em></span>
+            <span class="rg-arrow">&rarr;</span>
+            <span class="rg-step" onclick="showTab('attack', document.querySelector('.tab[data-tab=attack]'))"><b>3</b> ATT&amp;CK <em>que tecnica e</em></span>
+        </div>
+
+        <div class="tabbar">
+            <span class="tab tab-active" data-tab="findings" onclick="showTab('findings', this)">Findings {FINDINGS_BADGE}</span>
+            <span class="tab" data-tab="processes" onclick="showTab('processes', this)">Processes</span>
+            <span class="tab" data-tab="attack" onclick="showTab('attack', this)">ATT&amp;CK {ATTACK_BADGE}</span>
+        </div>
+
+        <div class="controls panel-hidden" data-panel="processes">
             <div class="legend">
                 <div class="leg-grp">
                     <span class="leg-lbl">Priority</span> <div class="bar grad-prio"></div>
@@ -502,7 +868,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
                 <div class="leg-grp">
                     <span class="leg-lbl">Process By</span>
-                    <span class="btn-act" onclick="location.reload()" title="Reset Tree View">⟳</span>
+                    <span class="btn-act" onclick="resetTree()" title="Reset Tree View">⟳</span>
                     <span class="btn-act" onclick="sortView('cpu', this)" title="Top CPU Usage">🔥</span>
                     <span class="btn-act" onclick="sortView('io', this)" title="Top Disk I/O">💾</span>
                     <span class="btn-act" onclick="sortView('mem', this)" title="Top Memory (RSS)">🧠</span>
@@ -533,7 +899,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <input type="text" id="search" placeholder="Filter processes (PID, User, Disk, Alert)..." onkeyup="filterTable()">
         </div>
 
-        <div class="tbl-hdr" style="display:flex; border-bottom:2px solid #444; font-weight:bold; color:#aaa; text-transform:uppercase; padding:8px 5px; font-size:11px;">
+        <div class="tbl-hdr panel-hidden" data-panel="processes" style="display:flex; border-bottom:2px solid #444; font-weight:bold; color:#aaa; text-transform:uppercase; padding:8px 5px; font-size:11px;">
              <div style="width:20%">Command Tree</div>
              <div style="width:60px">PID</div>
              <div style="width:90px">Duration</div>
@@ -549,7 +915,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         </div>
     </div>
 
-    <div class="table-container">
+    <div class="findings-container" data-panel="findings">
+        {FINDINGS_CONTENT}
+    </div>
+
+    <div class="findings-container panel-hidden" data-panel="attack">
+        {ATTACK_CONTENT}
+    </div>
+
+    <div class="table-container panel-hidden" data-panel="processes">
         <table>
             <colgroup>
                 <col width="20%">

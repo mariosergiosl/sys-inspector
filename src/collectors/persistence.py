@@ -21,7 +21,6 @@
 # NOTES:       Read-only. Compatible with Python 3.6.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
 import os
@@ -32,9 +31,16 @@ import stat
 import logging
 
 from src.core.findings import (Finding, SEV_INFO, SEV_LOW, SEV_MEDIUM,
-                               SEV_HIGH, SEV_CRITICAL, SRC_PERSISTENCE)
+                               SEV_HIGH, SEV_CRITICAL, SRC_PERSISTENCE,
+                               CONF_CONFIRMED, CONF_PROBABLE, CONF_HEURISTIC,
+                               CUSTODY_NONE, CUSTODY_METADATA)
+from src.collectors.integrity import describe_provenance
 
 LOG = logging.getLogger("Persistence")
+
+# Peso das severidades, para comparar sem depender da ordem de importacao.
+SEVERITY_RANK = {SEV_INFO: 0, SEV_LOW: 1, SEV_MEDIUM: 2,
+                 SEV_HIGH: 3, SEV_CRITICAL: 4}
 
 # Diretorios de onde um binario legitimo de sistema normalmente NAO e executado.
 # Persistencia apontando para ca e um indicador forte de comprometimento.
@@ -126,6 +132,45 @@ def _has_unsafe_path(text):
     return None
 
 
+def _apply_provenance(finding, path):
+    """
+    Ajusta o achado conforme a proveniencia do arquivo e anexa a evidencia.
+
+    Um mecanismo de persistencia que PERTENCE a um pacote e software de sistema
+    esperado, e nao deve gritar como comprometimento; um que nao pertence a
+    pacote nenhum foi colocado ali por alguem, e esse e o sinal que interessa.
+    Um arquivo empacotado que nao confere mais com o pacote de origem e o pior
+    caso: sistema adulterado.
+
+    Devolve o proprio achado, ja ajustado.
+    """
+    prov = describe_provenance(path)
+    finding.evidence["provenance"] = prov
+
+    if prov.get("packaged"):
+        if prov.get("verified") is False:
+            # Adulteracao de arquivo de sistema: eleva ao maximo.
+            finding.severity = SEV_CRITICAL
+            finding.description += (
+                " This file belongs to package %s but no longer matches what "
+                "the package installed (%s), which indicates tampering."
+                % (prov.get("package"), ", ".join(prov.get("issues") or [])))
+        else:
+            # Pertence a pacote e integro: comportamento esperado do sistema.
+            if SEVERITY_RANK.get(finding.severity, 0) > SEVERITY_RANK[SEV_LOW]:
+                finding.severity = SEV_LOW
+            finding.description += (
+                " This artifact belongs to the installed package %s and matches "
+                "what the package shipped, so it is expected system software."
+                % prov.get("package"))
+    elif prov.get("package") is None and finding.severity != SEV_INFO:
+        finding.description += (
+            " This artifact does not belong to any installed package, so it was "
+            "placed on the system outside package management.")
+
+    return finding
+
+
 def _escalate(meta, base=SEV_LOW):
     """
     Ajusta a severidade de um item de persistencia conforme os indicadores
@@ -151,6 +196,60 @@ def _escalate(meta, base=SEV_LOW):
 # ------------------------------------------------------------------------------
 # COLLECTORS (um por mecanismo de persistencia)
 # ------------------------------------------------------------------------------
+# Diretorios gravaveis onde um arquivo imutavel e anomalo (persistencia/anti-
+# remocao). Sistema legitimo raramente marca +i em arquivo de /tmp.
+IMMUTABLE_WATCH_DIRS = ("/tmp", "/dev/shm", "/var/tmp")
+
+
+def _collect_immutable_files():
+    """
+    Arquivos imutaveis (chattr +i) ou append-only (+a) em diretorios gravaveis.
+
+    Um arquivo que nao pode ser removido nem por root sem antes remover o
+    atributo e tecnica de ANTI-REMOCAO: o artefato resiste a limpeza pelos meios
+    normais. Em /tmp isso e anomalo, porque sistema legitimo nao marca +i ali.
+
+    POR QUE E UM FINDING, e nao um rotulo colado no processo init: a deteccao
+    tem que rodar DETERMINISTICA em toda captura, decifrada no servidor pelo
+    mesmo caminho que os demais achados de persistencia. A versao anterior somava
+    um bit ao anomaly_score do PID 1 dentro do motor eBPF, e ali a deteccao saia
+    intermitente. Achado no coletor e a fonte unica e confiavel.
+
+    Usa o mesmo scanner limitado (teto de arquivos, orcamento de tempo, sem
+    seguir socket/FIFO) de process_tree, para nao manter duas varreduras do mesmo
+    fato divergindo.
+    """
+    from src.collectors.process_tree import _immutable_files_in
+
+    findings = []
+    for entrada in _immutable_files_in(IMMUTABLE_WATCH_DIRS):
+        caminho = entrada.rsplit(" (", 1)[0]
+        atributos = entrada.rsplit(" (", 1)[-1].rstrip(")")
+        meta = _stat_info(caminho)
+        findings.append(Finding(
+            title="Immutable file in a writable directory",
+            severity=SEV_HIGH,
+            source=SRC_PERSISTENCE,
+            category="persistence",
+            target=caminho,
+            description=(
+                "A file under a world-writable directory carries the immutable "
+                "or append-only attribute. It cannot be removed, even by root, "
+                "until the attribute is cleared, which is an anti-removal "
+                "technique: the artifact survives ordinary cleanup. Legitimate "
+                "software does not mark files immutable under /tmp."),
+            evidence={"attributes": atributos, "meta": meta},
+            technique="T1222.002",
+            confidence=CONF_PROBABLE,
+            recommendation=(
+                "Inspect the file before removing it. To delete, clear the "
+                "attribute first ('chattr -i <path>'), then remove. Investigate "
+                "what created it and whether it is referenced by a persistence "
+                "mechanism."),
+        ))
+    return findings
+
+
 def _collect_ld_preload():
     """
     /etc/ld.so.preload force o carregamento de uma biblioteca em TODO processo
@@ -175,6 +274,7 @@ def _collect_ld_preload():
                      "systems and is a classic userland rootkit technique."),
         evidence={"content": content, "meta": meta},
         technique="T1574.006",
+        confidence=CONF_PROBABLE,
         recommendation=("Verify each listed library against the owning package; "
                         "an unpackaged library here indicates compromise."),
     ))
@@ -217,7 +317,7 @@ def _collect_systemd_units():
                 severity, reasons = SEV_INFO, []
 
             if unsafe:
-                findings.append(Finding(
+                finding = Finding(
                     title="systemd unit executes from an unsafe path",
                     severity=SEV_CRITICAL,
                     source=SRC_PERSISTENCE,
@@ -229,7 +329,8 @@ def _collect_systemd_units():
                     evidence={"reference": unsafe, "content": content, "meta": meta},
                     technique="T1543.002",
                     recommendation="Inspect the referenced binary and the unit origin.",
-                ))
+                )
+                findings.append(_apply_provenance(finding, path))
             elif severity in (SEV_MEDIUM, SEV_HIGH):
                 findings.append(Finding(
                     title="systemd unit with suspicious attributes",
@@ -284,7 +385,7 @@ def _collect_cron():
             severity, reasons = _escalate(meta, base=SEV_INFO)
 
             if unsafe:
-                findings.append(Finding(
+                finding = Finding(
                     title="Scheduled task runs from an unsafe path",
                     severity=SEV_CRITICAL,
                     source=SRC_PERSISTENCE,
@@ -296,7 +397,8 @@ def _collect_cron():
                     evidence={"reference": unsafe, "content": content, "meta": meta},
                     technique="T1053.003",
                     recommendation="Verify the scheduled command and who installed it.",
-                ))
+                )
+                findings.append(_apply_provenance(finding, path))
             elif severity in (SEV_MEDIUM, SEV_HIGH):
                 findings.append(Finding(
                     title="Scheduled task with suspicious attributes",
@@ -545,6 +647,38 @@ def _collect_authorized_keys():
 
 
 # ------------------------------------------------------------------------------
+# CONFIANCA E CUSTODIA (contrato de resposta do achado, D-022)
+# ------------------------------------------------------------------------------
+def _assign_confidence_custody(finding):
+    """
+    Preenche confianca e custodia a partir de sinais ESTRUTURADOS do achado, nunca
+    do texto do titulo (isso seria mais uma copia do mesmo fato). Nao sobrescreve
+    o que o coletor ja declarou de forma explicita.
+
+    Custodia: se ha metadado de arquivo ('meta') na evidencia, houve stat do
+    artefato, entao o nivel e 'so metadado' (hash/copia sao roadmap); senao, nada
+    foi preservado (ex.: inventario por contagem).
+
+    Confianca (so quando o coletor nao declarou): um inventario/contagem (Info) e
+    fato confirmado; um achado que extraiu uma REFERENCIA concreta a um binario em
+    caminho inseguro e forte indicio (provavel); os demais, escalados por atributo
+    ou mtime, ficam como heuristica, que admite falso positivo.
+    """
+    ev = finding.evidence or {}
+    if not finding.custody:
+        finding.custody = {"level": CUSTODY_METADATA if "meta" in ev
+                           else CUSTODY_NONE}
+    if finding.confidence is None:
+        if finding.severity == SEV_INFO:
+            finding.confidence = CONF_CONFIRMED
+        elif ev.get("reference"):
+            finding.confidence = CONF_PROBABLE
+        else:
+            finding.confidence = CONF_HEURISTIC
+    return finding
+
+
+# ------------------------------------------------------------------------------
 # ENTRY POINT
 # ------------------------------------------------------------------------------
 def collect_persistence():
@@ -557,6 +691,7 @@ def collect_persistence():
     """
     collectors = (
         ("ld.so.preload", _collect_ld_preload),
+        ("immutable files", _collect_immutable_files),
         ("systemd", _collect_systemd_units),
         ("cron", _collect_cron),
         ("startup scripts", _collect_startup_scripts),
@@ -572,4 +707,4 @@ def collect_persistence():
             findings.extend(func())
         except Exception as exc:
             LOG.error("Persistence collector '%s' failed: %s", name, exc)
-    return findings
+    return [_assign_confidence_custody(f) for f in findings]

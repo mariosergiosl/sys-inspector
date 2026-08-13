@@ -13,8 +13,11 @@ O **Sys-Inspector** é uma ferramenta avançada de observabilidade e forense mov
 
 Diferente das ferramentas tradicionais que consultam o `/proc` periodicamente, o Sys-Inspector se conecta diretamente ao Kernel do Linux para capturar eventos (execução de processos, I/O de arquivos, conexões de rede) em tempo real.
 
-## Funcionalidades (v0.91.0)
+## Funcionalidades (v1.0.0)
 
+* **Novo na v1.0.0 - Contrato de resposta do achado:** Todo achado declara sua **confiança** (confirmado / provável / heurístico), para uma heurística nunca aparecer como fato, e sua **custódia** (o que foi preservado do artefato). O laudo se lê como uma investigação: faixa "como ler" (Findings -> Processes -> ATT&CK), legenda de severidade com a ação do operador, tooltips em cada campo da evidência e pivôs clicáveis nos dois sentidos entre um achado e sua técnica ATT&CK.
+* **Novo na v1.0.0 - Frota distribuída:** Agentes em modelo pull encaminham capturas cifradas a um servidor central (outbox store-and-forward, fila de ingestão priorizada, fila de comandos auditada, capacidades por agente, HTTPS). A Manager mostra o progresso de cada comando como um stepper ao vivo.
+* **Novo na v1.0.0 - Detecção de runtime e anti-forense:** Processos ocultos, divergência de contagem de threads, memória W+X, binário substituído no disco, bibliotecas não confiáveis e arquivos imutáveis em diretórios graváveis.
 * **Achados forenses (Findings):** Todo coletor emite achados normalizados numa escala única de severidade (Info a Crítico), cada um informando a fonte que o produziu, a técnica MITRE ATT&CK, a evidência bruta e a ação recomendada.
 * **Enumeração de persistência:** Responde à primeira pergunta diante de suspeita de comprometimento, como um invasor sobreviveria a um reboot: units systemd, tarefas cron/at, scripts de inicialização e de perfil, `/etc/ld.so.preload`, autoload de módulos de kernel, regras udev, pilhas PAM e `authorized_keys` por usuário. Itens de baseline permanecem informativos; a severidade só sobe diante de indicadores reais, como execução a partir de diretórios graváveis por usuário, arquivos graváveis por todos, nomes ocultos ou alteração recente.
 

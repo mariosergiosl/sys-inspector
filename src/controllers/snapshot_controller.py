@@ -14,7 +14,6 @@
 #              - MAINTAINED: Full rehydration and crypto logic.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
 import os
@@ -25,12 +24,15 @@ import logging
 # import json
 
 # Internal Modules
+from src.version import __version__
 from src.collectors.manager import CollectionManager, summarize_metrics
 from src.exporters.html_report import generate_report
 from src.collectors.process_tree import ProcessNode  # Needed for rehydration
 
 # v0.70 Security Modules
-from src.core.crypto import load_public_key, load_private_key, encrypt_data, decrypt_data
+from src.core.crypto import (load_public_key, load_private_key, encrypt_data,
+                             decrypt_data, ensure_agent_identity, sign_bytes)
+from src.core.custody import build_for_capture
 
 
 class SnapshotController:
@@ -119,7 +121,21 @@ class SnapshotController:
             # Save the BLOB to SQLite, com as metricas quentes resumidas
             # (antes iam sempre zeradas por falta do argumento metrics).
             metrics = summarize_metrics(full_data.get('processes', {}))
-            row_id = self.db.insert_snapshot(encrypted_bundle, metrics=metrics)
+
+            # Cadeia de custodia: digest do conteudo em claro, assinatura do
+            # agente e elo com a captura anterior. Fica ao lado do blob cifrado
+            # para permitir verificar integridade e continuidade da serie sem
+            # precisar da chave do analista.
+            custody = build_for_capture(self.db, self.config, full_data)
+
+            # O agent_uuid precisa ser o MESMO usado para buscar o elo anterior
+            # ao montar a custodia; do contrario cada captura pareceria a primeira
+            # da serie e a cadeia nunca se formaria.
+            row_id = self.db.insert_snapshot(encrypted_bundle,
+                                             agent_uuid=getattr(self.db, 'agent_id', 'local'),
+                                             metrics=metrics,
+                                             custody=custody,
+                                             findings_summary=full_data.get('findings_summary'))
             if row_id:
                 self.logger.info(f"[CORE] Encrypted Snapshot saved to DB (ID: {row_id}).")
             else:
@@ -148,7 +164,7 @@ class SnapshotController:
                     if not os.path.exists("report"): os.makedirs("report")
 
                     self.logger.info(f"[*] Generating HTML Report: {outfile}")
-                    success = generate_report(decrypted_data, tree_obj, outfile, "0.90 (Snapshot)")
+                    success = generate_report(decrypted_data, tree_obj, outfile, "%s (Snapshot)" % __version__)
 
                     if success:
                         self.logger.info(f"[REPORT] HTML generated successfully.")

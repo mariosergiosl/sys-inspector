@@ -11,12 +11,12 @@
 #              - FEAT: Horizontal EDR Detection (Wchan check) -> Badge 🧊
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
 import os
 import pwd
 import grp
+import stat
 import hashlib
 import glob
 import re
@@ -38,6 +38,30 @@ SCORE_GPU = 32
 SCORE_NET_ISSUE = 64
 SCORE_ZOMBIE = 128
 SCORE_IMMUTABLE = 256
+
+# Diretorios de onde um binario legitimo normalmente NAO e executado.
+UNSAFE_EXEC_PREFIXES = ("/tmp/", "/dev/shm/", "/var/tmp/", "/run/shm/")
+
+
+def unsafe_path_in_cmdline(cmdline):
+    """
+    Procura um caminho de execucao suspeito em QUALQUER argumento da linha de
+    comando, devolvendo o primeiro encontrado.
+
+    Olhar so para o inicio da linha, ou so para /proc/PID/exe, deixa passar a
+    evasao mais simples que existe: executar o payload por um interpretador.
+    Em "/bin/bash /dev/shm/miner.sh" o executavel e o bash e a linha comeca com
+    /bin/bash, mas o codigo que roda esta em /dev/shm.
+    """
+    if not cmdline:
+        return None
+    for token in str(cmdline).split():
+        # Remove aspas e redirecionamentos coladas no argumento.
+        arg = token.strip("'\"")
+        if arg.startswith(UNSAFE_EXEC_PREFIXES):
+            return arg
+    return None
+
 
 # Get System Clock Ticks (usually 100) for uptime calc
 try:
@@ -222,6 +246,119 @@ def _check_immutable_path(path):
     return False
 
 
+def _immutable_files_in(dirs, cap=20, max_scan=50000, budget_s=2.5):
+    """
+    Arquivos imutaveis (i) ou append-only (a) DENTRO dos diretorios gravaveis.
+
+    A checagem anterior olhava so o atributo do PROPRIO diretorio (`lsattr -d`),
+    e por isso nao via o caso mais comum e mais relevante: um ARQUIVO tornado
+    imutavel dentro de um diretorio gravavel. E tecnica corrente de anti-remocao
+    -- o artefato nao pode ser apagado pelos meios normais nem por root sem antes
+    remover o atributo. Foi o que o cenario de teste plantava
+    (`/tmp/chaos_artifacts/immutable.dat`) e que passava despercebido.
+
+    RECENTES PRIMEIRO: um artefato de anti-remocao acabou de ser criado, entao a
+    travessia visita cada diretorio em ordem de modificacao decrescente. Assim o
+    arquivo recem-marcado e checado no comeco, e a deteccao nao depende de quantos
+    arquivos ANTIGOS enchem o /tmp nem da ordem arbitraria do os.walk. Foi a falha
+    que a certificacao do chaos pegou: com ~17 mil arquivos em /tmp o artefato
+    (planto ha segundos) ficava para o fim da varredura e o orcamento de tempo se
+    esgotava antes de alcanca-lo, num host, enquanto noutro com /tmp enxuto era
+    detectado. Ordenando por recencia, o artefato aparece primeiro nos dois.
+    """
+    if not shutil.which("lsattr"):
+        return []
+
+    deadline = time.time() + budget_s
+    achados = []
+    escaneados = [0]
+
+    def _checar(caminho):
+        """
+        lsattr num UNICO arquivo, com timeout proprio.
+
+        Por arquivo, e nao em lote, de proposito. Um lsattr sobre um arquivo sob
+        I/O pesado (medido: o io_test.dat de 5MB reescrito com fsync em loop faz
+        o lsattr do lote levar ~50s) BLOQUEIA. Em lote, esse unico arquivo lento
+        estoura o timeout e leva junto o RESULTADO do artefato que estava no
+        mesmo lote. Isolado, o arquivo lento custa so o proprio timeout e nao
+        contamina o achado. Foi a causa raiz que a certificacao do chaos revelou.
+        """
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                ["lsattr", "-d", caminho],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                universal_newlines=True)
+            out, _ = proc.communicate(timeout=1)
+        except Exception:
+            if proc:
+                try: proc.kill()
+                except Exception: pass
+            return
+        for line in (out or "").splitlines():
+            partes = line.split(None, 1)
+            if len(partes) != 2:
+                continue
+            attrs, achado = partes[0], partes[1]
+            if 'i' in attrs or 'a' in attrs:
+                achados.append("%s (%s)" % (achado, attrs))
+
+    def _mtime(entrada):
+        try:
+            return entrada.stat(follow_symlinks=False).st_mtime
+        except OSError:
+            return 0
+
+    def _varrer(raiz):
+        """
+        Travessia recursiva. Subdiretorios sao visitados por RECENCIA (o artefato
+        recem-plantado primeiro), para a deteccao nao depender de quantos
+        arquivos velhos enchem o /tmp. Arquivos sao checados um a um.
+
+        So arquivos REGULARES entram: imutabilidade nao se aplica a socket ou
+        FIFO, e o lsattr sobre socket BLOQUEIA ate o timeout.
+        """
+        if time.time() > deadline or escaneados[0] >= max_scan:
+            return True
+        try:
+            entradas = list(os.scandir(raiz))
+        except OSError:
+            return False
+
+        subdirs = []
+        for e in entradas:
+            try:
+                if e.is_symlink():
+                    continue
+                if e.is_dir(follow_symlinks=False):
+                    subdirs.append(e)
+                    continue
+                if not e.is_file(follow_symlinks=False):
+                    continue
+            except OSError:
+                continue
+            _checar(e.path)
+            escaneados[0] += 1
+            if len(achados) >= cap or time.time() > deadline \
+                    or escaneados[0] >= max_scan:
+                return True
+
+        subdirs.sort(key=_mtime, reverse=True)
+        for sd in subdirs:
+            if _varrer(sd.path):
+                return True
+        return False
+
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        if _varrer(d):
+            break
+
+    return achados[:cap]
+
+
 def _get_udp_stats():
     """Reads global UDP OutDatagrams from /proc/net/snmp."""
     try:
@@ -320,6 +457,18 @@ class ProcessNode:
         self.anomaly_score = 0
         self.context_tags = []
         self.md5 = "Calculating..."
+
+        # Proveniencia do executavel (/proc/PID/exe): caminho real, se foi
+        # apagado do disco ainda em execucao, se roda apenas em memoria
+        # (memfd) e os MAC times do binario, para a analise temporal.
+        self.exe_path = ""
+        self.exe_deleted = False
+        self.exe_memfd = False
+        self.exe_size = 0
+        self.exe_mtime = 0
+        self.exe_ctime = 0
+        self.exe_atime = 0
+
         self.libs = []
         self.open_files = set()
         self.file_metadata = {}  # [NEW] Stores permissions/owner
@@ -402,14 +551,75 @@ class ProcessNode:
         if "sudo" in cmd_lower:
             if "SUDO" not in self.context_tags: self.context_tags.append("SUDO")
 
+        self._collect_exe_provenance()
+
+    def _collect_exe_provenance(self):
+        """
+        Coleta a proveniencia do executavel a partir de /proc/PID/exe.
+
+        O kernel acrescenta o sufixo " (deleted)" ao alvo do link quando o
+        binario e apagado enquanto ainda executa, e usa "/memfd:" quando o
+        codigo roda apenas em memoria. As duas situacoes sao classicas de
+        anti-forense e de malware fileless: o artefato some do disco, mas o
+        processo continua vivo. Nao basta olhar a linha de comando, que nao
+        carrega essa informacao.
+
+        Guarda tambem os MAC times e o tamanho do binario, que sustentam a
+        analise temporal (quando o arquivo foi criado/alterado/acessado).
+        """
         try:
-            exe = os.path.realpath(f"/proc/{self.pid}/exe")
+            link = os.readlink(f"/proc/{self.pid}/exe")
+        except Exception:
+            self.md5 = "N/A"
+            return
+
+        exe = link
+        if link.endswith(" (deleted)"):
+            self.exe_deleted = True
+            exe = link[:-len(" (deleted)")]
+        if exe.startswith("/memfd:"):
+            self.exe_memfd = True
+
+        self.exe_path = exe
+
+        if self.exe_deleted:
+            self.detection_reasons.append(
+                f"Executable deleted from disk while running: {exe} [+{SCORE_DELETED}]")
+            if "DELETED" not in self.context_tags:
+                self.context_tags.append("DELETED")
+
+        if self.exe_memfd:
+            self.detection_reasons.append(
+                f"Fileless execution from memory: {exe} [+{SCORE_MALWARE}]")
+            if "DELETED" not in self.context_tags:
+                self.context_tags.append("DELETED")
+
+        # O executavel pode ser um interpretador legitimo (/bin/bash) rodando
+        # um payload que esta num diretorio inseguro; por isso a linha de
+        # comando inteira tambem e inspecionada.
+        unsafe = None
+        if exe.startswith(("/tmp", "/dev/shm", "/var/tmp")):
+            unsafe = exe
+        else:
+            unsafe = unsafe_path_in_cmdline(self.cmd)
+        if unsafe:
+            self.detection_reasons.append(
+                f"Executed from unsafe path: {unsafe} [+{SCORE_MALWARE}]")
+            if "UNSAFE" not in self.context_tags:
+                self.context_tags.append("UNSAFE")
+
+        try:
             if os.path.exists(exe):
                 self.md5 = calculate_md5(exe)
-                if exe.startswith(("/tmp", "/dev/shm")):
-                    self.detection_reasons.append(f"Binary executed from unsafe path: {exe} [+{SCORE_MALWARE}]")
-                    if "UNSAFE" not in self.context_tags: self.context_tags.append("UNSAFE")
-        except:
+                st = os.stat(exe)
+                self.exe_size = st.st_size
+                self.exe_mtime = st.st_mtime
+                self.exe_ctime = st.st_ctime
+                self.exe_atime = st.st_atime
+            else:
+                # Binario ausente do disco (apagado ou apenas em memoria).
+                self.md5 = "N/A (not on disk)"
+        except Exception:
             self.md5 = "N/A"
 
 
@@ -427,6 +637,27 @@ class ProcessTree:
                 self.boot_time = datetime.now() - timedelta(seconds=uptime_seconds)
         except:
             self.boot_time = datetime.now()
+
+    def reset(self):
+        """
+        Esvazia a arvore para que a proxima captura represente uma janela.
+
+        Sem isto, um agente de longa duracao acumula indefinidamente processos
+        que ja morreram: cada ciclo varre /proc de novo e apenas ACRESCENTA ao
+        que ja estava la. As consequencias sao todas ruins e nenhuma e obvia.
+
+        A pior delas e forense: o laudo passa a afirmar que um processo existe
+        quando ele terminou horas antes, e a comparacao entre capturas nunca
+        registra desaparecimento, escondendo justamente o artefato que se apagou
+        depois de agir. Junto vem o crescimento sem limite do relatorio e da
+        memoria do agente.
+
+        O tempo de inicializacao e preservado: ele descreve o host, nao a
+        captura, e recalcula-lo a cada ciclo so introduziria imprecisao.
+        """
+        self.nodes = {}
+        self.prev_udp_out = 0
+        self.first_scan = True
 
     def add_or_update(self, pid, ppid, cmd, uid, prio, loginuid=None, state="R", duration_str="", start_ts_abs=""):
         if pid == 0: return None
@@ -566,10 +797,15 @@ class ProcessTree:
         self.first_scan = False
 
         bad_dirs = []
-        for d in ["/tmp", "/dev/shm"]:
+        watch_dirs = ["/tmp", "/dev/shm", "/var/tmp"]
+        for d in watch_dirs:
             attrs = _check_immutable_path(d)
             if attrs:
                 bad_dirs.append(f"{d} ({attrs})")
+
+        # Alem do atributo do PROPRIO diretorio, os ARQUIVOS imutaveis dentro
+        # dele: e o caso comum de anti-remocao, e era o que passava despercebido.
+        bad_dirs.extend(_immutable_files_in(watch_dirs))
 
         self.immutable_alert = bad_dirs if bad_dirs else []
 
@@ -604,7 +840,7 @@ class ProcessTree:
             if "EDR/AV" in n.context_tags: n.anomaly_score += SCORE_INSPECTOR
             if "NET_TOOL" in n.context_tags: n.anomaly_score += SCORE_NET_TOOL
             if "DELETED" in n.context_tags: n.anomaly_score += SCORE_DELETED
-            if n.cmd.startswith(("/tmp", "/dev/shm")): n.anomaly_score += SCORE_MALWARE
+            if unsafe_path_in_cmdline(n.cmd): n.anomaly_score += SCORE_MALWARE
 
             if n.pid not in self.kernel_pids and (n.tcp_retrans > 0 or n.tcp_drops > 0):
                 n.tags_accumulated = set(n.context_tags)

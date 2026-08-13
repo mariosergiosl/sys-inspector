@@ -10,7 +10,6 @@
 #              - MAINTAINED: Full logic from v0.61/v0.79.00.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
 import os
@@ -26,6 +25,65 @@ import re
 # ------------------------------------------------------------------------------
 # HELPER FUNCTIONS
 # ------------------------------------------------------------------------------
+
+def collect_host_names():
+    """
+    Reune TODOS os nomes pelos quais este host e conhecido.
+
+    Um host raramente tem um nome so: ha o nome curto, o FQDN resolvido, os
+    aliases de /etc/hosts e os nomes que o DNS reverso devolve para cada
+    endereco das interfaces. Numa pericia isso importa porque um mesmo host
+    aparece com nomes diferentes nos logs de sistemas diferentes, e correlacionar
+    esses registros exige saber todos eles.
+
+    Retorna (principal, lista_completa_ordenada).
+    """
+    nomes = set()
+    curto = socket.gethostname()
+    if curto:
+        nomes.add(curto)
+
+    principal = ""
+    try:
+        principal = socket.getfqdn()
+        if principal:
+            nomes.add(principal)
+    except Exception:
+        principal = curto
+
+    # Aliases declarados localmente para o proprio host.
+    try:
+        with open("/etc/hosts", "r") as handle:
+            for linha in handle:
+                linha = linha.split("#", 1)[0].strip()
+                if not linha:
+                    continue
+                partes = linha.split()
+                if len(partes) > 1 and (curto in partes[1:] or principal in partes[1:]):
+                    nomes.update(partes[1:])
+    except Exception:
+        pass
+
+    # DNS reverso dos enderecos das interfaces.
+    try:
+        for info in socket.getaddrinfo(curto, None):
+            endereco = info[4][0]
+            try:
+                nome, aliases, _ = socket.gethostbyaddr(endereco)
+                nomes.add(nome)
+                nomes.update(aliases or [])
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    nomes.discard("localhost")
+    nomes.discard("")
+    if not principal:
+        principal = curto
+    return principal, sorted(nomes)
+
+
 def _run_cmd(cmd):
     """
     Executes a shell command and returns the output string.
@@ -89,8 +147,11 @@ def _get_physical_net_errors():
 # ------------------------------------------------------------------------------
 def get_os_info():
     """Retrieves Operating System details."""
+    principal, todos = collect_host_names()
     d = {
         "hostname": socket.gethostname(),
+        "fqdn": principal,
+        "hostnames": todos,
         "kernel": platform.release(),
         "uptime": "N/A",
         "os_pretty_name": ""

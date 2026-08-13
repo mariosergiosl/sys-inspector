@@ -13,7 +13,6 @@
 #   - [FIX v0.90.02] Moved PRAGMA WAL to init only to reduce locks.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
 import sqlite3
@@ -123,7 +122,40 @@ class DatabaseManager:
                     )
                 """)
 
+                # 2.1 Cadeia de custodia: digest da captura e do antecessor,
+                # em claro de proposito, para verificar a integridade e a
+                # continuidade da serie sem precisar descriptografar nada.
+                # ALTER guardado por try: bancos criados antes desta versao
+                # ganham as colunas sem perder os dados ja coletados.
+                for column, ctype in (("digest", "TEXT"),
+                                      ("previous_digest", "TEXT"),
+                                      ("custody", "TEXT"),
+                                      # Contagem de achados por severidade, em
+                                      # claro: permite triar a frota inteira
+                                      # ("qual host esta pior?") sem
+                                      # descriptografar captura por captura.
+                                      # Guarda numeros, nunca o conteudo.
+                                      ("findings_summary", "TEXT")):
+                    try:
+                        conn.execute("ALTER TABLE snapshots ADD COLUMN %s %s"
+                                     % (column, ctype))
+                    except Exception:
+                        pass  # ja existe
+
                 # 3. Indexes
+                # FQDN do agente, em claro como os demais metadados de
+                # inventario. ALTER guardado: bancos antigos ganham a coluna.
+                for coluna, tipo in (("fqdn", "TEXT"), ("cycle_seconds", "INTEGER"),
+                                     ("host_uptime", "INTEGER"),
+                                     ("agent_uptime", "INTEGER"),
+                                     ("clock_offset", "REAL"),
+                                     ("clock_measured", "INTEGER")):
+                    try:
+                        conn.execute("ALTER TABLE agents ADD COLUMN %s %s"
+                                     % (coluna, tipo))
+                    except Exception:
+                        pass
+
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_snap_synced ON snapshots(synced)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_snap_agent_ts ON snapshots(agent_uuid, timestamp)")
 
@@ -135,7 +167,40 @@ class DatabaseManager:
     # --------------------------------------------------------------------------
     # WRITE OPERATIONS
     # --------------------------------------------------------------------------
-    def insert_snapshot(self, encrypted_bundle, agent_uuid="local", metrics=None):
+    def get_last_digest(self, agent_uuid="local"):
+        """
+        Digest da ultima captura deste agente, que sera o elo anterior da
+        proxima. None quando ainda nao ha antecessor.
+        """
+        try:
+            with closing(self._get_conn()) as conn:
+                cursor = conn.execute(
+                    "SELECT digest FROM snapshots WHERE agent_uuid = ? "
+                    "AND digest IS NOT NULL ORDER BY id DESC LIMIT 1",
+                    (agent_uuid,))
+                row = cursor.fetchone()
+                return row[0] if row else None
+        except Exception as e:
+            self.logger.error(f"Get Last Digest Failed: {e}")
+            return None
+
+    def get_custody_chain(self, agent_uuid="local"):
+        """
+        Serie de registros de custodia do agente, em ordem cronologica, para
+        verificar se alguma captura foi removida ou reordenada.
+        """
+        try:
+            with closing(self._get_conn()) as conn:
+                cursor = conn.execute(
+                    "SELECT custody FROM snapshots WHERE agent_uuid = ? "
+                    "AND custody IS NOT NULL ORDER BY id ASC", (agent_uuid,))
+                return [json.loads(r[0]) for r in cursor if r[0]]
+        except Exception as e:
+            self.logger.error(f"Get Custody Chain Failed: {e}")
+            return []
+
+    def insert_snapshot(self, encrypted_bundle, agent_uuid="local", metrics=None,
+                        custody=None, findings_summary=None):
         if metrics is None: metrics = {}
 
         # Prepare JSON before lock
@@ -157,8 +222,9 @@ class DatabaseManager:
                     INSERT INTO snapshots (
                         agent_uuid, timestamp,
                         cpu_avg, mem_used_mb, pids_count, alert_score, is_alert,
-                        json_blob, synced
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                        json_blob, synced, digest, previous_digest, custody,
+                        findings_summary
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
                 """, (
                     agent_uuid,
                     time.time(),
@@ -167,7 +233,11 @@ class DatabaseManager:
                     metrics.get('pids', 0),
                     metrics.get('score', 0),
                     1 if metrics.get('score', 0) > 0 else 0,
-                    blob_json
+                    blob_json,
+                    (custody or {}).get('digest'),
+                    (custody or {}).get('previous_digest'),
+                    json.dumps(custody) if custody else None,
+                    json.dumps(findings_summary) if findings_summary else None
                 ))
                 # Guarda o id da linha recem-inserida para retorno ao chamador
                 # (antes retornava True, o que fazia o log exibir "ID: True").
@@ -201,7 +271,10 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Mark Synced Failed: {e}")
 
-    def update_agent_status(self, uuid, status, hostname=None, ip=None, os_info=None):
+    def update_agent_status(self, uuid, status, hostname=None, ip=None,
+                            os_info=None, fqdn=None, cycle_seconds=None,
+                            host_uptime=None, agent_uptime=None,
+                            clock_offset=None, clock_measured=None):
         try:
             with closing(self._get_conn()) as conn:
                 sql = "UPDATE agents SET status=?, last_seen=CURRENT_TIMESTAMP"
@@ -216,6 +289,27 @@ class DatabaseManager:
                 if os_info:
                     sql += ", os_info=?"
                     params.append(os_info)
+                if fqdn:
+                    sql += ", fqdn=?"
+                    params.append(fqdn)
+                if cycle_seconds:
+                    sql += ", cycle_seconds=?"
+                    params.append(int(cycle_seconds))
+                # Uptime e desvio de relogio: aceitam ZERO como valor legitimo
+                # (host recem-ligado; relogio medido e em sincronia), por isso o
+                # teste e 'is not None', nao truthy.
+                if host_uptime is not None:
+                    sql += ", host_uptime=?"
+                    params.append(int(host_uptime))
+                if agent_uptime is not None:
+                    sql += ", agent_uptime=?"
+                    params.append(int(agent_uptime))
+                if clock_offset is not None:
+                    sql += ", clock_offset=?"
+                    params.append(float(clock_offset))
+                if clock_measured is not None:
+                    sql += ", clock_measured=?"
+                    params.append(1 if clock_measured else 0)
 
                 sql += " WHERE uuid=?"
                 params.append(uuid)
@@ -228,15 +322,152 @@ class DatabaseManager:
     # --------------------------------------------------------------------------
     # READ OPERATIONS
     # --------------------------------------------------------------------------
-    def get_pending_snapshots(self, limit=50):
+    def get_confirmed_candidates(self, limit=200):
+        """
+        Capturas ja entregues cujo digest ainda nao foi confirmado pelo servidor.
+
+        Sao as candidatas a liberar espaco no agente. Entregue nao significa
+        guardado: a entrega termina na fila de ingestao do servidor, e entre a
+        fila e o disco ainda ha um passo que pode falhar. Apagar aqui com base
+        no aceite da entrega perderia a captura nas DUAS pontas.
+        """
         try:
             with closing(self._get_conn()) as conn:
                 cursor = conn.execute("""
-                    SELECT id, json_blob FROM snapshots
+                    SELECT id, digest FROM snapshots
+                    WHERE synced = 1 AND digest IS NOT NULL
+                      AND json_blob IS NOT NULL
+                    ORDER BY id ASC LIMIT ?
+                """, (limit,))
+                return [{"id": r[0], "digest": r[1]} for r in cursor]
+        except Exception as e:
+            self.logger.error(f"Listing confirmed candidates failed: {e}")
+            return []
+
+    def purge_confirmed(self, snapshot_ids):
+        """
+        Libera o conteudo local das capturas que o servidor confirmou guardar.
+
+        A LINHA permanece, com digest e encadeamento: e o mesmo cuidado da
+        retencao no servidor, porque apagar o elo romperia a cadeia de custodia
+        do proprio agente e a verificacao local passaria a falhar.
+        """
+        if not snapshot_ids:
+            return 0
+        try:
+            with closing(self._get_conn()) as conn:
+                marcas = ",".join("?" * len(snapshot_ids))
+                # Marcador, nao NULL: a coluna e NOT NULL desde o esquema
+                # original. Eu ja tinha cometido este mesmo erro na fila de
+                # ingestao e o repeti aqui, com um agravante: falhava em
+                # silencio a cada ciclo, entao o banco local do agente NUNCA
+                # era liberado e crescia sem limite, exatamente o problema que
+                # esta funcao existe para resolver.
+                cur = conn.execute(
+                    "UPDATE snapshots SET json_blob = ? WHERE id IN (%s)"
+                    % marcas, ['{"_purged": true}'] + list(snapshot_ids))
+                conn.commit()
+                return cur.rowcount
+        except Exception as e:
+            self.logger.error(f"Purging confirmed snapshots failed: {e}")
+            return 0
+
+    def set_capabilities(self, agent_uuid, capabilities):
+        """
+        Guarda o retrato de capacidades enviado pelo agente.
+
+        Em coluna propria e em claro: e metadado operacional, nao conteudo de
+        investigacao, e a triagem da frota precisa dele sem descriptografar
+        nada.
+        """
+        if not capabilities:
+            return
+        try:
+            with closing(self._get_conn()) as conn:
+                try:
+                    conn.execute("ALTER TABLE agents ADD COLUMN capabilities TEXT")
+                except Exception:
+                    pass
+                conn.execute("UPDATE agents SET capabilities = ? WHERE uuid = ?",
+                             (json.dumps(capabilities), agent_uuid))
+                conn.commit()
+        except Exception as e:
+            self.logger.error(f"Storing capabilities failed: {e}")
+
+    def get_capabilities(self, agent_uuid=None):
+        """Capacidades de um agente, ou de todos, para a tela da frota."""
+        try:
+            with closing(self._get_conn()) as conn:
+                try:
+                    conn.execute("ALTER TABLE agents ADD COLUMN capabilities TEXT")
+                    conn.commit()
+                except Exception:
+                    pass
+                if agent_uuid:
+                    row = conn.execute(
+                        "SELECT capabilities FROM agents WHERE uuid = ?",
+                        (agent_uuid,)).fetchone()
+                    return json.loads(row[0]) if row and row[0] else {}
+                saida = {}
+                for r in conn.execute("SELECT uuid, capabilities FROM agents"):
+                    saida[r[0]] = json.loads(r[1]) if r[1] else {}
+                return saida
+        except Exception as e:
+            self.logger.error(f"Reading capabilities failed: {e}")
+            return {} if agent_uuid else {}
+
+    def digests_present(self, digests):
+        """
+        Quais destes digests estao de fato guardados aqui.
+
+        Chamada no SERVIDOR para responder ao agente. Conferir o digest, e nao o
+        id, e o que torna a resposta confiavel: o id e local de cada lado, o
+        digest identifica o conteudo.
+        """
+        if not digests:
+            return []
+        try:
+            with closing(self._get_conn()) as conn:
+                marcas = ",".join("?" * len(digests))
+                cursor = conn.execute(
+                    "SELECT digest FROM snapshots WHERE digest IN (%s) "
+                    "AND json_blob IS NOT NULL" % marcas, list(digests))
+                return [r[0] for r in cursor]
+        except Exception as e:
+            self.logger.error(f"Checking digests failed: {e}")
+            return []
+
+    def get_pending_snapshots(self, limit=50):
+        try:
+            with closing(self._get_conn()) as conn:
+                # Leva junto metricas, custodia e resumo de achados: o servidor
+                # precisa deles para montar a triagem da frota sem
+                # descriptografar, e a custodia carrega o digest que identifica
+                # a captura de forma idempotente no reenvio.
+                cursor = conn.execute("""
+                    SELECT id, json_blob, cpu_avg, mem_used_mb, pids_count,
+                           alert_score, custody, findings_summary
+                    FROM snapshots
                     WHERE synced=0
                     ORDER BY id ASC LIMIT ?
                 """, (limit,))
-                return [{'id': r['id'], 'data': json.loads(r['json_blob'])} for r in cursor]
+                pending = []
+                for r in cursor:
+                    def _load(raw):
+                        try:
+                            return json.loads(raw) if raw else {}
+                        except Exception:
+                            return {}
+                    pending.append({
+                        'id': r['id'],
+                        'data': json.loads(r['json_blob']),
+                        'metrics': {'cpu': r['cpu_avg'], 'mem': r['mem_used_mb'],
+                                    'pids': r['pids_count'],
+                                    'score': r['alert_score']},
+                        'custody': _load(r['custody']),
+                        'findings_summary': _load(r['findings_summary']),
+                    })
+                return pending
         except Exception as e:
             self.logger.error(f"Get Pending Failed: {e}")
             return []
@@ -286,6 +517,47 @@ class DatabaseManager:
                 return json.loads(row[0]) if row else None
         except Exception:
             return None
+
+    def get_fleet_status(self):
+        """
+        Situacao de risco de cada agente, para a triagem da frota.
+
+        Junta os metadados do agente com a ULTIMA captura dele, usando apenas
+        colunas em claro. Assim o analista consegue ordenar dezenas ou centenas
+        de hosts por gravidade ("qual esta pior?") sem descriptografar nada, que
+        seria caro e exporia conteudo desnecessariamente.
+        """
+        try:
+            with closing(self._get_conn()) as conn:
+                cursor = conn.execute("""
+                    SELECT a.uuid, a.hostname, a.ip_address, a.os_info,
+                           a.fqdn, a.cycle_seconds, a.status, a.last_seen,
+                           a.host_uptime, a.agent_uptime,
+                           a.clock_offset, a.clock_measured,
+                           s.timestamp AS last_capture,
+                           s.alert_score, s.is_alert, s.cpu_avg,
+                           s.mem_used_mb, s.pids_count, s.findings_summary
+                    FROM agents a
+                    LEFT JOIN snapshots s ON s.id = (
+                        SELECT id FROM snapshots
+                        WHERE agent_uuid = a.uuid
+                        ORDER BY id DESC LIMIT 1
+                    )
+                    ORDER BY a.last_seen DESC
+                """)
+                fleet = []
+                for row in cursor:
+                    item = dict(row)
+                    raw = item.pop("findings_summary", None)
+                    try:
+                        item["findings"] = json.loads(raw) if raw else {}
+                    except Exception:
+                        item["findings"] = {}
+                    fleet.append(item)
+                return fleet
+        except Exception as e:
+            self.logger.error(f"Get Fleet Status Failed: {e}")
+            return []
 
     def get_agents(self):
         try:

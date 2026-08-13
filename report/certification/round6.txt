@@ -1,0 +1,62 @@
+== CERTIFICACAO CHAOS_MAKER - RODADA 6 (imutavel como Finding) ==
+START=1786563310 (Wed Aug 12 19:39:47 UTC 2026)
+
+----- .161 (7fb246c5) gcc=true podman=true -----
+  [ OK ] systemd unit (T1543.002)
+  [ OK ] cron (T1053.003)
+  [ OK ] ld.so.preload (T1574.006)
+  [ OK ] binario em local gravavel (miner)
+  [ OK ] GPU/mineracao
+  [ OK ] falha de rede (NET ERR)
+  [ OK ] processo zumbi
+  [ OK ] binario apagado (DELETED)
+  [ OK ] EDR/AV (fanotify)
+  [ OK ] container
+  [FALTA] arquivo imutavel (T1222.002)  (detectado como Finding de persistencia)
+  janela: 6 capturas | max_score=131 | tags=CONTAINER,DELETED,EDR-WAIT,EDR/AV,GPU,MINER,NET ERR,SSH,SUDO,UNSAFE,WARN,ZOMBIE,🧊
+RESULT 161 FAIL faltando=arquivo imutavel (T1222.002)
+
+----- .167 (552b56c2) gcc=true podman=false -----
+  [ OK ] systemd unit (T1543.002)
+  [ OK ] cron (T1053.003)
+  [ OK ] ld.so.preload (T1574.006)
+  [ OK ] binario em local gravavel (miner)
+  [ OK ] GPU/mineracao
+  [ OK ] falha de rede (NET ERR)
+  [ OK ] processo zumbi
+  [ OK ] binario apagado (DELETED)
+  [ OK ] EDR/AV (fanotify)
+  [N/A ] container  (N/A: host sem podman)
+  [ OK ] arquivo imutavel (T1222.002)  (detectado como Finding de persistencia)
+  janela: 8 capturas | max_score=177 | tags=DELETED,EDR-WAIT,EDR/AV,GPU,MINER,NET ERR,SSH,SUDO,UNSAFE,WARN,ZOMBIE,🧊
+RESULT 167 PASS
+
+----- .168 (68089e74) gcc=false podman=false -----
+  [ OK ] systemd unit (T1543.002)
+  [ OK ] cron (T1053.003)
+  [N/A ] ld.so.preload (T1574.006)  (N/A: host sem gcc nao planta a lib)
+  [ OK ] binario em local gravavel (miner)
+  [ OK ] GPU/mineracao
+  [ OK ] falha de rede (NET ERR)
+  [ OK ] processo zumbi
+  [ OK ] binario apagado (DELETED)
+  [ OK ] EDR/AV (fanotify)
+  [N/A ] container  (N/A: host sem podman)
+  [ OK ] arquivo imutavel (T1222.002)  (detectado como Finding de persistencia)
+  janela: 6 capturas | max_score=369 | tags=DELETED,EDR/AV,GPU,MINER,NET ERR,SSH,SUDO,UNSAFE,WARN,ZOMBIE
+RESULT 168 PASS
+
+----- .200 (5913d950) gcc=true podman=false -----
+  [ OK ] systemd unit (T1543.002)
+  [ OK ] cron (T1053.003)
+  [ OK ] ld.so.preload (T1574.006)
+  [ OK ] binario em local gravavel (miner)
+  [ OK ] GPU/mineracao
+  [ OK ] falha de rede (NET ERR)
+  [ OK ] processo zumbi
+  [ OK ] binario apagado (DELETED)
+  [ OK ] EDR/AV (fanotify)
+  [N/A ] container  (N/A: host sem podman)
+  [FALTA] arquivo imutavel (T1222.002)  (detectado como Finding de persistencia)
+  janela: 6 capturas | max_score=177 | tags=DELETED,EDR-WAIT,EDR/AV,GPU,MINER,NET ERR,SSH,SUDO,UNSAFE,WARN,ZOMBIE,🧊
+RESULT 200 FAIL faltando=arquivo imutavel (T1222.002)

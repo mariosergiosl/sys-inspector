@@ -12,17 +12,84 @@
 #
 # DEPENDENCIES: pip install cryptography
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
 import os
 import json
+import zlib
 import base64
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
+
+
+# ------------------------------------------------------------------------------
+# AGENT IDENTITY AND SIGNING
+# ------------------------------------------------------------------------------
+# A cifra usa a chave PUBLICA do analista: o agente consegue proteger o dado,
+# mas nao consegue assinar com uma chave que nao possui. Para atestar a origem
+# da captura o agente precisa de identidade propria, que e este par de chaves,
+# separado do par usado para confidencialidade.
+def ensure_agent_identity(private_path, public_path):
+    """
+    Garante o par de chaves de identidade do agente, criando na primeira
+    execucao. A chave privada fica legivel apenas pelo dono (0600).
+    """
+    if os.path.exists(private_path) and os.path.exists(public_path):
+        return
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=3072,
+                                   backend=default_backend())
+
+    for path in (private_path, public_path):
+        directory = os.path.dirname(path)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
+
+    with open(private_path, "wb") as handle:
+        handle.write(key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()))
+    try:
+        os.chmod(private_path, 0o600)
+    except Exception:
+        pass
+
+    with open(public_path, "wb") as handle:
+        handle.write(key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo))
+
+
+def sign_bytes(data, private_key):
+    """
+    Assina bytes com RSA-PSS/SHA-256, o esquema recomendado para assinaturas
+    RSA novas. Devolve a assinatura em bytes.
+    """
+    return private_key.sign(
+        data,
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256())
+
+
+def verify_bytes(data, signature, public_key):
+    """
+    Confere a assinatura. Retorna True se valida, False caso contrario, sem
+    levantar excecao: uma assinatura invalida e um resultado, nao um erro.
+    """
+    try:
+        public_key.verify(
+            signature, data,
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                        salt_length=padding.PSS.MAX_LENGTH),
+            hashes.SHA256())
+        return True
+    except Exception:
+        return False
 
 
 # ------------------------------------------------------------------------------
@@ -59,9 +126,18 @@ def generate_key_pair(private_key_path="private_key.pem", public_key_path="publi
 
 
 def ensure_crypto_environment(public_key_path, private_key_path):
-    """Checks if keys exist; if not, auto-provisions them for the agent."""
-    if not os.path.exists(public_key_path) or not os.path.exists(private_key_path):
-        print("[!] Cryptographic keys not found. Auto-provisioning identity...")
+    """
+    Garante que exista uma chave publica para cifrar as capturas.
+
+    So provisiona quando a chave PUBLICA falta. Um agente que tem apenas a
+    chave publica do analista e a implantacao correta em campo: ele cifra e nao
+    consegue reabrir o que coletou (zero-knowledge). Tratar a ausencia da chave
+    privada como "faltam chaves" faria o agente gerar um par proprio e
+    SOBRESCREVER a chave do analista, e todas as capturas seguintes ficariam
+    ilegiveis para quem deveria analisa-las, sem nenhum aviso.
+    """
+    if not os.path.exists(public_key_path):
+        print("[!] Public key not found. Auto-provisioning identity...")
 
         # Ensure directory exists with secure permissions
         config_dir = os.path.dirname(public_key_path)
@@ -93,7 +169,16 @@ def load_private_key(path):
 # ------------------------------------------------------------------------------
 # HYBRID ENCRYPTION (AES-GCM + RSA)
 # ------------------------------------------------------------------------------
-def encrypt_data(data_dict, public_key):
+# Marcador que distingue payload comprimido de payload antigo em texto puro.
+# Escolhido para nunca colidir com o inicio de um JSON.
+MAGIC_COMPRESSED = b"SIZ1"
+
+# Nivel 6 e o joelho da curva: praticamente o mesmo tamanho do nivel 9 com uma
+# fracao do custo de CPU, que aqui e gasto no host sob investigacao.
+COMPRESSION_LEVEL = 6
+
+
+def encrypt_data(data_dict, public_key, compress=True):
     """
     Encrypts a dictionary object using Hybrid Encryption.
 
@@ -110,7 +195,27 @@ def encrypt_data(data_dict, public_key):
         }
     """
     # 1. Prepare Data
+    #
+    # COMPRIME ANTES DE CIFRAR. A ordem nao e escolha de estilo: dado cifrado e
+    # indistinguivel de aleatorio e nao comprime nada, entao o unico ponto em
+    # que a compressao rende e este. O ganho medido em captura real e de 13x
+    # (180 KB -> 14 KB), e a captura e 93% arvore de processos, um texto com
+    # enorme repeticao de caminhos e nomes.
+    #
+    # RESSALVA DE SEGURANCA: comprimir antes de cifrar expoe, em tese, a classe
+    # de ataque CRIME/BREACH, na qual quem observa o TAMANHO do resultado e
+    # consegue injetar texto escolhido varias vezes deduz o conteudo. Aqui isso
+    # nao se aplica: nao ha oraculo adaptativo, o atacante nao escolhe o que
+    # entra na captura nem observa o tamanho de cada tentativa, e a captura e
+    # cifrada uma unica vez. Fica registrado porque a premissa pode mudar, e
+    # `compress=False` desliga sem tocar em mais nada.
     json_data = json.dumps(data_dict).encode('utf-8')
+    if compress:
+        comprimido = zlib.compress(json_data, COMPRESSION_LEVEL)
+        # So vale se de fato encolher: payload minusculo pode crescer com o
+        # cabecalho do zlib.
+        if len(comprimido) < len(json_data):
+            json_data = MAGIC_COMPRESSED + comprimido
 
     # 2. Generate Ephemeral Session Key (AES-256)
     session_key = os.urandom(32)  # 256 bits
@@ -166,6 +271,12 @@ def decrypt_data(encrypted_bundle, private_key):
         cipher = Cipher(algorithms.AES(session_key), modes.GCM(iv, tag), backend=default_backend())
         decryptor = cipher.decryptor()
         json_data = decryptor.update(ciphertext) + decryptor.finalize()
+
+        # Capturas anteriores a v0.92 nao sao comprimidas e nao tem o marcador.
+        # A deteccao pelo prefixo mantem as duas legiveis pelo mesmo caminho:
+        # material forense antigo precisa continuar abrindo, sempre.
+        if json_data.startswith(MAGIC_COMPRESSED):
+            json_data = zlib.decompress(json_data[len(MAGIC_COMPRESSED):])
 
         return json.loads(json_data.decode('utf-8'))
 

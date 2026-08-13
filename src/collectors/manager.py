@@ -10,7 +10,6 @@
 #   data = mgr.collect_snapshot(duration=30)
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
 import os
@@ -37,15 +36,28 @@ def summarize_metrics(processes):
 
     pids = len(nodes)
 
+    def _number(value, cast):
+        """
+        Converte um valor da captura, tolerando dado ausente ou malformado.
+
+        Este resumo roda em TODA captura: deixar uma excecao escapar por causa
+        de um unico processo com valor estranho custaria a coleta inteira, que
+        e justamente o que nao se pode perder numa pericia.
+        """
+        try:
+            return cast(value or 0)
+        except (TypeError, ValueError):
+            return cast(0)
+
     # CPU: utilizacao media por core no periodo. cpu_usage_pct ja vem calculado
     # na janela de captura; somamos por processo e dividimos pelo numero de
     # cores para obter um percentual medio de ocupacao.
-    total_cpu = sum(float(p.get("cpu_usage_pct", 0.0) or 0.0) for p in nodes)
+    total_cpu = sum(_number(p.get("cpu_usage_pct"), float) for p in nodes)
     ncpu = os.cpu_count() or 1
     cpu_avg = round(total_cpu / ncpu, 1)
 
     # Score de alerta: pico de anomaly_score na arvore (processo mais suspeito).
-    score = max((int(p.get("anomaly_score", 0) or 0) for p in nodes), default=0)
+    score = max((_number(p.get("anomaly_score"), int) for p in nodes), default=0)
 
     # Memoria usada (MB) via /proc/meminfo: MemTotal - MemAvailable.
     mem_used = 0
@@ -64,7 +76,49 @@ def summarize_metrics(processes):
     return {"cpu": cpu_avg, "mem": mem_used, "pids": pids, "score": score}
 
 
-def collect_findings():
+def correlate_findings_with_processes(findings, processes):
+    """
+    Liga cada achado aos processos que estao executando o caminho que ele
+    denuncia.
+
+    Um achado de persistencia aponta para um ARQUIVO (a unit, a entrada de
+    cron), nao para um PID. O valor pericial aparece quando esse caminho esta
+    de fato rodando: a persistencia deixa de ser teorica e passa a ser
+    atividade em curso. Preenche 'related_pids' nos achados correlacionados.
+
+    PARAMETER findings: lista de dicts (Finding.to_dict).
+    PARAMETER processes: dict pid -> dados do processo (data['processes']).
+    """
+    if not findings or not processes:
+        return findings
+
+    for finding in findings:
+        # Caminho denunciado pelo achado: a referencia encontrada na evidencia
+        # (ex.: o binario que a unit executa) e, como apoio, o proprio alvo.
+        evidence = finding.get("evidence") or {}
+        candidates = []
+        reference = evidence.get("reference")
+        if reference:
+            candidates.append(str(reference))
+
+        matches = []
+        for pid, proc in processes.items():
+            exe = str(proc.get("exe_path") or "")
+            cmd = str(proc.get("cmd") or "")
+            for path in candidates:
+                if not path or len(path) < 4:
+                    continue
+                if exe == path or path in cmd:
+                    matches.append(int(pid))
+                    break
+
+        if matches:
+            finding["related_pids"] = sorted(set(matches))
+
+    return findings
+
+
+def collect_findings(processos=None):
     """
     Executa os coletores de achados estaticos e devolve a lista normalizada,
     deduplicada e ordenada por severidade (mais grave primeiro).
@@ -78,6 +132,20 @@ def collect_findings():
         findings.extend(collect_persistence())
     except Exception as exc:
         logging.getLogger("CollectorMgr").error(f"[COLLECT] Persistence failed: {exc}")
+    try:
+        from src.collectors.hidden import collect_hidden
+        findings.extend(collect_hidden())
+    except Exception as exc:
+        logging.getLogger("CollectorMgr").error(f"[COLLECT] Hidden scan failed: {exc}")
+    # Reusa a arvore ja coletada em vez de varrer /proc de novo: o custo extra
+    # no host inspecionado fica proximo de zero.
+    if processos:
+        try:
+            from src.collectors.memory_forensics import collect_memory_forensics
+            findings.extend(collect_memory_forensics(processos))
+        except Exception as exc:
+            logging.getLogger("CollectorMgr").error(
+                f"[COLLECT] Memory forensics failed: {exc}")
     return sort_findings(dedupe_findings(findings))
 
 
@@ -130,7 +198,10 @@ class CollectionManager:
             # Roda depois da janela eBPF para nao competir com a captura.
             self.logger.info("[COLLECT] Enumerating persistence mechanisms...")
             findings = collect_findings()
-            full_data['findings'] = [f.to_dict() for f in findings]
+            serialized = [f.to_dict() for f in findings]
+            # Liga o achado estatico ao runtime: a persistencia esta ativa?
+            correlate_findings_with_processes(serialized, full_data['processes'])
+            full_data['findings'] = serialized
             full_data['findings_summary'] = summarize_by_severity(findings)
 
             # 7. Metadata
