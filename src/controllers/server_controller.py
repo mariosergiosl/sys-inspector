@@ -364,6 +364,92 @@ def _human_age(seconds):
     return "%dd ago" % (seconds // 86400)
 
 
+def _selo_comando(ultimo):
+    """
+    Stepper do ULTIMO comando pedido a um agente, com a etapa atual destacada.
+
+    Resolve a confusao relatada pelo Mario: um comando disparado (chaos) se
+    confundia com a cadencia automatica de captura, e nao ficava claro que
+    "rodamos um comando e estamos esperando". Aqui o comando vira uma trilha de
+    etapas com a atual em destaque, separada da coluna Next (que e a cadencia).
+
+    O estado real vive em tres paradas (enfileirado -> no agente -> desfecho); as
+    sub-etapas do chaos (rodar cenario, esperar ficar pronto, capturar) acontecem
+    DENTRO do agente durante a parada "no agente" e so voltam no resultado final.
+    Nao sao inventadas aqui: o servidor nao as observa ao vivo, entao a parada "no
+    agente" apenas declara, por comando, o que esta em curso. Nada e afirmado que
+    o servidor nao saiba (D-020).
+    """
+    if not ultimo:
+        return ""
+    status = ultimo.get("status", "")
+    comando = ultimo.get("command", "")
+    resultado = (ultimo.get("result") or "").strip()
+
+    # O que a parada "no agente" significa, por comando.
+    em_curso = {
+        "chaos": "no agente: cenario + captura",
+        "collect": "no agente: capturando",
+        "restart": "no agente: reiniciando",
+    }.get(comando, "no agente")
+
+    # Qual das tres paradas esta ativa. 0 enfileirado, 1 no agente, 2 desfecho.
+    if status == "PENDING":
+        ativo, falhou = 0, False
+    elif status == "SENT":
+        ativo, falhou = 1, False
+    elif status == "FAILED":
+        ativo, falhou = 2, True
+    else:  # DONE (ou desconhecido) tratado como desfecho concluido
+        ativo, falhou = 2, False
+
+    desfecho = ("falhou", "#ff4d4d") if falhou else ("concluido", "#6bcB77")
+    paradas = [("enfileirado", "#7fb3d5"), (em_curso, "#ffd166"), desfecho]
+
+    # Trilha: paradas passadas em verde apagado com check, a atual em cor cheia
+    # com ponto, as futuras em cinza. E a proposta de "cor/icone por estado".
+    pecas = []
+    for i, (rotulo, cor) in enumerate(paradas):
+        if i < ativo:
+            pecas.append("<span style='color:#4a7a4a'>&#10003; %s</span>" % rotulo)
+        elif i == ativo:
+            marca = "&#9679; " if i != 2 else ""
+            pecas.append("<span style='color:%s; font-weight:bold'>%s%s</span>"
+                         % (cor, marca, rotulo))
+        else:
+            pecas.append("<span style='color:#555'>%s</span>" % rotulo)
+    trilha = " <span style='color:#444'>&rarr;</span> ".join(pecas)
+
+    # Carimbo de tempo da etapa atual e "ha quanto tempo" (cronometro vivo). O
+    # data-since deixa o JS atualizar a cada segundo entre os refreshes da pagina.
+    carimbos = {0: ultimo.get("created_at"), 1: ultimo.get("delivered_at"),
+                2: ultimo.get("finished_at")}
+    quando = carimbos.get(ativo)
+    tempo_html = ""
+    if quando:
+        try:
+            epoch = float(quando)
+            if ativo == 2:
+                hora = datetime.datetime.fromtimestamp(epoch).strftime("%H:%M:%S")
+                tempo_html = " <span style='color:#666'>as %s</span>" % hora
+            else:
+                tempo_html = (" <span style='color:#666'>ha "
+                              "<span class='cmd-live' data-since='%d'>%s</span>"
+                              "</span>" % (int(epoch), _dur_humana(time.time() - epoch)))
+        except Exception:
+            tempo_html = ""
+
+    # Resultado completo no tooltip ("ver detalhes"), resumo visivel na linha.
+    titulo = (" title='%s'" % _esc(resultado)) if resultado else ""
+    linha_result = ""
+    if resultado:
+        linha_result = ("<div style='color:#666; font-size:10px'>%s</div>"
+                        % _esc(resultado[:70]))
+
+    return ("<div class='cmd-step'%s><span style='color:#888'>%s</span> %s%s%s</div>"
+            % (titulo, _esc(comando), trilha, tempo_html, linha_result))
+
+
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """Multi-threaded HTTP Server."""
     daemon_threads = True
@@ -1814,23 +1900,10 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             cmd_badge = ("<span class='cmd-badge' title='queued, waiting for the "
                          "agent to check in'>%d</span>" % aguardando) if aguardando else ""
 
-            cmd_state = ""
+            # Estado do ultimo comando como STEPPER (etapa atual destacada),
+            # separado da cadencia automatica da coluna Next. Ver _selo_comando.
             historico = db_commands.list_for(uuid, limit=1) if db_commands else []
-            if historico:
-                ultimo = historico[0]
-                rotulos = {
-                    "PENDING": ("aguardando o agente perguntar", "#7fb3d5"),
-                    "SENT": ("em execucao no agente", "#ffd166"),
-                    "DONE": ("concluido", "#6bcB77"),
-                    "FAILED": ("falhou", "#ff4d4d"),
-                }
-                texto, cor = rotulos.get(ultimo["status"], (ultimo["status"], "#888"))
-                detalhe = (ultimo.get("result") or "").strip()
-                cmd_state = ("<div style='color:%s; font-size:10px; margin-top:3px'>"
-                             "%s: %s</div>" % (cor, ultimo["command"], texto))
-                if detalhe:
-                    cmd_state += ("<div style='color:#666; font-size:10px'>%s</div>"
-                                  % detalhe[:60])
+            cmd_state = _selo_comando(historico[0]) if historico else ""
 
             fqdn = a.get('fqdn') or ""
             # FQDN em COLUNA propria (pedido do Mario): SEMPRE mostra o valor
@@ -1921,6 +1994,25 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             + ("<div style='margin-top:6px'>%d agente(s)</div>" % len(agents)),
             nome_tela="Manager")
 
+        # Cronometro vivo: atualiza o "ha Ns" das etapas em curso a cada segundo,
+        # entre os refreshes de 30s da pagina. String comum (chaves reais) para
+        # nao colidir com o escape de chaves da f-string do html.
+        js_ticker = (
+            "<script>"
+            "function siDur(s){if(s<0)return '?';"
+            "var d=Math.floor(s/86400);s-=d*86400;"
+            "var h=Math.floor(s/3600);s-=h*3600;"
+            "var m=Math.floor(s/60);var x=s-m*60;"
+            "if(d)return d+'d '+h+'h';if(h)return h+'h '+m+'m';"
+            "if(m)return m+'m';return x+'s';}"
+            "function siTick(){var now=Date.now()/1000;"
+            "var els=document.getElementsByClassName('cmd-live');"
+            "for(var i=0;i<els.length;i++){"
+            "var t=parseFloat(els[i].getAttribute('data-since'));"
+            "if(!isNaN(t))els[i].textContent=siDur(Math.floor(now-t));}}"
+            "setInterval(siTick,1000);siTick();"
+            "</script>")
+
         html = f"""
         <html><head><meta charset="UTF-8">
         <title>Sys-Inspector v{__version__} | Manager</title>
@@ -1942,6 +2034,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             .btn-lab:hover {{ text-shadow:0 0 8px #ff8c42; }}
             .btn-warn:hover {{ text-shadow:0 0 8px var(--red); }}
             .cmd-badge {{ background:var(--acc); color:#fff; font-size:10px; padding:1px 7px; border-radius:8px; margin-left:4px; }}
+            .cmd-step {{ margin-top:5px; font-size:10px; line-height:1.5; max-width:340px; }}
             .btn-view:hover {{ background: #0078d4; border-color: #0078d4; }}
         </style>
         </head><body>
@@ -1963,6 +2056,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             </tr></thead>
             <tbody>{rows}</tbody>
         </table>
+        {js_ticker}
         </body></html>
         """
         self.wfile.write(html.encode('utf-8'))
