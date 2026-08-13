@@ -1207,12 +1207,18 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                              "+%ds</span>" % d)
             anterior = ev["corrected_ts"]
 
+            # Marca de relogio SO quando o desvio e significativo (>= 1s). Agora
+            # que o desvio e MEDIDO, quase todo host sincronizado tem alguns
+            # microssegundos, e mostrar o icone em todo evento viraria ruido. O
+            # que importa e o desvio que muda a ORDEM entre hosts, e esse e da
+            # ordem de segundos (12s medidos no lab quando um host dessincronizou).
             desvio = ""
-            if ev.get("clock_offset"):
-                desvio = ("<span title='Relogio deste host desviava %ss; o "
-                          "horario exibido ja esta corrigido' "
-                          "style='color:#c586c0;font-size:10px'>&#9201;</span>"
-                          % ev["clock_offset"])
+            off = float(ev.get("clock_offset") or 0.0)
+            if abs(off) >= 1.0:
+                desvio = ("<span title='Relogio deste host desviava %.1fs; o "
+                          "horario exibido JA esta corrigido por esse desvio' "
+                          "style='color:#c586c0;font-size:10px'>&#9201; %+.0fs"
+                          "</span>" % (off, off))
 
             # RISCO do evento, que faltava por completo.
             #
