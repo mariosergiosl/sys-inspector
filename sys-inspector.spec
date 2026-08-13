@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           sys-inspector
-Version:        0.92.0
+Version:        1.0.0
 Release:        1%{?dist}
 Summary:        System inspector and forensic tool using eBPF (Multi-Agent/Web)
 
@@ -203,6 +203,11 @@ ln -sf %{_sbindir}/service %{buildroot}%{_sbindir}/rc%{name}
 %dir %attr(0750,root,root) /var/log/sys-inspector/reports
 
 %changelog
+* Thu Aug 13 2026 Mario Luz <mario.mssl@gmail.com> - 1.0.0-1
+- Added: answer contract per finding (D-022) with a confidence level (confirmed/probable/heuristic) and a custody level (metadata/hash/full), so the report never presents a heuristic as a fact and states what was preserved.
+- Added: Manager command progress as a stepper (enqueued -> on the agent -> done/failed) with a live timer, replacing the flat status text.
+- Added: report didactics and cross-tab coupling: per-finding evidence tooltips, a severity legend with the operator action, a "how to read" strip, and clickable pivots between Findings and ATT&CK in both directions.
+- Fixed: version is now a single source across every screen, the custody stamp and the shell scripts; the Live UI, live and snapshot reports no longer hardcode a stale version.
 * Thu Aug 06 2026 Mario Luz <mario.mssl@gmail.com> - 0.91.0-1
 - Added: normalized Finding entity (single severity scale, explicit source, MITRE ATT&CK technique, attached evidence) and a persistence collector covering systemd units, cron/at, startup scripts, ld.so.preload, kernel module autoload, udev rules, PAM stacks and per-user authorized_keys.
 - Added: first automated test suite (pytest) wired into CI.

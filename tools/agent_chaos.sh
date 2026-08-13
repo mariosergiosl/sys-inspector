@@ -35,7 +35,7 @@
 # BUGS: ---
 # NOTES: US-ASCII only. Compatible with the lab SLES/Leap hosts.
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: 0.92.0
+# VERSION: 1.0.0
 # CREATED: 2026-08-07
 # REVISION: 2026-08-07 isolate the unsafe-library signal to a single process
 # ======================================================================================
@@ -45,7 +45,7 @@ set -u
 # --------------------------------------------------------------------------------------
 # CONSTANTS
 # --------------------------------------------------------------------------------------
-VERSION="0.92.0"
+VERSION="1.0.0"
 MARK="/tmp/chaos_persist"                     # strange path: only OUR process maps it
 SYS_LIB_DIR="/usr/local/lib"                  # normal path: preload here does NOT taint
 SYS_LIB="${SYS_LIB_DIR}/libhealthcheck.so"    # innocuous name, mirrors real-world evasion
