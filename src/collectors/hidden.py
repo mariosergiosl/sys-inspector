@@ -32,7 +32,8 @@ import os
 import errno
 import logging
 
-from src.core.findings import (Finding, SEV_HIGH, SEV_MEDIUM, SRC_HEURISTIC)
+from src.core.findings import (Finding, SEV_HIGH, SEV_MEDIUM, SRC_HEURISTIC,
+                               CONF_PROBABLE, CONF_HEURISTIC, CUSTODY_NONE)
 
 LOG = logging.getLogger("Hidden")
 
@@ -201,6 +202,8 @@ def collect_hidden():
                     "processo de vida curta."),
                 evidence=detalhe,
                 technique="T1014",
+                confidence=CONF_PROBABLE,
+                custody={"level": CUSTODY_NONE},
                 recommendation=(
                     "Preservar a memoria do host ANTES de qualquer intervencao: "
                     "matar o processo destroi a evidencia. Comparar com uma "
@@ -227,6 +230,8 @@ def collect_hidden():
                     % (item["declared"], item["listed"])),
                 evidence=item,
                 technique="T1014",
+                confidence=CONF_HEURISTIC,
+                custody={"level": CUSTODY_NONE},
                 recommendation=(
                     "Repetir a leitura: se a diferenca persistir em capturas "
                     "sucessivas, deixa de ser explicavel por corrida de leitura.")))

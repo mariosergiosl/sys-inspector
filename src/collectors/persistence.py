@@ -31,7 +31,9 @@ import stat
 import logging
 
 from src.core.findings import (Finding, SEV_INFO, SEV_LOW, SEV_MEDIUM,
-                               SEV_HIGH, SEV_CRITICAL, SRC_PERSISTENCE)
+                               SEV_HIGH, SEV_CRITICAL, SRC_PERSISTENCE,
+                               CONF_CONFIRMED, CONF_PROBABLE, CONF_HEURISTIC,
+                               CUSTODY_NONE, CUSTODY_METADATA)
 from src.collectors.integrity import describe_provenance
 
 LOG = logging.getLogger("Persistence")
@@ -238,6 +240,7 @@ def _collect_immutable_files():
                 "software does not mark files immutable under /tmp."),
             evidence={"attributes": atributos, "meta": meta},
             technique="T1222.002",
+            confidence=CONF_PROBABLE,
             recommendation=(
                 "Inspect the file before removing it. To delete, clear the "
                 "attribute first ('chattr -i <path>'), then remove. Investigate "
@@ -271,6 +274,7 @@ def _collect_ld_preload():
                      "systems and is a classic userland rootkit technique."),
         evidence={"content": content, "meta": meta},
         technique="T1574.006",
+        confidence=CONF_PROBABLE,
         recommendation=("Verify each listed library against the owning package; "
                         "an unpackaged library here indicates compromise."),
     ))
@@ -643,6 +647,38 @@ def _collect_authorized_keys():
 
 
 # ------------------------------------------------------------------------------
+# CONFIANCA E CUSTODIA (contrato de resposta do achado, D-022)
+# ------------------------------------------------------------------------------
+def _assign_confidence_custody(finding):
+    """
+    Preenche confianca e custodia a partir de sinais ESTRUTURADOS do achado, nunca
+    do texto do titulo (isso seria mais uma copia do mesmo fato). Nao sobrescreve
+    o que o coletor ja declarou de forma explicita.
+
+    Custodia: se ha metadado de arquivo ('meta') na evidencia, houve stat do
+    artefato, entao o nivel e 'so metadado' (hash/copia sao roadmap); senao, nada
+    foi preservado (ex.: inventario por contagem).
+
+    Confianca (so quando o coletor nao declarou): um inventario/contagem (Info) e
+    fato confirmado; um achado que extraiu uma REFERENCIA concreta a um binario em
+    caminho inseguro e forte indicio (provavel); os demais, escalados por atributo
+    ou mtime, ficam como heuristica, que admite falso positivo.
+    """
+    ev = finding.evidence or {}
+    if not finding.custody:
+        finding.custody = {"level": CUSTODY_METADATA if "meta" in ev
+                           else CUSTODY_NONE}
+    if finding.confidence is None:
+        if finding.severity == SEV_INFO:
+            finding.confidence = CONF_CONFIRMED
+        elif ev.get("reference"):
+            finding.confidence = CONF_PROBABLE
+        else:
+            finding.confidence = CONF_HEURISTIC
+    return finding
+
+
+# ------------------------------------------------------------------------------
 # ENTRY POINT
 # ------------------------------------------------------------------------------
 def collect_persistence():
@@ -671,4 +707,4 @@ def collect_persistence():
             findings.extend(func())
         except Exception as exc:
             LOG.error("Persistence collector '%s' failed: %s", name, exc)
-    return findings
+    return [_assign_confidence_custody(f) for f in findings]

@@ -42,7 +42,8 @@ import re
 import logging
 
 from src.core.findings import (Finding, SEV_HIGH, SEV_MEDIUM, SEV_LOW,
-                               SRC_HEURISTIC)
+                               SRC_HEURISTIC, CONF_PROBABLE, CONF_HEURISTIC,
+                               CUSTODY_NONE, CUSTODY_METADATA)
 
 LOG = logging.getLogger("MemForensics")
 
@@ -241,6 +242,8 @@ def collect_memory_forensics(processos):
                           "total_kb": total // 1024,
                           "jit_capable": interpretador},
                 technique="T1055",
+                confidence=CONF_HEURISTIC if interpretador else CONF_PROBABLE,
+                custody={"level": CUSTODY_NONE},
                 recommendation=(
                     "Capturar a memoria do processo ANTES de qualquer acao: "
                     "encerra-lo apaga exatamente o conteudo que provaria a "
@@ -268,6 +271,8 @@ def collect_memory_forensics(processos):
                     % (lastro["mapped_inode"], lastro["disk_inode"])),
                 evidence=lastro,
                 technique="T1036",
+                confidence=CONF_PROBABLE,
+                custody={"level": CUSTODY_METADATA},
                 recommendation=(
                     "Preservar o arquivo atual e, se possivel, extrair o "
                     "original ainda mapeado em memoria. Comparar com a versao "
@@ -295,6 +300,8 @@ def collect_memory_forensics(processos):
                     "dele."),
                 evidence={"pid": pid, "cmd": cmd[:300], "libraries": arriscadas[:10]},
                 technique="T1574.006",
+                confidence=CONF_HEURISTIC,
+                custody={"level": CUSTODY_NONE},
                 recommendation=(
                     "Conferir a procedencia do arquivo e quem pode escrever "
                     "nele. Verificar LD_PRELOAD e /etc/ld.so.preload no "
