@@ -6,7 +6,7 @@
 # DESCRIPTION: Installation and packaging script for sys-inspector.
 #              Configures the package for PyPi and local deployments.
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.91.0
+# VERSION: 0.92.0 (fonte unica em src/version.py; este cabecalho apenas espelha)
 # ==============================================================================
 
 """

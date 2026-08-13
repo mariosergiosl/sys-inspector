@@ -29,6 +29,10 @@
 import os
 import json
 import time
+
+# A versao do coletor entra na cadeia de custodia; vem da FONTE UNICA para o
+# carimbo forense nao divergir do resto do produto (D-018).
+from src.version import __version__
 import base64
 import hashlib
 import logging
@@ -141,7 +145,7 @@ def build_record(payload, agent_uuid, collector_version, previous_digest=None,
     return record
 
 
-def build_for_capture(db, config, payload, collector_version="0.91.0"):
+def build_for_capture(db, config, payload, collector_version=None):
     """
     Monta o registro de custodia de uma captura, resolvendo a identidade do
     agente e o elo anterior a partir do banco e da configuracao.
@@ -154,6 +158,10 @@ def build_for_capture(db, config, payload, collector_version="0.91.0"):
     Nunca levanta: falhar aqui nao pode custar a captura, entao a coleta segue
     sem assinatura e o problema fica registrado.
     """
+    # Sem versao explicita, carimba a versao real do produto (fonte unica).
+    if collector_version is None:
+        collector_version = __version__
+
     # Importado aqui para manter este modulo utilizavel sem o backend de cripto.
     from src.core.crypto import (ensure_agent_identity, load_private_key,
                                  sign_bytes)

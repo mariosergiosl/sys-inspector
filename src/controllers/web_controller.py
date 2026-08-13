@@ -20,6 +20,9 @@ import re
 import sqlite3
 import time
 from contextlib import closing
+# Versao vem da FONTE UNICA (src/version.py); nunca hardcode aqui, senao a tela
+# do modo Live diverge das demais (D-018).
+from src.version import __version__
 # [FIX] Added render_template_string to imports
 # from flask import Flask, jsonify, make_response, redirect, url_for, render_template_string
 from flask import Flask, jsonify, make_response, render_template_string, request, Response
@@ -593,7 +596,7 @@ class WebController:
                 n_tec = len({f.get('technique') for f in findings if f.get('technique')})
 
                 return HTML_TEMPLATE.format(
-                    VERSION="0.90 (Live)",
+                    VERSION="%s (Live)" % __version__,
                     HOSTNAME=escape(inv.get('os', {}).get('hostname', 'Unknown')),
                     TIMESTAMP=inv['generated'],
                     CSS_BLOCK=CSS_BASE,
