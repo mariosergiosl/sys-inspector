@@ -12,7 +12,6 @@
 # NOTES:       Kept compatible with Python 3.6 (no dataclasses).
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
 import hashlib
@@ -47,6 +46,77 @@ SRC_SCAP = "scap"                 # OpenSCAP/OVAL/XCCDF (futuro)
 SRC_HEURISTIC = "heuristic"       # regras locais genericas
 
 
+# ------------------------------------------------------------------------------
+# CONFIDENCE (quao seguro e o achado; honestidade pericial, D-022)
+# ------------------------------------------------------------------------------
+# Separa fato de indicio de hipotese, para o laudo nao apresentar heuristica como
+# verdade. E o direcionamento "confianca" do contrato de resposta do achado.
+CONF_CONFIRMED = "confirmed"   # fato verificado (o objeto existe, foi lido)
+CONF_PROBABLE = "probable"     # forte indicio, coerente, mas nao confirmado
+CONF_HEURISTIC = "heuristic"   # regra local; admite falso positivo conhecido
+
+CONFIDENCE_ORDER = {
+    CONF_HEURISTIC: 0,
+    CONF_PROBABLE: 1,
+    CONF_CONFIRMED: 2,
+}
+
+# Rotulo em PT para a interface (o codigo/dado fica em ingles).
+CONFIDENCE_LABELS = {
+    CONF_CONFIRMED: "confirmado",
+    CONF_PROBABLE: "provavel",
+    CONF_HEURISTIC: "heuristico",
+}
+
+
+# ------------------------------------------------------------------------------
+# CUSTODY (o que foi preservado do artefato; forense-first, D-022)
+# ------------------------------------------------------------------------------
+# Declara o quanto da evidencia foi de fato retido. Hoje a ferramenta coleta so
+# metadado; hash e copia do artefato entram no roadmap. O campo existe para o
+# laudo dizer a verdade sobre o que tem em maos, em vez de deixar o leitor supor.
+CUSTODY_NONE = "none"          # nada preservado (ex.: achado de runtime sem arquivo)
+CUSTODY_METADATA = "metadata"  # so metadado (mtime, tamanho, dono) -- estado atual
+CUSTODY_HASH = "hash"          # metadado + hash do conteudo do artefato
+CUSTODY_FULL = "full"          # metadado + hash + copia preservada do artefato
+
+CUSTODY_ORDER = {
+    CUSTODY_NONE: 0,
+    CUSTODY_METADATA: 1,
+    CUSTODY_HASH: 2,
+    CUSTODY_FULL: 3,
+}
+
+CUSTODY_LABELS = {
+    CUSTODY_NONE: "nada preservado",
+    CUSTODY_METADATA: "so metadado",
+    CUSTODY_HASH: "metadado + hash",
+    CUSTODY_FULL: "metadado + hash + copia",
+}
+
+
+def confidence_label(confidence):
+    """Rotulo PT de um nivel de confianca, ou vazio se nao declarado."""
+    return CONFIDENCE_LABELS.get(confidence, "")
+
+
+def custody_level(custody):
+    """
+    Nivel de custodia de um achado (dict de custodia). Devolve CUSTODY_NONE
+    quando nada foi declarado, nunca None: ausencia de custodia e uma resposta.
+    """
+    if isinstance(custody, dict):
+        level = custody.get("level")
+        if level in CUSTODY_ORDER:
+            return level
+    return CUSTODY_NONE
+
+
+def custody_label(custody):
+    """Rotulo PT do nivel de custodia de um achado."""
+    return CUSTODY_LABELS.get(custody_level(custody), CUSTODY_LABELS[CUSTODY_NONE])
+
+
 class Finding(object):
     """
     Unidade normalizada de achado.
@@ -59,7 +129,8 @@ class Finding(object):
 
     def __init__(self, title, severity, source, category=None, target=None,
                  description=None, evidence=None, technique=None,
-                 references=None, recommendation=None):
+                 references=None, recommendation=None,
+                 confidence=None, custody=None):
         """
         PARAMETER title: resumo curto do achado (aparece na lista).
         PARAMETER severity: um dos SEV_* (escala unica do produto).
@@ -71,6 +142,10 @@ class Finding(object):
         PARAMETER technique: tecnica MITRE ATT&CK (ex.: "T1053.003").
         PARAMETER references: lista de referencias (CVE/CWE/controle/URL).
         PARAMETER recommendation: acao sugerida ao responder o incidente.
+        PARAMETER confidence: um dos CONF_* (quao seguro e o achado). None quando
+                  o coletor ainda nao declarou; a interface trata como nao dito.
+        PARAMETER custody: dict de custodia {"level": CUSTODY_*, "sha256": ...,
+                  "copy_path": ...}. Declara o que foi preservado do artefato.
         """
         self.title = title
         self.severity = severity if severity in SEVERITY_ORDER else SEV_INFO
@@ -82,6 +157,8 @@ class Finding(object):
         self.technique = technique or ""
         self.references = references or []
         self.recommendation = recommendation or ""
+        self.confidence = confidence if confidence in CONFIDENCE_ORDER else None
+        self.custody = custody if isinstance(custody, dict) else {}
 
     @property
     def fingerprint(self):
@@ -114,6 +191,8 @@ class Finding(object):
             "technique": self.technique,
             "references": self.references,
             "recommendation": self.recommendation,
+            "confidence": self.confidence,
+            "custody": self.custody,
         }
 
     def __repr__(self):

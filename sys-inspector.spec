@@ -1,11 +1,11 @@
 # ==============================================================================
 # FILE: sys-inspector.spec
-# DESCRIPTION: RPM Spec file for Sys-Inspector (v0.90.12)
+# DESCRIPTION: RPM Spec file for Sys-Inspector (multi-package by role)
 # AUTHOR: Mario Luz
 # ==============================================================================
 
 Name:           sys-inspector
-Version:        0.91.0
+Version:        1.0.0
 Release:        1%{?dist}
 Summary:        System inspector and forensic tool using eBPF (Multi-Agent/Web)
 
@@ -22,14 +22,22 @@ BuildRequires:  python3-setuptools
 BuildRequires:  fdupes
 BuildRequires:  systemd-rpm-macros
 
-# Runtime Dependencies (CRITICAL for eBPF and Web)
+# ------------------------------------------------------------------------------
+# DEPENDENCIAS POR PAPEL
+#
+# O pacote base carrega apenas o que TODO papel precisa. Antes ele exigia tudo,
+# e o resultado media-se em campo: um agente instalado no gateway trouxe doze
+# pacotes de servidor web (Flask, Jinja2, Werkzeug, Babel e cadeia) para um host
+# sob inspecao que jamais os usaria, enquanto o servidor era obrigado a instalar
+# bcc e os cabecalhos do kernel que nunca carregou.
+#
+# Nos dois casos o custo real nao e disco: e superficie de ataque acrescentada
+# onde nao ha funcao que a justifique, justamente pela ferramenta que existe
+# para reduzi-la.
+# ------------------------------------------------------------------------------
 Requires:       python3
-Requires:       python3-bcc
-Requires:       python3-Flask
 Requires:       python3-cryptography
 Requires:       python3-PyYAML
-Requires:       kernel-devel
-Requires:       binutils
 
 %{?systemd_requires}
 
@@ -48,6 +56,70 @@ It provides real-time analysis of:
 It ships a Multi-Agent architecture, Fleet View, FHS compliant paths and
 native systemd integration.
 Designed for SREs and Forensic Analysts.
+
+# ------------------------------------------------------------------------------
+# SUBPACOTE: AGENTE
+# ------------------------------------------------------------------------------
+%package agent
+Summary:        Sys-Inspector collection agent (eBPF)
+Requires:       %{name} = %{version}-%{release}
+Requires:       python3-bcc
+Requires:       kernel-devel
+Requires:       binutils
+%if 0%{?suse_version}
+Recommends:     %{name}-scenarios = %{version}-%{release}
+%endif
+
+%description agent
+Collection side of Sys-Inspector: attaches eBPF probes and captures process,
+file and network activity on the inspected host.
+
+Installs no web server. The host under investigation should carry only what the
+collection itself requires, so that the tool does not add attack surface to the
+very machine it is there to examine.
+
+Captures are encrypted with the analyst public key before touching disk, and the
+agent never holds the private key: a compromised host cannot read what has
+already been collected on it.
+
+# ------------------------------------------------------------------------------
+# SUBPACOTE: SERVIDOR
+# ------------------------------------------------------------------------------
+%package server
+Summary:        Sys-Inspector central server (fleet, ingestion, reports)
+Requires:       %{name} = %{version}-%{release}
+Requires:       python3-Flask
+
+%description server
+Server side of Sys-Inspector: receives captures from the fleet, stores them and
+renders the forensic reports.
+
+Requires no eBPF and no kernel headers. The server never opens a connection to
+an agent; agents ask and write, which is what allows the inspected host to keep
+no listening service.
+
+# ------------------------------------------------------------------------------
+# SUBPACOTE: CENARIOS DE TESTE
+# ------------------------------------------------------------------------------
+%package scenarios
+Summary:        Sys-Inspector detection test scenarios (laboratory only)
+Requires:       %{name} = %{version}-%{release}
+
+%description scenarios
+Test scenarios used to verify that detection actually works, by generating the
+observable behaviour of known techniques and checking that the capture sees it.
+
+LABORATORY USE ONLY. These scenarios create files, processes and network noise
+on the machine where they run, and are meant for calibration on hosts dedicated
+to that purpose, never on a system under investigation or in service.
+
+They act only on the local host.
+There is no network scanning, no remote exploitation, and
+no functional exploit code: what is reproduced is the observable behaviour of a
+technique, not a weapon. Everything created is removed afterwards.
+
+The purpose is to prove the detection works, which is why the expected signal of
+each scenario is declared alongside it.
 
 %prep
 %setup -q
@@ -86,19 +158,36 @@ ln -sf %{_sbindir}/service %{buildroot}%{_sbindir}/rc%{name}
 %postun
 %service_del_postun sys-inspector.service
 
+# ------------------------------------------------------------------------------
+# ARQUIVOS
+#
+# O codigo-fonte NAO e dividido: o mesmo pacote base carrega todos os modulos, e
+# main.py importa o controlador sob demanda, de modo que o modo servidor nunca
+# toca no codigo de eBPF e vice-versa. Dividir os arquivos criaria dois lugares
+# para a mesma logica; o que se divide sao as DEPENDENCIAS, que e onde esta o
+# custo real.
+# ------------------------------------------------------------------------------
 %files
 %defattr(-,root,root,-)
 %doc README.md ROADMAP.md CHANGELOG.md
 %license LICENSE.md
-# Binaries and Libraries, capture all top-level modules generated by the new architecture
 %{_bindir}/sys-inspector
-%{_bindir}/chaos_maker.sh
 %{_bindir}/setup_env.sh
 %{_bindir}/install_deps.sh
 %{_bindir}/install_service.bash
 %{_bindir}/generate_keys.py
 %{_sbindir}/rcsys-inspector
 %{python3_sitelib}/*
+
+%files agent
+%defattr(-,root,root,-)
+
+%files server
+%defattr(-,root,root,-)
+
+%files scenarios
+%defattr(-,root,root,-)
+%{_bindir}/chaos_maker.sh
 
 # ==============================================================================
 # Configuration and systemd files
@@ -114,6 +203,11 @@ ln -sf %{_sbindir}/service %{buildroot}%{_sbindir}/rc%{name}
 %dir %attr(0750,root,root) /var/log/sys-inspector/reports
 
 %changelog
+* Thu Aug 13 2026 Mario Luz <mario.mssl@gmail.com> - 1.0.0-1
+- Added: answer contract per finding (D-022) with a confidence level (confirmed/probable/heuristic) and a custody level (metadata/hash/full), so the report never presents a heuristic as a fact and states what was preserved.
+- Added: Manager command progress as a stepper (enqueued -> on the agent -> done/failed) with a live timer, replacing the flat status text.
+- Added: report didactics and cross-tab coupling: per-finding evidence tooltips, a severity legend with the operator action, a "how to read" strip, and clickable pivots between Findings and ATT&CK in both directions.
+- Fixed: version is now a single source across every screen, the custody stamp and the shell scripts; the Live UI, live and snapshot reports no longer hardcode a stale version.
 * Thu Aug 06 2026 Mario Luz <mario.mssl@gmail.com> - 0.91.0-1
 - Added: normalized Finding entity (single severity scale, explicit source, MITRE ATT&CK technique, attached evidence) and a persistence collector covering systemd units, cron/at, startup scripts, ld.so.preload, kernel module autoload, udev rules, PAM stacks and per-user authorized_keys.
 - Added: first automated test suite (pytest) wired into CI.

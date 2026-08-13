@@ -24,7 +24,6 @@
 #              inspected host. Compatible with Python 3.6.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.91.0
 # ==============================================================================
 
 import ssl
@@ -42,6 +41,9 @@ LOG = logging.getLogger("Outbox")
 # agentes antigos ainda em campo.
 PATH_SLOT = "/api/v1/queue/request"
 PATH_INGEST = "/api/v1/ingest"
+# O agente PERGUNTA se ha algo para ele; o servidor nunca inicia conexao.
+PATH_COMMANDS = "/api/v1/commands"
+PATH_COMMAND_RESULT = "/api/v1/commands/result"
 
 # Backoff exponencial limitado: um servidor fora do ar nao pode virar uma
 # tempestade de tentativas vinda da frota inteira.
@@ -74,6 +76,13 @@ class Outbox(object):
 
         self._failures = 0
         self._next_attempt = 0.0
+        # Ordens trazidas pelo ultimo check-in.
+        self.pending_commands = []
+        # Instante em que este agente subiu, para reportar ha quanto ele coleta.
+        # Distinto do uptime do HOST: um agente reiniciado num host antigo, ou um
+        # host recem-ligado com o agente de sempre, sao situacoes diferentes na
+        # triagem, e so os dois numeros juntos as separam.
+        self._agent_started = time.time()
 
     # --------------------------------------------------------------------------
     # ESTADO
@@ -165,7 +174,60 @@ class Outbox(object):
                         break
         except Exception:
             pass
-        return {"hostname": hostname, "ip_address": address, "os_info": os_info}
+        # O FQDN identifica o host no dominio, e frequentemente e o nome que
+        # aparece em inventarios e chamados; o hostname curto sozinho pode ser
+        # ambiguo entre redes.
+        try:
+            fqdn = socket.getfqdn()
+        except Exception:
+            fqdn = ""
+        # Capacidades: o que ESTE host consegue fazer, nas duas pontas. Sem
+        # isso, "o agente X nao acusou o cenario Y" fica ambiguo entre falha da
+        # deteccao e incapacidade do host, e foi essa ambiguidade que atrasou um
+        # diagnostico inteiro no laboratorio.
+        capacidades = {}
+        try:
+            from src.core.capabilities import describe_host
+            capacidades = describe_host()
+        except Exception:
+            capacidades = {}
+
+        # O agente informa seu proprio ciclo para o servidor conseguir prever
+        # o proximo contato. Sem isso a frota so pode usar um timeout fixo, que
+        # marca como offline um agente saudavel de ciclo longo e demora a
+        # perceber a ausencia de um agente de ciclo curto.
+        daemon_cfg = (self.config.get("daemon", {}) or {})
+        ciclo = (int(daemon_cfg.get("capture_duration", 15) or 15)
+                 + int(daemon_cfg.get("interval", 15) or 15))
+
+        # Desvio de relogio MEDIDO deste host, para a linha do tempo entre hosts
+        # ser ordenada por instante comparavel (D-019). Grava-se o valor E se ele
+        # foi medido: 0.0 medido afirma sincronia, 0.0 assumido nao afirma nada.
+        clock = {"offset": 0.0, "measured": False, "source": "unavailable"}
+        try:
+            from src.core.clock import measure_offset
+            clock = measure_offset()
+        except Exception:
+            pass
+
+        # Uptime do HOST (segundos desde o boot) e do AGENTE (desde que subiu).
+        # Os dois separam casos que a triagem confunde: host recem-ligado com o
+        # agente de sempre versus agente reiniciado num host antigo.
+        host_uptime = None
+        try:
+            with open("/proc/uptime", "r") as handle:
+                host_uptime = int(float(handle.readline().split()[0]))
+        except Exception:
+            host_uptime = None
+        agent_uptime = int(time.time() - self._agent_started)
+
+        return {"hostname": hostname, "ip_address": address,
+                "os_info": os_info, "fqdn": fqdn, "cycle_seconds": ciclo,
+                "capabilities": capacidades,
+                "host_uptime": host_uptime, "agent_uptime": agent_uptime,
+                "clock_offset": clock.get("offset", 0.0),
+                "clock_measured": clock.get("measured", False),
+                "clock_source": clock.get("source", "unavailable")}
 
     def request_slot(self, pending):
         """
@@ -176,13 +238,96 @@ class Outbox(object):
         assume-se o lote configurado, para um servidor antigo continuar
         funcionando com um agente novo.
         """
+        # Aproveita a MESMA ida e volta para perguntar o que ja esta guardado
+        # no servidor. Uma rotina separada so para isso criaria um segundo
+        # relogio e mais trafego, quando a conversa ja acontece a cada ciclo.
+        candidatos = []
+        try:
+            candidatos = self.db.get_confirmed_candidates()
+        except Exception:
+            pass
+
         answer = self._post(PATH_SLOT, {
             "agent_uuid": getattr(self.db, "agent_id", ""),
             "pending": pending,
+            "host": self._host_identity(),
+            "confirm_digests": [c["digest"] for c in candidatos],
         })
+
+        # Libera localmente SOMENTE o que o servidor afirma ter guardado.
+        # Entregue nao e o mesmo que guardado: a entrega termina na fila de
+        # ingestao, e entre a fila e o disco ha um passo que pode falhar. Apagar
+        # com base no aceite da entrega perderia a captura nas duas pontas.
+        guardados = set(answer.get("stored_digests") or [])
+        if guardados:
+            liberar = [c["id"] for c in candidatos if c["digest"] in guardados]
+            if liberar:
+                n = self.db.purge_confirmed(liberar)
+                if n:
+                    LOG.info("[OUTBOX] %d capture(s) released locally after the "
+                             "server confirmed storage", n)
+        # A MESMA ida e volta ja traz o que o analista pediu. Perguntar por
+        # comandos numa requisicao separada dobraria o trafego e criaria dois
+        # relogios diferentes para a mesma conversa com o servidor.
+        #
+        # ACUMULA, nunca substitui. O servidor entrega cada comando UMA UNICA
+        # vez: qualquer resposta sobrescrita aqui significa um pedido perdido em
+        # silencio, com o painel exibindo "entregue" para algo que nao rodou.
+        # Entrega e check-in fazem esta mesma chamada no mesmo ciclo, entao a
+        # lista so pode ser esvaziada por quem for de fato executa-la.
+        self.pending_commands.extend(answer.get("commands", []) or [])
         if not answer.get("granted", True):
             return 0, int(answer.get("retry_after", BACKOFF_BASE) or BACKOFF_BASE)
         return int(answer.get("slots", self.batch_size) or self.batch_size), 0
+
+    def check_in(self):
+        """
+        Conversa periodica com o servidor: informa o que ha para entregar e
+        recolhe o que o analista pediu, na MESMA requisicao.
+
+        A conversa parte sempre do agente. O host inspecionado nao abre porta
+        nem mantem servico escutando, o que evita acrescentar superficie de
+        ataque justamente na maquina sob investigacao e funciona com agentes
+        atras de NAT ou firewall restritivo.
+
+        Acontece mesmo sem captura pendente: e assim que um agente ocioso
+        continua aparecendo vivo na frota e recebe ordens sem esperar o proximo
+        dado a enviar.
+        """
+        if not self.enabled or self._should_wait():
+            return []
+        try:
+            pendentes = len(self.db.get_pending_snapshots(limit=self.batch_size))
+        except Exception:
+            pendentes = 0
+        try:
+            self.request_slot(pendentes)
+            self._register_success()
+        except Exception as exc:
+            LOG.debug("[OUTBOX] Check-in failed: %s", exc)
+            self._register_failure()
+
+        # Entrega para quem vai executar e esvazia: como o servidor nao repete um
+        # comando ja entregue, deixa-lo na lista o executaria de novo a cada
+        # ciclo, e nao o remover perderia o pedido.
+        recolhidos = self.pending_commands
+        self.pending_commands = []
+        if recolhidos:
+            LOG.info("[OUTBOX] %d command(s) received from the server",
+                     len(recolhidos))
+        return recolhidos
+
+    def report_command(self, command_id, ok, result=""):
+        """Devolve ao servidor o desfecho de um comando executado."""
+        if not self.enabled:
+            return
+        try:
+            self._post(PATH_COMMAND_RESULT, {
+                "agent_uuid": getattr(self.db, "agent_id", ""),
+                "id": command_id, "ok": bool(ok), "result": str(result)[:2000],
+            })
+        except Exception as exc:
+            LOG.debug("[OUTBOX] Could not report command %s: %s", command_id, exc)
 
     def deliver_once(self):
         """

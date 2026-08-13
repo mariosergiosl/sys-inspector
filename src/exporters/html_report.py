@@ -10,7 +10,6 @@
 #                        HTML explosion during massive Port Scans.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
 # import os
@@ -18,8 +17,10 @@ import re
 import datetime
 import html as html_lib
 from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, JS_BLOCK, LEGEND_HTML
-from src.core.findings import (SEV_INFO, SEV_LOW, SEV_MEDIUM, SEV_HIGH,
-                               SEV_CRITICAL, SEVERITY_ORDER)
+from src.core.findings import (SEV_INFO, SEVERITY_ORDER, confidence_label,
+                               custody_label, custody_level, CONF_CONFIRMED,
+                               CONF_PROBABLE, CONF_HEURISTIC, CUSTODY_NONE)
+from src.core import risk
 from src.core.attack import describe, technique_url, used_techniques
 
 
@@ -128,8 +129,10 @@ def _get_anomaly_reasons(node):
             if "SYNC" in mode:
                 reasons.append("IMPACT: Sync mode causes direct I/O latency on target processes.")
 
-    if node.cmd.startswith(("/tmp", "/dev/shm")) and not any("executed from unsafe path" in r for r in reasons):
-        reasons.append(f"LOCATION: Binary executed from temporary directory: {node.cmd}")
+    from src.collectors.process_tree import unsafe_path_in_cmdline
+    unsafe = unsafe_path_in_cmdline(node.cmd)
+    if unsafe and not any("unsafe path" in r for r in reasons):
+        reasons.append(f"LOCATION: Executed from temporary directory: {unsafe}")
 
     if "(deleted)" in node.cmd:
         reasons.append("INTEGRITY: Binary file has been deleted from disk while running")
@@ -255,34 +258,23 @@ def _esc(value):
 # ancestral do pior processo mostrava o mesmo valor (ex.: 64 = SCORE_NET_ISSUE),
 # dando falsa impressao de contagem.
 #
-# O mapeamento numerico abaixo continua sendo uma aproximacao: converte o
-# anomaly_score (bitfield/soma dos SCORE_* de process_tree) para a escala. A
-# normalizacao definitiva por tipo de deteccao acontece quando as heuristicas de
-# runtime virarem Findings proprios.
-SEVERITY_COLORS = {
-    SEV_CRITICAL: "#ff4d4d",
-    SEV_HIGH: "#ff8c42",
-    SEV_MEDIUM: "#ffd166",
-    SEV_LOW: "#6bcB77",
-    SEV_INFO: "#7fb3d5",
-}
+# A traducao do anomaly_score para a escala vive em src/core/risk.py, e nao
+# aqui. O que existia neste ponto era um corte por faixa (>=128, >=32, >=8) que
+# tratava como magnitude um valor que e campo de bits, e por isso classificava um
+# processo defunto (128) acima de um binario apagado executando de /dev/shm
+# (8+2=10). Havia ainda um segundo corte, em 70, no diff e na linha do tempo: o
+# mesmo numero recebia tres leituras diferentes em tres telas.
+SEVERITY_COLORS = dict(risk.CORES)
 
 
 def _severity_label(score):
-    """Traduz um anomaly_score inteiro na escala unica (ou None se 0)."""
-    try:
-        score = int(score or 0)
-    except (TypeError, ValueError):
-        return None
-    if score <= 0:
-        return None
-    if score >= 128:
-        return SEV_CRITICAL
-    if score >= 32:
-        return SEV_HIGH
-    if score >= 8:
-        return SEV_MEDIUM
-    return SEV_LOW
+    """
+    Traduz um anomaly_score na escala unica (ou None se nenhum sinal presente).
+
+    Mantido como funcao deste modulo porque o laudo inteiro a chama; o criterio,
+    porem, e um so para o produto e mora em src/core/risk.py.
+    """
+    return risk.level(score)
 
 
 # ------------------------------------------------------------------------------
@@ -301,15 +293,45 @@ def _render_badges(node, tree=None):
         "GPU": ("🕹️", "t-gpu", "Accessing GPU Resources"),
         "CONTAINER": ("📦", "t-cont", "Containerized Process"),
         "ZOMBIE": ("🧟", "t-zombie", "Zombie Process"),
-        "IMMUTABLE": ("🔒", "t-immutable", "Immutable File Attribute")
+        "IMMUTABLE": ("🔒", "t-immutable", "Immutable File Attribute"),
+        # O binario sumiu do disco enquanto o processo continua rodando. E um
+        # dos sinais mais fortes que a arvore carrega: apagar o executavel apos
+        # a execucao e tecnica corrente para nao deixar amostra para analise
+        # (ATT&CK T1070.004). Faltava aqui, e como o laco abaixo descartava em
+        # silencio tudo que nao estivesse neste mapa, o coletor detectava, o
+        # dado trafegava ate o laudo e a interface o jogava fora sem aviso.
+        "DELETED": ("👻", "t-deleted",
+                    "Binario apagado do disco com o processo em execucao")
     }
 
     if node.is_new:
         badges.append('<span class="tag t-new" data-filter="NEW" title="New Process">✨<span class="visually-hidden">NEW</span></span>')
 
+    # Rotulos que outro trecho do relatorio ja desenha com tratamento proprio
+    # (contagem de falhas de rede, selo de severidade). Ignora-los aqui evita
+    # badge duplicado, e nomea-los deixa claro que a omissao e deliberada, e nao
+    # mais um caso de rotulo perdido.
+    tratados_em_outro_lugar = ("NET ERR", "WARN", "ZOMBIE_PARENT", "🧊")
+
     seen = set()
     for tag in node.context_tags:
         if "INSPECTOR" in tag: tag = "EDR/AV"
+
+        # Um rotulo desconhecido aparece com aviso em vez de sumir. Descartar em
+        # silencio ja custou caro: um sinal forte (binario apagado) chegava ao
+        # laudo e desaparecia na renderizacao, sem nada que denunciasse a perda.
+        # Numa ferramenta forense, sinal perdido sem rastro e o pior desfecho
+        # possivel: o analista conclui que nao havia nada.
+        if (tag not in tag_map and tag not in seen
+                and tag not in tratados_em_outro_lugar):
+            badges.append('<span class="tag t-unknown" data-filter="%s" '
+                          'title="Rotulo sem representacao visual definida: '
+                          'o coletor sinalizou algo que esta tela ainda nao '
+                          'sabe desenhar">%s</span>'
+                          % (_esc(tag), _esc(tag)))
+            seen.add(tag)
+            continue
+
         if tag in tag_map and tag not in seen:
             icon, cls, tooltip = tag_map[tag]
             if tag == "ZOMBIE" and tree:
@@ -333,19 +355,36 @@ def _render_badges(node, tree=None):
     score_to_show = getattr(node, 'tree_max_score', node.anomaly_score)
     severity = _severity_label(score_to_show)
     if severity:
-        # [FIX] Surface the real score breakdown instead of a placeholder.
-        own_reasons = _get_anomaly_reasons(node)
-        if own_reasons:
-            breakdown = "\n- ".join(own_reasons)
-            if node.anomaly_score < score_to_show:
-                tooltip = f"Severity {severity} (score {score_to_show}), worst in subtree.\nThis process:\n- {breakdown}\n(Higher severity bubbled up from a child process.)"
-            else:
-                tooltip = f"Severity {severity} (score {score_to_show}).\nBreakdown:\n- {breakdown}"
+        # O NUMERO CRU volta ao lado do rotulo. Ele e o dado coletado (o campo de
+        # bits), e o rotulo e a leitura dele; exibir so o rotulo escondia a
+        # evidencia atras da interpretacao. O tooltip decodifica o numero nos
+        # sinais que ele carrega, cada um nomeado, e o "?" ao lado da tabela
+        # (LEGEND_HTML) traz a legenda completa da escala.
+        sinais = risk.decode(score_to_show)
+        if sinais:
+            linhas_sinais = "\n".join("- %s (+%d, %s): %s"
+                                      % (s["label"], s["bit"], s["severity"],
+                                         s["explanation"]) for s in sinais)
         else:
-            tooltip = f"Severity {severity}: aggregated from child processes (open the subtree for details)."
+            linhas_sinais = "- agregado de um processo filho"
+        desconhecidos = risk.unknown_bits(score_to_show)
+        if desconhecidos:
+            linhas_sinais += ("\n- +%d de bit(s) que esta versao ainda nao "
+                              "sabe nomear" % desconhecidos)
+
+        if node.anomaly_score < score_to_show:
+            tooltip = ("Severidade %s (score %d), o pior da subarvore.\n"
+                       "Este processo soma %d.\nSinais no maximo da subarvore:\n%s"
+                       % (severity, score_to_show, node.anomaly_score,
+                          linhas_sinais))
+        else:
+            tooltip = ("Severidade %s. O numero e um campo de bits, nao uma "
+                       "magnitude: cada bit e um sinal observado.\n"
+                       "Sinais presentes (score %d):\n%s"
+                       % (severity, score_to_show, linhas_sinais))
         # Escape for safe use inside the title="" attribute (as razoes incluem
         # a cmdline do processo).
-        badges.append(f'<b class="tag t-warn" data-filter="WARN" title="{_esc(tooltip)}">⚠️ {severity}<span class="visually-hidden">WARN severity {severity}</span></b>')
+        badges.append(f'<b class="tag t-warn" data-filter="WARN" title="{_esc(tooltip)}">⚠️ {severity} <span style="opacity:.7;font-weight:normal">{score_to_show}</span><span class="visually-hidden">WARN severity {severity} score {score_to_show}</span></b>')
 
     # [FIX] EDR-WAIT is already emitted by the context_tags loop above (it is in
     # tag_map), so the previous dedicated block here produced a duplicate badge.
@@ -594,19 +633,109 @@ def _get_details_html(node, mounts, tree=None):
 # ------------------------------------------------------------------------------
 # HEADER RENDERERS
 # ------------------------------------------------------------------------------
-def render_os_block(os_data, hw_data):
+# D-020: TODO CAMPO SEMPRE VISIVEL, EM UM DE TRES ESTADOS
+#
+# Um campo omitido faz o leitor deduzir, e as duas deducoes possiveis levam a
+# lugares opostos: "o host nao tinha" versus "a ferramenta nao olhou". A segunda
+# invalida qualquer conclusao tirada da ausencia, e o laudo nao dizia qual das
+# duas era o caso.
+#
+# O criterio para separar as duas: a CHAVE presente no dado coletado significa
+# que a coleta olhou; o valor vazio significa que nao havia. Chave ausente
+# significa que aquela captura nao produziu o campo, o que acontece com laudo de
+# agente mais antigo que a versao do campo.
+ESTADO_VAZIO = ("&mdash;", "#666",
+                "A ferramenta olhou e nao havia valor. A ausencia aqui e uma "
+                "observacao, e nao uma falha de coleta.")
+ESTADO_AUSENTE = ("nao coletado", "#c586c0",
+                  "Esta captura NAO produziu este campo, entao nada se pode "
+                  "concluir a partir da ausencia dele. Costuma acontecer com "
+                  "laudo gerado por agente anterior a versao que passou a "
+                  "coletar o campo.")
+
+
+def _campo(rotulo, dados, chave, formata=None, estilo="", nota=""):
+    """
+    Uma linha do bloco de identificacao, sempre presente, declarando seu estado.
+
+    PARAMETER dados: dict da coleta.
+    PARAMETER chave: nome do campo dentro dele.
+    PARAMETER formata: funcao opcional para apresentar o valor.
+    PARAMETER nota: explicacao do campo, exibida no tooltip do rotulo.
+    """
+    dica_rotulo = (" title='%s'" % _esc(nota)) if nota else ""
+    presente = isinstance(dados, dict) and chave in dados
+    valor = (dados or {}).get(chave)
+
+    if not presente:
+        texto, cor, dica = ESTADO_AUSENTE
+    elif valor in (None, "", [], {}, "N/A"):
+        texto, cor, dica = ESTADO_VAZIO
+    else:
+        texto = _esc(formata(valor) if formata else valor)
+        return ("<div class='kv'><span class='kv-k'%s>%s</span>"
+                "<span class='kv-v' style='%s'>%s</span></div>"
+                % (dica_rotulo, _esc(rotulo), estilo, texto))
+
+    return ("<div class='kv'><span class='kv-k'%s>%s</span>"
+            "<span class='kv-v' title='%s' style='color:%s;font-style:italic;"
+            "font-size:11px'>%s</span></div>"
+            % (dica_rotulo, _esc(rotulo), _esc(dica), cor, texto))
+
+
+def render_os_block(os_data, hw_data, agent_uuid=None):
+    """
+    Bloco SYSTEM do laudo.
+
+    O UUID do agente identifica a ORIGEM da captura de forma estavel: hostname
+    e endereco mudam, e num laudo e o identificador que amarra a evidencia ao
+    host que a produziu, junto da cadeia de custodia.
+
+    Nenhuma linha deste bloco desaparece (D-020). O FQDN e os nomes alternativos
+    sumiam quando o host nao os tinha, e comparar dois laudos lado a lado dava a
+    impressao de que a coleta havia regredido num deles.
+    """
+    os_data = os_data or {}
+    hw_data = hw_data or {}
+
     html = "<div class='kv-list'>"
-    html += f"<div class='kv'><span class='kv-k'>Hostname</span><span class='kv-v'>{os_data.get('hostname')}</span></div>"
-    html += f"<div class='kv'><span class='kv-k'>Kernel</span><span class='kv-v'>{os_data.get('kernel')}</span></div>"
-    html += f"<div class='kv'><span class='kv-k'>Uptime</span><span class='kv-v'>{os_data.get('uptime')}</span></div>"
-    html += f"<div class='kv'><span class='kv-k'>OS</span><span class='kv-v'>{os_data.get('os_pretty_name')}</span></div>"
-    html += f"<div class='kv'><span class='kv-k'>CPU</span><span class='kv-v'>{hw_data.get('cpu')}</span></div>"
-    html += f"<div class='kv'><span class='kv-k'>Memory</span><span class='kv-v'>{hw_data.get('mem_mb')} MB</span></div>"
+    html += _campo("Hostname", os_data, "hostname",
+                   nota="Nome curto que o proprio host responde.")
+
+    # Um host costuma ter mais de um nome (FQDN, aliases de /etc/hosts, DNS
+    # reverso por interface). Numa pericia isso importa: o mesmo host aparece
+    # com nomes diferentes nos logs de sistemas diferentes, e correlacionar
+    # esses registros exige conhecer todos.
+    html += _campo("FQDN", os_data, "fqdn",
+                   nota="Nome qualificado. Vazio significa que 'hostname -f' "
+                        "nao resolve neste host, o que e comum e legitimo.")
+
+    outros = [n for n in (os_data.get('hostnames') or [])
+              if n and n != os_data.get('hostname') and n != os_data.get('fqdn')]
+    html += _campo("Other names",
+                   dict(os_data, _outros=outros) if 'hostnames' in os_data
+                   else {}, "_outros",
+                   formata=lambda v: ", ".join(v),
+                   estilo="font-size:11px",
+                   nota="Aliases de /etc/hosts e DNS reverso por interface. O "
+                        "mesmo host aparece com nomes diferentes em logs de "
+                        "sistemas diferentes.")
+
+    html += _campo("Agent UUID", {"uuid": agent_uuid} if agent_uuid else {},
+                   "uuid", estilo="font-family:monospace; font-size:11px",
+                   nota="Identificador estavel da origem da captura: hostname "
+                        "e endereco mudam, este nao.")
+    html += _campo("Kernel", os_data, "kernel")
+    html += _campo("Uptime", os_data, "uptime")
+    html += _campo("OS", os_data, "os_pretty_name")
+    html += _campo("CPU", hw_data, "cpu")
+    html += _campo("Memory", hw_data, "mem_mb", formata=lambda v: "%s MB" % v)
     html += "</div>"
     return html
 
 
 def render_net_block(net_data):
+    net_data = net_data or {}
     # [v0.70 FEAT] Physical Hardware Alert
     phy_alert = ""
     if net_data.get('has_phy_issues'):
@@ -616,11 +745,39 @@ def render_net_block(net_data):
 
     html = f"{phy_alert}<div class='kv-list'>"
 
-    for iface in net_data.get('interfaces', []):
-        html += f"<div class='kv'><span class='kv-k'>{iface['name']}</span><span class='kv-v'>{iface['ip']}</span></div>"
-    gw = net_data.get('gateway', 'N/A')
-    dns = ", ".join(net_data.get('dns', []))
-    html += f"<div class='net-gw-dns'><div><b>GW:</b> {gw}</div><div><b>DNS:</b> {dns}</div></div>"
+    # D-020 aplicado a topologia: um host com menos interfaces que outro nao
+    # significa coleta incompleta. Comparando dois laudos, a diferenca de
+    # interfaces foi lida como "perdemos a topologia de rede", quando um host
+    # tinha podman e o outro nao. A tela agora declara o que observou.
+    interfaces = net_data.get('interfaces')
+    if interfaces is None:
+        html += ("<div class='kv'><span class='kv-k'>Interfaces</span>"
+                 "<span class='kv-v' title='%s' style='color:%s;"
+                 "font-style:italic;font-size:11px'>%s</span></div>"
+                 % (_esc(ESTADO_AUSENTE[2]), ESTADO_AUSENTE[1],
+                    ESTADO_AUSENTE[0]))
+    elif not interfaces:
+        html += ("<div class='kv'><span class='kv-k'>Interfaces</span>"
+                 "<span class='kv-v' title='A enumeracao rodou e nao "
+                 "encontrou interface alguma alem da de loopback.' "
+                 "style='color:#666;font-style:italic;font-size:11px'>"
+                 "nenhuma alem de loopback</span></div>")
+    else:
+        for iface in interfaces:
+            html += ("<div class='kv'><span class='kv-k'>%s</span>"
+                     "<span class='kv-v'>%s</span></div>"
+                     % (_esc(iface.get('name')),
+                        _esc(iface.get('ip')) or
+                        "<span style='color:#666;font-style:italic'>sem "
+                        "endereco</span>"))
+
+    gw = net_data.get('gateway') or ""
+    dns = ", ".join(net_data.get('dns') or [])
+    vazio = ("<span style='color:#666;font-style:italic' title='%s'>%s</span>"
+             % (_esc(ESTADO_VAZIO[2]), ESTADO_VAZIO[0]))
+    html += ("<div class='net-gw-dns'><div><b>GW:</b> %s</div>"
+             "<div><b>DNS:</b> %s</div></div>"
+             % (_esc(gw) if gw else vazio, _esc(dns) if dns else vazio))
     html += "</div>"
     return html
 
@@ -781,6 +938,87 @@ def render_process_rows(tree, mounts):
 # ------------------------------------------------------------------------------
 # ENTRY POINTS
 # ------------------------------------------------------------------------------
+def _report_help(titulo, corpo_html, largura=340):
+    """
+    Bolha de ajuda "?" no MESMO padrao do "?" da tabela de score (legend-icon +
+    tooltip no hover). Existe para toda tela ganhar o mesmo facilitador de
+    leitura, em vez de o analista ter de deduzir o que cada coluna significa.
+    """
+    return ("<span class='score-legend-wrapper'>"
+            "<span class='legend-icon'>?</span>"
+            "<span class='score-tooltip' style='width:%dpx'>"
+            "<h4>%s</h4>%s</span></span>" % (largura, titulo, corpo_html))
+
+
+# Explicacao curta de cada chave de evidencia, para o analista saber "para que
+# serve esta informacao" (pergunta do Mario). Chave desconhecida nao ganha
+# tooltip, e isso e honesto: nao inventamos significado.
+_EVIDENCE_HELP = {
+    "reference": "O alvo real que o mecanismo dispara: o que de fato roda.",
+    "content": "A linha literal encontrada no arquivo: a prova crua.",
+    "meta": "Metadados do arquivo (dono, permissao, datas mtime/ctime/atime): "
+            "permite datar o artefato e ver quem podia escrever.",
+    "provenance": "Veio de pacote? verificado? Separa o que pertence ao sistema "
+                  "do que foi plantado (packaged:false = fora do gerenciador).",
+    "attributes": "Atributos do arquivo lidos por lsattr (ex.: imutavel).",
+    "count": "Contagem de itens inventariados nesta captura (baseline).",
+    "user": "Usuario dono do mecanismo (ex.: dono do authorized_keys).",
+    "key_count": "Quantas chaves SSH aceitam login para este usuario.",
+    "key_comments": "Comentario/identidade de cada chave, para reconhecer o dono.",
+    "libraries": "Bibliotecas carregadas de local nao confiavel pelo processo.",
+    "regions": "Regioes de memoria gravaveis e executaveis ao mesmo tempo.",
+    "total_kb": "Tamanho total das regioes suspeitas, em KB.",
+    "jit_capable": "Se o processo gera codigo por natureza (JIT), o que explica "
+                   "o W+X sem inocenta-lo.",
+    "cmd": "Linha de comando do processo envolvido.",
+    "pid": "Identificador do processo envolvido.",
+    "mapped_inode": "Inode do binario que o processo esta executando em memoria.",
+    "disk_inode": "Inode do binario no disco agora: se difere, foi trocado.",
+}
+
+# Confianca: cor e explicacao do nivel (contrato, D-022). O selo modula como ler
+# a severidade: uma heuristica critica pede confirmacao antes de conclusao.
+_CONFIDENCE_STYLE = {
+    CONF_CONFIRMED: ("#6bcB77", "fato verificado: o objeto foi lido ou existe"),
+    CONF_PROBABLE: ("#ffd166", "forte indicio, coerente, mas nao confirmado"),
+    CONF_HEURISTIC: ("#7fb3d5", "regra local; admite falso positivo conhecido"),
+}
+
+
+def _confidence_badge(confidence):
+    """Selo de confianca do achado, ou vazio quando o coletor nao declarou."""
+    if confidence not in _CONFIDENCE_STYLE:
+        return ""
+    cor, tip = _CONFIDENCE_STYLE[confidence]
+    return ("<span class='fnd-conf' style='border-color:%s;color:%s' "
+            "title='Confianca (%s): %s'>%s</span>"
+            % (cor, cor, _esc(confidence_label(confidence)), _esc(tip),
+               _esc(confidence_label(confidence))))
+
+
+def _custody_line(custody):
+    """Linha de custodia: o que foi de fato preservado do artefato."""
+    nivel = custody_level(custody)
+    extra = ""
+    if isinstance(custody, dict) and custody.get("sha256"):
+        extra = " (sha256 %s...)" % _esc(str(custody["sha256"])[:12])
+    aviso = ("" if nivel != CUSTODY_NONE else
+             " &mdash; nada do artefato foi retido para pericia")
+    return ("<div class='fnd-custody' title='Custodia: o que foi preservado do "
+            "artefato para a pericia. Hoje a ferramenta coleta metadado; hash e "
+            "copia do artefato entram no roadmap.'><b>Custodia:</b> %s%s%s</div>"
+            % (_esc(custody_label(custody)), extra, aviso))
+
+
+def _evidence_key_html(key):
+    """Chave da evidencia com tooltip explicativo quando conhecida."""
+    ajuda = _EVIDENCE_HELP.get(key)
+    if ajuda:
+        return ("<span class='fnd-ev-k' style='cursor:help' title='%s'>%s</span>"
+                % (_esc(ajuda), _esc(key)))
+    return "<span class='fnd-ev-k'>%s</span>" % _esc(key)
+
+
 def render_findings_panel(findings):
     """
     Monta a aba Findings: resumo por severidade e a lista ranqueada de achados.
@@ -791,8 +1029,9 @@ def render_findings_panel(findings):
     conclusao, para o analista poder refazer o raciocinio.
     """
     if not findings:
-        return ("<div class='fnd-empty'>No findings were produced for this "
-                "capture.</div>")
+        return ("<div class='fnd-empty'>Nenhum achado foi produzido nesta "
+                "captura. Ausencia aqui e uma leitura, nao uma falha: os "
+                "coletores rodaram e nao encontraram o que procuram.</div>")
 
     # Resumo por severidade, do mais grave para o menos grave.
     counts = {}
@@ -809,8 +1048,46 @@ def render_findings_panel(findings):
             f"style='border-color:{SEVERITY_COLORS.get(sev, '#888')}'>"
             f"<b style='color:{SEVERITY_COLORS.get(sev, '#888')}'>{qty}</b> {_esc(sev)}</span>")
 
-    head = ("<div class='fnd-summary'>" + "".join(chips) +
-            "<span class='fnd-chip fnd-chip-all' onclick=\"filterFindings('')\">Show all</span></div>")
+    # Ajuda "?" da aba, no mesmo padrao das demais telas. Inclui a legenda de
+    # severidade COM A ACAO esperada do operador (pedido do Mario: a
+    # classificacao Critical/High/Low nao dizia o que significa nem o que fazer).
+    ajuda = _report_help(
+        "Como ler os achados",
+        "<div style='color:#bbb;font-size:11px;line-height:1.6'>"
+        "Cada linha e um <b>achado</b>: o que foi encontrado, quao grave, QUEM "
+        "encontrou (a fonte) e a evidencia bruta que sustenta a conclusao. "
+        "Clique num achado para abrir a evidencia, a acao recomendada, a "
+        "<b>confianca</b> e a <b>custodia</b>.<br><br>"
+        "<b>Severidade e o que fazer:</b>"
+        "<table style='width:100%;border-collapse:collapse;margin:4px 0'>"
+        "<tr><td style='color:#ff4d4d'><b>Critical</b></td>"
+        "<td>artefato ativo de alto risco: conter agora (confirmar, preservar, isolar)</td></tr>"
+        "<tr><td style='color:#ff8c42'><b>High</b></td>"
+        "<td>forte indicio: investigar hoje</td></tr>"
+        "<tr><td style='color:#ffd166'><b>Medium</b></td>"
+        "<td>sinal relevante: revisar no turno</td></tr>"
+        "<tr><td style='color:#6bcB77'><b>Low</b></td>"
+        "<td>contexto de risco: registrar, baseline</td></tr>"
+        "<tr><td style='color:#7fb3d5'><b>Info</b></td>"
+        "<td>inventario: referencia, sem acao</td></tr></table>"
+        "A severidade sai da leitura unica do score (os sinais nomeados). A "
+        "<b>confianca</b> ao lado dela modula tudo: uma heuristica critica pede "
+        "confirmacao antes de conclusao.<br><br>"
+        "Os selos coloridos no topo sao <b>legenda E filtros</b>: clique para ver "
+        "so aquela severidade; 'Ver todos os niveis' limpa o filtro.<br><br>"
+        "Quando o caminho denunciado esta sendo executado agora, aparece "
+        "'Ver processo', que leva ao processo na arvore.</div>", 420)
+
+    # Legenda dos selos de prioridade, explicando que sao clicaveis (filtros).
+    legenda = ("<div style='color:#777;font-size:11px;margin:0 0 8px'>"
+               "Prioridade (clique para filtrar):</div>")
+
+    head = ("<div style='display:flex;align-items:center;justify-content:"
+            "space-between'><div class='fnd-summary'>" + "".join(chips) +
+            "<span class='fnd-chip fnd-chip-all' onclick=\"filterFindings('')\" "
+            "title='Limpa o filtro de severidade e volta a mostrar todos os "
+            "achados desta captura'>Ver todos os niveis</span></div>"
+            + ajuda + "</div>" + legenda)
 
     # Lista ordenada: mais grave primeiro (rank), depois titulo, para ser estavel.
     ordered = sorted(findings,
@@ -826,10 +1103,14 @@ def render_findings_panel(findings):
             info = describe(technique)
             if info:
                 name, tactic, _desc = info
-                tip = f"{technique} - {name}\nTactic: {tactic}\nClick the ATT&CK tab for details."
+                tip = f"{technique} - {name}\nTatica: {tactic}\nClique para ver na aba ATT&CK."
             else:
-                tip = f"{technique} (MITRE ATT&CK technique)"
-            tech_html = (f"<span class='fnd-tech' title='{_esc(tip)}'>{_esc(technique)}</span>")
+                tip = f"{technique} (tecnica MITRE ATT&CK). Clique para ver na aba ATT&CK."
+            # Clicavel: pivota para a aba ATT&CK na tecnica, sem abrir/fechar o
+            # achado (stopPropagation). E o acoplamento forte pedido.
+            tech_html = (f"<span class='fnd-tech' title='{_esc(tip)}' "
+                         f"onclick=\"pivotToAttack('{_esc(technique)}'); event.stopPropagation();\">"
+                         f"{_esc(technique)}</span>")
 
         # Pivo para o runtime: so aparece quando o caminho denunciado pelo
         # achado esta de fato sendo executado por algum processo capturado.
@@ -837,10 +1118,10 @@ def render_findings_panel(findings):
         related = f.get("related_pids") or []
         if related:
             pid_list = ",".join(str(p) for p in related)
-            label = ("View process" if len(related) == 1
-                     else f"View {len(related)} processes")
+            label = ("Ver processo" if len(related) == 1
+                     else f"Ver {len(related)} processos")
             pivot_html = (f"<span class='fnd-pivot' onclick=\"pivotToProcess('{_esc(pid_list)}'); event.stopPropagation();\" "
-                          f"title='This path is running now (PID {_esc(pid_list)}). Jump to it in the process tree.'>"
+                          f"title='Este caminho esta sendo executado agora (PID {_esc(pid_list)}). Pula para ele na arvore de processos.'>"
                           f"&#9654; {label}</span>")
 
         # Evidencia bruta, exibida sob demanda (chave: valor).
@@ -849,34 +1130,41 @@ def render_findings_panel(findings):
             text = value if isinstance(value, str) else repr(value)
             if len(text) > 2000:
                 text = text[:2000] + " ... [truncated]"
-            ev_rows.append(f"<div class='fnd-ev-row'><span class='fnd-ev-k'>{_esc(key)}</span>"
+            ev_rows.append(f"<div class='fnd-ev-row'>{_evidence_key_html(key)}"
                            f"<pre class='fnd-ev-v'>{_esc(text)}</pre></div>")
         ev_html = ("".join(ev_rows) if ev_rows
-                   else "<div class='d-na'>No raw evidence attached.</div>")
+                   else "<div class='d-na'>Sem evidencia bruta anexada.</div>")
 
         rec = f.get("recommendation") or ""
-        rec_html = (f"<div class='fnd-rec'><b>Recommended action:</b> {_esc(rec)}</div>"
+        rec_html = (f"<div class='fnd-rec'><b>Acao recomendada:</b> {_esc(rec)}</div>"
                     if rec else "")
 
         refs = f.get("references") or []
-        refs_html = (f"<div class='fnd-refs'><b>References:</b> {_esc(', '.join(str(r) for r in refs))}</div>"
+        refs_html = (f"<div class='fnd-refs'><b>Referencias:</b> {_esc(', '.join(str(r) for r in refs))}</div>"
                      if refs else "")
 
+        # Confianca (na cabeca, pois modula como ler a severidade) e custodia (no
+        # detalhe, junto da evidencia). Vem do contrato de resposta do achado.
+        conf_html = _confidence_badge(f.get("confidence"))
+        custody_html = _custody_line(f.get("custody"))
+
         items.append(f"""
-        <div class="fnd-item" data-sev="{_esc(sev)}" data-source="{_esc(f.get('source', ''))}">
+        <div class="fnd-item" data-sev="{_esc(sev)}" data-source="{_esc(f.get('source', ''))}" data-technique="{_esc(technique)}">
             <div class="fnd-head" onclick="toggleFinding({idx})">
                 <span class="fnd-sev" style="background:{color}">{_esc(sev)}</span>
                 <span class="fnd-title">{_esc(f.get('title', ''))}</span>
+                {conf_html}
                 {tech_html}
                 {pivot_html}
-                <span class="fnd-src" title="Which collector produced this finding">{_esc(f.get('source', ''))}</span>
+                <span class="fnd-src" title="Qual coletor produziu este achado (ebpf, persistence, integrity, heuristic...)">{_esc(f.get('source', ''))}</span>
             </div>
-            <div class="fnd-target">{_esc(f.get('target', ''))}</div>
+            <div class="fnd-target" title="Objeto afetado: caminho de arquivo, unit, PID ou usuario">{_esc(f.get('target', ''))}</div>
             <div class="fnd-det" id="fnd-{idx}">
                 <div class="fnd-desc">{_esc(f.get('description', ''))}</div>
                 {rec_html}
+                {custody_html}
                 {refs_html}
-                <div class="fnd-ev-title">Evidence</div>
+                <div class="fnd-ev-title">Evidencia</div>
                 {ev_html}
             </div>
         </div>""")
@@ -895,8 +1183,8 @@ def render_attack_panel(findings):
     """
     ids = used_techniques(findings)
     if not ids:
-        return ("<div class='fnd-empty'>No ATT&amp;CK techniques were "
-                "referenced in this capture.</div>")
+        return ("<div class='fnd-empty'>Nenhuma tecnica ATT&amp;CK foi "
+                "referenciada nesta captura.</div>")
 
     # Quantos achados citam cada tecnica, para o analista pesar o que investigar.
     counts = {}
@@ -905,34 +1193,86 @@ def render_attack_panel(findings):
         if tech:
             counts[tech] = counts.get(tech, 0) + 1
 
+    # Ordem canonica do kill chain, para apresentar as taticas na sequencia em
+    # que um ataque as percorre (nao na ordem alfabetica do identificador). E o
+    # que transforma uma lista de etiquetas numa leitura de PROGRESSAO.
+    ordem_taticas = ["Initial Access", "Execution", "Persistence",
+                     "Privilege Escalation", "Defense Evasion",
+                     "Credential Access", "Discovery", "Lateral Movement",
+                     "Collection", "Command and Control", "Exfiltration",
+                     "Impact"]
+
+    def _peso(tid):
+        info = describe(tid)
+        if not info:
+            return (99, tid)
+        _n, tatica, _d = info
+        primeira = (tatica or "").split(",")[0].strip()
+        try:
+            return (ordem_taticas.index(primeira), tid)
+        except ValueError:
+            return (90, tid)
+
     rows = []
-    for tid in ids:
+    for tid in sorted(ids, key=_peso):
         info = describe(tid)
         qty = counts.get(tid, 0)
         url = technique_url(tid)
         if info:
             name, tactic, desc = info
         else:
-            name, tactic, desc = ("Unknown technique", "-",
-                                  "This identifier is not in the local catalogue.")
+            name, tactic, desc = ("Tecnica desconhecida", "-",
+                                  "Este identificador ainda nao esta no catalogo "
+                                  "local desta versao. O codigo e valido; o que "
+                                  "falta e a legenda.")
+        # Selo de tatica destacado, colorido para leitura rapida do estagio.
+        taticas_selos = ""
+        for t in [x.strip() for x in (tactic or "").split(",") if x.strip()]:
+            taticas_selos += ("<span class='atk-tac-badge'>%s</span>"
+                              % _esc(t))
+        # Link de volta: da tecnica para os achados que a citam (acoplamento
+        # bidirecional). So aparece quando ha achados desta captura citando-a.
+        back = ""
+        if qty:
+            back = (f"<span class='atk-back' "
+                    f"onclick=\"filterFindingsByTechnique('{_esc(tid)}')\" "
+                    f"title='Filtra a aba Findings para os {qty} achado(s) que "
+                    f"citam esta tecnica'>&#9664; Ver achados</span>")
         rows.append(f"""
-        <div class="atk-item">
+        <div class="atk-item" id="atk-{_esc(tid)}">
             <div class="atk-head">
                 <span class="atk-id">{_esc(tid)}</span>
                 <span class="atk-name">{_esc(name)}</span>
-                <span class="atk-qty" title="Findings citing this technique">{qty}</span>
+                <span class="atk-qty" title="Quantos achados citam esta tecnica">{qty}x</span>
+                {back}
             </div>
-            <div class="atk-tactic">Tactic: {_esc(tactic)}</div>
+            <div class="atk-tactic">Tatica(s): {taticas_selos or _esc(tactic)}</div>
             <div class="atk-desc">{_esc(desc)}</div>
             <a class="atk-link" href="{_esc(url)}" target="_blank" rel="noopener noreferrer">
-                Reference: {_esc(url)}</a>
+                Referencia no MITRE: {_esc(url)}</a>
         </div>""")
 
-    intro = ("<div class='atk-intro'>MITRE ATT&amp;CK is a public catalogue of "
-             "adversary techniques observed in real intrusions. The techniques "
-             "below are the ones referenced by the findings in this capture. "
-             "Descriptions are stored locally so this report stays readable "
-             "offline.</div>")
+    ajuda = _report_help(
+        "O que e a matriz ATT&CK",
+        "<div style='color:#bbb;font-size:12px;line-height:1.6'>"
+        "MITRE ATT&CK e um catalogo publico de <b>tecnicas de ataque</b> "
+        "observadas em invasoes reais, organizadas por <b>tatica</b> (o objetivo "
+        "do atacante naquele passo: executar, persistir, evadir, exfiltrar...)."
+        "<br><br>As tecnicas abaixo sao as que os achados desta captura citam, "
+        "apresentadas na <b>ordem do kill chain</b> (das primeiras taticas as "
+        "ultimas), para se ler como uma progressao e nao como etiquetas soltas. "
+        "O numero e quantos achados citam cada uma.<br><br>"
+        "As descricoes ficam guardadas localmente, para o laudo continuar "
+        "legivel sem internet; o link leva ao MITRE para quem tiver conexao."
+        "</div>", 420)
+
+    intro = ("<div class='atk-intro' style='display:flex;align-items:flex-start;"
+             "justify-content:space-between;gap:12px'>"
+             "<span>MITRE ATT&amp;CK e um catalogo publico de tecnicas de "
+             "adversarios observadas em invasoes reais. As tecnicas abaixo, na "
+             "ordem do kill chain, sao as citadas pelos achados desta captura. "
+             "As descricoes ficam locais, para o laudo ser legivel offline.</span>"
+             + ajuda + "</div>")
 
     return intro + "<div class='atk-list'>" + "".join(rows) + "</div>"
 
@@ -940,7 +1280,8 @@ def render_attack_panel(findings):
 def generate_report(inventory, process_tree, output_file, version):
     """Full Static HTML Generator."""
     try:
-        os_c = render_os_block(inventory['os'], inventory['hw'])
+        os_c = render_os_block(inventory['os'], inventory['hw'],
+                               inventory.get('agent_uuid'))
         net_c = render_net_block(inventory['net'])
         disk_c = render_disk_block(inventory['storage'])
         mounts = inventory['storage'].get('mounts', {})
@@ -953,6 +1294,9 @@ def generate_report(inventory, process_tree, output_file, version):
         # Contagem de achados que exigem atencao, exibida na propria aba.
         actionable = sum(1 for f in findings if f.get('severity') != SEV_INFO)
         findings_badge = (f"<span class='tab-count'>{actionable}</span>" if actionable else "")
+        # Quantas tecnicas ATT&CK distintas esta captura cita, no rotulo da aba.
+        n_tec = len(used_techniques(findings))
+        attack_badge = (f"<span class='tab-count'>{n_tec}</span>" if n_tec else "")
 
         html = HTML_TEMPLATE.format(
             VERSION=version,
@@ -967,6 +1311,7 @@ def generate_report(inventory, process_tree, output_file, version):
             FINDINGS_CONTENT=findings_html,
             FINDINGS_BADGE=findings_badge,
             ATTACK_CONTENT=render_attack_panel(findings),
+            ATTACK_BADGE=attack_badge,
             TABLE_ROWS=rows
         )
         with open(output_file, "w", encoding="utf-8") as f:

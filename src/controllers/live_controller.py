@@ -12,7 +12,6 @@
 #   config: Configuration dictionary
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
 import os
@@ -24,6 +23,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
 # Internal Modules
+from src.version import __version__
 from src.core.engine import SysInspectorEngine
 from src.collectors.system_inventory import collect_full_inventory
 from src.collectors.manager import summarize_metrics, collect_findings
@@ -110,7 +110,7 @@ class LiveHTTPHandler(BaseHTTPRequestHandler):
 
                 # Generate Full HTML to Temp
                 tmp_filename = f"/tmp/sys_live_{threading.get_ident()}.html"
-                generate_report(data, tree, tmp_filename, "0.61.00")
+                generate_report(data, tree, tmp_filename, __version__)
 
                 with open(tmp_filename, 'r', encoding='utf-8') as f:
                     html_content = f.read()

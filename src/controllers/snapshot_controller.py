@@ -14,7 +14,6 @@
 #              - MAINTAINED: Full rehydration and crypto logic.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
 import os
@@ -25,6 +24,7 @@ import logging
 # import json
 
 # Internal Modules
+from src.version import __version__
 from src.collectors.manager import CollectionManager, summarize_metrics
 from src.exporters.html_report import generate_report
 from src.collectors.process_tree import ProcessNode  # Needed for rehydration
@@ -164,7 +164,7 @@ class SnapshotController:
                     if not os.path.exists("report"): os.makedirs("report")
 
                     self.logger.info(f"[*] Generating HTML Report: {outfile}")
-                    success = generate_report(decrypted_data, tree_obj, outfile, "0.90 (Snapshot)")
+                    success = generate_report(decrypted_data, tree_obj, outfile, "%s (Snapshot)" % __version__)
 
                     if success:
                         self.logger.info(f"[REPORT] HTML generated successfully.")

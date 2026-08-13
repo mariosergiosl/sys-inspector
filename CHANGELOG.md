@@ -5,6 +5,31 @@ All notable changes to the **Sys-Inspector** project will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-08-13
+
+First stable release. The tool now runs as a distributed agent/server fleet with a normalized evidence model, a forensic report that reads as an investigation, and a single source of version truth.
+
+### Added
+
+- **Answer contract per finding.** Every finding now declares a **confidence** level (confirmed / probable / heuristic), so the report never presents a heuristic as a fact, and a **custody** level (none / metadata / hash / full) that states what was actually preserved of the artifact. The confidence badge sits next to the severity and modulates how to read it.
+- **Manager command progress as a stepper.** A command fired at an agent (capture, scenario, restart) shows its real state as a three-stop stepper (enqueued -> on the agent -> done/failed) with the current stop highlighted, a live timer and the full result in the tooltip, so the automatic capture cadence is never confused with a command in flight.
+- **Report didactics and cross-tab coupling.** A "how to read" strip (Findings -> Processes -> ATT&CK), a per-finding severity legend with the operator action, tooltips explaining each evidence field, and clickable pivots in both directions between a finding and its ATT&CK technique.
+- **Distributed fleet.** Pull-model agents forward encrypted captures to a central server with a store-and-forward outbox, a prioritized ingestion queue, an audited command queue, per-agent capability reporting, and HTTPS with an auto self-signed certificate.
+- **Runtime and anti-forensic detection.** Hidden processes (`/proc` vs kernel), thread-count divergence, writable-and-executable memory, on-disk binary replacement, untrusted loaded libraries, and immutable files in writable directories (ATT&CK T1222.002).
+- **Cross-host time.** The clock offset of each agent is measured (via chrony) and travels with the capture, a prerequisite for a comparable timeline across machines.
+
+### Changed
+
+- **Version is a single source of truth** (`src/version.py`). Every surface that shows or stamps a version reads it: the Live web UI, the live and snapshot reports, the custody stamp, the RPM spec, `setup.py` and the scenario/install scripts. A guard test prevents the drift from returning.
+- **Severity is read from a single named-signal decoder** (`risk.py`): the anomaly score is a bit field of distinct signals, not a magnitude, which fixes a gravity inversion where a defunct process outranked a deleted binary executing from `/dev/shm`.
+- **Packaging split by role**: base, agent, server and scenarios, so an inspected host never installs the web server it does not run.
+
+### Fixed
+
+- The chaos test scenario no longer contaminates the host it measures: `/etc/ld.so.preload` points at a system-path library and a single dedicated process carries the runtime signal.
+- Persistence events are emitted on the timeline, so the temporal correlation rules have real material to fire on.
+- Report rendering escapes every host-controlled value; the pivot from a finding opens the originating capture, not the most recent one.
+
 ## [0.91.0] - 2026-08-06
 
 ### Changed - License

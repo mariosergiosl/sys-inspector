@@ -11,7 +11,6 @@
 #   - [FIX v0.90.01] Added missing import 'render_template_string'.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.90.16
 # ==============================================================================
 
 import logging
@@ -21,6 +20,9 @@ import re
 import sqlite3
 import time
 from contextlib import closing
+# Versao vem da FONTE UNICA (src/version.py); nunca hardcode aqui, senao a tela
+# do modo Live diverge das demais (D-018).
+from src.version import __version__
 # [FIX] Added render_template_string to imports
 # from flask import Flask, jsonify, make_response, redirect, url_for, render_template_string
 from flask import Flask, jsonify, make_response, render_template_string, request, Response
@@ -549,7 +551,8 @@ class WebController:
 
             try:
                 # Render Blocks using shared logic
-                os_html = render_os_block(inv.get('os', {}), inv.get('hw', {}))
+                os_html = render_os_block(inv.get('os', {}), inv.get('hw', {}),
+                                          inv.get('agent_uuid'))
                 net_html = render_net_block(inv.get('net', {}))
                 disk_html = render_disk_block(inv.get('storage', {}))
                 mounts = inv.get('storage', {}).get('mounts', {})
@@ -589,9 +592,11 @@ class WebController:
                 findings = inv.get('findings', []) or []
                 findings_html = render_findings_panel(findings)
                 actionable = sum(1 for f in findings if f.get('severity') != 'Info')
+                # Tecnicas ATT&CK distintas desta captura, para o rotulo da aba.
+                n_tec = len({f.get('technique') for f in findings if f.get('technique')})
 
                 return HTML_TEMPLATE.format(
-                    VERSION="0.90 (Live)",
+                    VERSION="%s (Live)" % __version__,
                     HOSTNAME=escape(inv.get('os', {}).get('hostname', 'Unknown')),
                     TIMESTAMP=inv['generated'],
                     CSS_BLOCK=CSS_BASE,
@@ -603,6 +608,7 @@ class WebController:
                     FINDINGS_CONTENT=findings_html,
                     FINDINGS_BADGE=(f"<span class='tab-count'>{actionable}</span>" if actionable else ""),
                     ATTACK_CONTENT=render_attack_panel(findings),
+                    ATTACK_BADGE=(f"<span class='tab-count'>{n_tec}</span>" if n_tec else ""),
                     TABLE_ROWS=rows_html
                 )
             except Exception as e:

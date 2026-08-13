@@ -20,7 +20,6 @@
 # NOTES:       Compatible with Python 3.6.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: v0.91.0
 # ==============================================================================
 
 import json
@@ -39,6 +38,11 @@ ST_FAILED = "FAILED"
 # Prioridade: menor numero e atendido primeiro. O padrao fica no meio da faixa
 # para permitir promover e rebaixar um agente sem renumerar os demais.
 PRIORITY_DEFAULT = 50
+
+# Substitui o conteudo de uma entrada ja processada. A captura foi salva e
+# assinada no armazenamento definitivo; manter a copia na fila so duplicaria
+# cada evidencia e, como a fila nunca teve retencao, crescia sem limite.
+PAYLOAD_DESCARTADO = '{"_purged": true}'
 
 # Vagas concedidas por rodada a um agente. Limita o quanto um unico host
 # despeja de uma vez quando volta de uma indisponibilidade longa.
@@ -216,8 +220,32 @@ class IngestQueue(object):
             return []
 
     def mark_done(self, entry_id):
-        """Marca a entrada como processada."""
-        self._set_status(entry_id, ST_DONE)
+        """
+        Marca a entrada como processada e DESCARTA o payload.
+
+        A fila e um buffer de transporte, nao um segundo arquivo. Guardar o
+        payload depois de a captura estar salva significa manter cada evidencia
+        em duplicidade, e como a fila nunca teve retencao, essa copia crescia
+        sem limite: medido em campo, 785 entradas ocupavam 1.03 GB, 86% do banco
+        inteiro, contra 65 MB das capturas de fato guardadas.
+
+        O registro da entrada permanece: quem entregou, quando, com que digest e
+        qual foi o desfecho. E o rastro que importa; o conteudo ja esta no lugar
+        definitivo e assinado.
+        """
+        # Marcador explicito em vez de NULL: a coluna e NOT NULL desde o
+        # esquema original, e trocar isso exigiria migrar bancos ja em uso. O
+        # marcador tambem e mais honesto que um valor vazio, porque diz o que
+        # aconteceu a quem for ler a linha.
+        try:
+            with closing(self._conn()) as conn:
+                conn.execute("UPDATE ingest_queue SET status = ?, "
+                             "attempts = attempts + 1, payload = ? "
+                             "WHERE id = ?",
+                             (ST_DONE, PAYLOAD_DESCARTADO, entry_id))
+                conn.commit()
+        except Exception as exc:
+            LOG.error("Completing queue entry %s failed: %s", entry_id, exc)
 
     def mark_failed(self, entry_id, error=""):
         """Marca a entrada como falha, preservando o motivo para analise."""
@@ -257,7 +285,7 @@ class IngestQueue(object):
         return summary
 
 
-def process_batch(queue, db, limit=None):
+def process_batch(queue, db, limit=None, on_stored=None):
     """
     Drena a fila para o armazenamento definitivo.
 
@@ -270,7 +298,7 @@ def process_batch(queue, db, limit=None):
         payload = item.get("payload") or {}
         try:
             agent_uuid = item.get("agent_uuid") or "unknown"
-            db.insert_snapshot(
+            snap_id = db.insert_snapshot(
                 payload.get("bundle"),
                 agent_uuid=agent_uuid,
                 metrics=payload.get("metrics") or {},
@@ -284,7 +312,20 @@ def process_batch(queue, db, limit=None):
                 db.update_agent_status(agent_uuid, "ONLINE",
                                        hostname=host.get("hostname"),
                                        ip=host.get("ip_address"),
-                                       os_info=host.get("os_info"))
+                                       os_info=host.get("os_info"),
+                                       fqdn=host.get("fqdn"),
+                                       cycle_seconds=host.get("cycle_seconds"))
+            # Gancho para quem quiser derivar algo da captura recem-gravada,
+            # hoje a linha do tempo. Fica APOS a gravacao e ANTES de marcar a
+            # entrada como concluida: se falhar, a entrada nao e dada por
+            # processada e o dado nao se perde em silencio.
+            if on_stored:
+                try:
+                    on_stored(snap_id, agent_uuid, payload)
+                except Exception as exc:
+                    LOG.error("Post-store hook failed for %s: %s",
+                              item["id"], exc)
+
             queue.mark_done(item["id"])
             processed += 1
         except Exception as exc:
