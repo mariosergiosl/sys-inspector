@@ -20,8 +20,11 @@
 
 Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks directly into the Linux Kernel to capture events (process execution, file I/O, network connections) in real-time.
 
-## Features (v0.91.0)
+## Features (v1.0.0)
 
+* **New in v1.0.0 - Answer contract per finding:** Every finding declares its **confidence** (confirmed / probable / heuristic), so a heuristic is never shown as a fact, and its **custody** (what was preserved of the artifact). The forensic report reads as an investigation: a "how to read" strip (Findings -> Processes -> ATT&CK), a severity legend with the operator action, tooltips on every evidence field, and clickable pivots in both directions between a finding and its ATT&CK technique.
+* **New in v1.0.0 - Distributed fleet:** Pull-model agents forward encrypted captures to a central server (store-and-forward outbox, prioritized ingestion, audited command queue, per-agent capabilities, HTTPS). The Manager shows each command's progress as a live stepper.
+* **New in v1.0.0 - Runtime and anti-forensic detection:** Hidden processes, thread-count divergence, W+X memory, on-disk binary replacement, untrusted libraries, and immutable files in writable directories.
 * **Forensic Findings:** Every collector emits normalized findings on a single severity scale (Info to Critical), each carrying the source that produced it, the MITRE ATT&CK technique, the raw evidence and a recommended action.
 * **Persistence Enumeration:** Answers the first question after a suspected compromise, how would an intruder survive a reboot: systemd units, cron/at jobs, startup and profile scripts, `/etc/ld.so.preload`, kernel module autoload, udev rules, PAM stacks and per-user `authorized_keys`. Baseline items stay informational; severity rises only on real indicators such as execution from user-writable paths, world-writable files, hidden names or recent modification.
 

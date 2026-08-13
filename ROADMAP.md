@@ -2,6 +2,16 @@
 
 This document outlines the development trajectory of **Sys-Inspector**.
 
+## ✅ Completed (v1.0.0 - first stable release)
+
+- [x] **Answer contract per finding** (confidence: confirmed/probable/heuristic; custody: what was preserved).
+- [x] **Distributed agent/server fleet** (pull model, encrypted outbox, prioritized ingestion, audited command queue, per-agent capabilities, HTTPS).
+- [x] **Manager command stepper** (enqueued -> on the agent -> done/failed, live timer).
+- [x] **Report as an investigation** (how-to-read strip, severity legend with action, evidence tooltips, two-way Findings <-> ATT&CK coupling).
+- [x] **Runtime and anti-forensic detection** (hidden processes, thread divergence, W+X memory, replaced binary, untrusted libraries, immutable files).
+- [x] **Version single source of truth** across screens, custody stamp, spec and scripts.
+- [x] **Packaging split by role** (base, agent, server, scenarios).
+
 ## ✅ Completed (v0.90.x)
 
 - [x] **Remote Dashboard & Fleet View**
@@ -30,7 +40,7 @@ This document outlines the development trajectory of **Sys-Inspector**.
   - **Recursive Alerting** (Child -> Parent propagation).
   - Dark Mode & Sticky Headers.
 
-## ✅ Completed (v0.91.x, unreleased)
+## ✅ Completed (v0.91.x)
 
 - [x] **Forensic evidence chain**
   - Canonical digest, agent-signed captures, hash chaining between captures.
