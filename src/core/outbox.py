@@ -194,9 +194,23 @@ class Outbox(object):
         daemon_cfg = (self.config.get("daemon", {}) or {})
         ciclo = (int(daemon_cfg.get("capture_duration", 15) or 15)
                  + int(daemon_cfg.get("interval", 15) or 15))
+
+        # Desvio de relogio MEDIDO deste host, para a linha do tempo entre hosts
+        # ser ordenada por instante comparavel (D-019). Grava-se o valor E se ele
+        # foi medido: 0.0 medido afirma sincronia, 0.0 assumido nao afirma nada.
+        clock = {"offset": 0.0, "measured": False, "source": "unavailable"}
+        try:
+            from src.core.clock import measure_offset
+            clock = measure_offset()
+        except Exception:
+            pass
+
         return {"hostname": hostname, "ip_address": address,
                 "os_info": os_info, "fqdn": fqdn, "cycle_seconds": ciclo,
-                "capabilities": capacidades}
+                "capabilities": capacidades,
+                "clock_offset": clock.get("offset", 0.0),
+                "clock_measured": clock.get("measured", False),
+                "clock_source": clock.get("source", "unavailable")}
 
     def request_slot(self, pending):
         """
