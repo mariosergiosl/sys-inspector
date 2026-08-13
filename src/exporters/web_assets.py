@@ -340,7 +340,8 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
 }
 
 /* --- ATT&CK REFERENCE --- */
-.atk-intro { color: #aaa; font-size: 12px; margin-bottom: 14px; max-width: 900px; line-height: 1.5; }
+.atk-intro { color: #bbb; font-size: 13px; margin-bottom: 14px; max-width: 1000px; line-height: 1.6; }
+.atk-tac-badge { display:inline-block; background:#2a2a1a; border:1px solid var(--yel); color:var(--yel); font-size:10px; padding:1px 7px; border-radius:10px; margin-right:5px; }
 .atk-list { display: flex; flex-direction: column; gap: 8px; }
 .atk-item { background: #252526; border-left: 4px solid var(--yel); border-radius: 3px; padding: 10px 12px; }
 .atk-head { display: flex; align-items: center; gap: 10px; }
@@ -350,8 +351,8 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
     background: #333; color: #ccc; font-size: 10px; padding: 1px 8px;
     border-radius: 8px; border: 1px solid #555;
 }
-.atk-tactic { color: #999; font-size: 11px; margin-top: 4px; }
-.atk-desc { color: #bbb; font-size: 12px; margin-top: 6px; line-height: 1.5; }
+.atk-tactic { color: #999; font-size: 12px; margin-top: 6px; }
+.atk-desc { color: #ccc; font-size: 13.5px; margin-top: 8px; line-height: 1.65; }
 .atk-link { color: var(--acc); font-size: 10px; text-decoration: none; display: inline-block; margin-top: 6px; }
 .atk-link:hover { text-decoration: underline; }
 """

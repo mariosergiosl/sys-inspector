@@ -1827,20 +1827,17 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                                   % detalhe[:60])
 
             fqdn = a.get('fqdn') or ""
-            # FQDN agora tem COLUNA propria (pedido do Mario): o mesmo host
-            # aparece com nomes diferentes em sistemas diferentes, e ter o nome
-            # de dominio ao lado do curto evita ambiguidade na triagem. Vazio
-            # ou igual ao curto vira um traco, para a coluna nunca somir e
-            # distinguir "nao tem" de "nao coletado".
-            if fqdn and fqdn != host:
+            # FQDN em COLUNA propria (pedido do Mario): SEMPRE mostra o valor
+            # quando existe, mesmo que igual ao nome curto (nesse caso o host
+            # simplesmente nao tem dominio configurado, e ver isso e informacao).
+            # So vira um traco quando de fato nao ha FQDN, e o traco distingue
+            # "host sem dominio" de "nao coletado".
+            if fqdn:
                 fqdn_col = ("<span style='color:#999;font-family:monospace;"
                             "font-size:11px'>%s</span>" % _esc(fqdn))
-            elif fqdn == host:
-                fqdn_col = ("<span title='FQDN igual ao nome curto' "
-                            "style='color:#555'>&mdash;</span>")
             else:
-                fqdn_col = ("<span title='host sem FQDN resolvivel' "
-                            "style='color:#555'>&mdash;</span>")
+                fqdn_col = ("<span title='host sem FQDN resolvivel (sem dominio "
+                            "configurado)' style='color:#555'>&mdash;</span>")
             fqdn_html = ""
             seen_html = ""
 
@@ -1930,10 +1927,14 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             tr {{ transition: transform 0.2s; }}
             tr:hover {{ transform: scale(1.01); background: #2a2d2e !important; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }}
             .btn-view {{ background: #333; color: #fff; text-decoration: none; padding: 6px 12px; font-size: 10px; border-radius: 3px; border: 1px solid #555; transition:0.2s; }}
-            .btn-ico {{ display:inline-block; text-decoration:none; font-size:15px; padding:3px 6px; border:1px solid #444; border-radius:4px; margin-right:3px; filter:grayscale(35%); }}
-            .btn-ico:hover {{ border-color:var(--acc); background:#2a2d2e; filter:none; }}
-            .btn-lab:hover {{ border-color:#ff8c42; }}
-            .btn-warn:hover {{ border-color:var(--red); }}
+            /* Icones de acao no MESMO padrao da barra de filtros da aba
+               Processes (.filter-btn): emoji "pelado", sem caixa, opacidade
+               baixa que sobe e escala no hover. Antes tinham borda/caixa e
+               destoavam da linguagem visual do laudo. */
+            .btn-ico {{ display:inline-block; text-decoration:none; font-size:19px; margin:0 5px; opacity:0.65; transition:0.2s; filter:grayscale(25%); }}
+            .btn-ico:hover {{ opacity:1; transform:scale(1.25); filter:none; }}
+            .btn-lab:hover {{ text-shadow:0 0 8px #ff8c42; }}
+            .btn-warn:hover {{ text-shadow:0 0 8px var(--red); }}
             .cmd-badge {{ background:var(--acc); color:#fff; font-size:10px; padding:1px 7px; border-radius:8px; margin-left:4px; }}
             .btn-view:hover {{ background: #0078d4; border-color: #0078d4; }}
         </style>

@@ -936,6 +936,18 @@ def render_process_rows(tree, mounts):
 # ------------------------------------------------------------------------------
 # ENTRY POINTS
 # ------------------------------------------------------------------------------
+def _report_help(titulo, corpo_html, largura=340):
+    """
+    Bolha de ajuda "?" no MESMO padrao do "?" da tabela de score (legend-icon +
+    tooltip no hover). Existe para toda tela ganhar o mesmo facilitador de
+    leitura, em vez de o analista ter de deduzir o que cada coluna significa.
+    """
+    return ("<span class='score-legend-wrapper'>"
+            "<span class='legend-icon'>?</span>"
+            "<span class='score-tooltip' style='width:%dpx'>"
+            "<h4>%s</h4>%s</span></span>" % (largura, titulo, corpo_html))
+
+
 def render_findings_panel(findings):
     """
     Monta a aba Findings: resumo por severidade e a lista ranqueada de achados.
@@ -946,8 +958,9 @@ def render_findings_panel(findings):
     conclusao, para o analista poder refazer o raciocinio.
     """
     if not findings:
-        return ("<div class='fnd-empty'>No findings were produced for this "
-                "capture.</div>")
+        return ("<div class='fnd-empty'>Nenhum achado foi produzido nesta "
+                "captura. Ausencia aqui e uma leitura, nao uma falha: os "
+                "coletores rodaram e nao encontraram o que procuram.</div>")
 
     # Resumo por severidade, do mais grave para o menos grave.
     counts = {}
@@ -964,8 +977,28 @@ def render_findings_panel(findings):
             f"style='border-color:{SEVERITY_COLORS.get(sev, '#888')}'>"
             f"<b style='color:{SEVERITY_COLORS.get(sev, '#888')}'>{qty}</b> {_esc(sev)}</span>")
 
-    head = ("<div class='fnd-summary'>" + "".join(chips) +
-            "<span class='fnd-chip fnd-chip-all' onclick=\"filterFindings('')\">Show all</span></div>")
+    # Ajuda "?" da aba, no mesmo padrao das demais telas.
+    ajuda = _report_help(
+        "Como ler os achados",
+        "<div style='color:#bbb;font-size:11px;line-height:1.6'>"
+        "Cada linha e um <b>achado</b>: o que foi encontrado, quao grave, QUEM "
+        "encontrou (a fonte) e a evidencia bruta que sustenta a conclusao. "
+        "Clique num achado para abrir a evidencia e a acao recomendada.<br><br>"
+        "Os selos coloridos no topo sao a <b>legenda de prioridade E filtros</b>: "
+        "clique num deles para ver so aquela severidade; 'Mostrar todos' limpa o "
+        "filtro. A cor segue a escala unica do produto, do mais grave (Critical) "
+        "ao informativo (Info).<br><br>"
+        "Quando o caminho denunciado esta sendo executado agora, aparece "
+        "'Ver processo', que leva ao processo na arvore.</div>", 380)
+
+    # Legenda dos selos de prioridade, explicando que sao clicaveis (filtros).
+    legenda = ("<div style='color:#777;font-size:11px;margin:0 0 8px'>"
+               "Prioridade (clique para filtrar):</div>")
+
+    head = ("<div style='display:flex;align-items:center;justify-content:"
+            "space-between'><div class='fnd-summary'>" + "".join(chips) +
+            "<span class='fnd-chip fnd-chip-all' onclick=\"filterFindings('')\">"
+            "Mostrar todos</span></div>" + ajuda + "</div>" + legenda)
 
     # Lista ordenada: mais grave primeiro (rank), depois titulo, para ser estavel.
     ordered = sorted(findings,
@@ -981,9 +1014,9 @@ def render_findings_panel(findings):
             info = describe(technique)
             if info:
                 name, tactic, _desc = info
-                tip = f"{technique} - {name}\nTactic: {tactic}\nClick the ATT&CK tab for details."
+                tip = f"{technique} - {name}\nTatica: {tactic}\nVeja a aba ATT&CK para detalhes."
             else:
-                tip = f"{technique} (MITRE ATT&CK technique)"
+                tip = f"{technique} (tecnica MITRE ATT&CK)"
             tech_html = (f"<span class='fnd-tech' title='{_esc(tip)}'>{_esc(technique)}</span>")
 
         # Pivo para o runtime: so aparece quando o caminho denunciado pelo
@@ -992,10 +1025,10 @@ def render_findings_panel(findings):
         related = f.get("related_pids") or []
         if related:
             pid_list = ",".join(str(p) for p in related)
-            label = ("View process" if len(related) == 1
-                     else f"View {len(related)} processes")
+            label = ("Ver processo" if len(related) == 1
+                     else f"Ver {len(related)} processos")
             pivot_html = (f"<span class='fnd-pivot' onclick=\"pivotToProcess('{_esc(pid_list)}'); event.stopPropagation();\" "
-                          f"title='This path is running now (PID {_esc(pid_list)}). Jump to it in the process tree.'>"
+                          f"title='Este caminho esta sendo executado agora (PID {_esc(pid_list)}). Pula para ele na arvore de processos.'>"
                           f"&#9654; {label}</span>")
 
         # Evidencia bruta, exibida sob demanda (chave: valor).
@@ -1007,14 +1040,14 @@ def render_findings_panel(findings):
             ev_rows.append(f"<div class='fnd-ev-row'><span class='fnd-ev-k'>{_esc(key)}</span>"
                            f"<pre class='fnd-ev-v'>{_esc(text)}</pre></div>")
         ev_html = ("".join(ev_rows) if ev_rows
-                   else "<div class='d-na'>No raw evidence attached.</div>")
+                   else "<div class='d-na'>Sem evidencia bruta anexada.</div>")
 
         rec = f.get("recommendation") or ""
-        rec_html = (f"<div class='fnd-rec'><b>Recommended action:</b> {_esc(rec)}</div>"
+        rec_html = (f"<div class='fnd-rec'><b>Acao recomendada:</b> {_esc(rec)}</div>"
                     if rec else "")
 
         refs = f.get("references") or []
-        refs_html = (f"<div class='fnd-refs'><b>References:</b> {_esc(', '.join(str(r) for r in refs))}</div>"
+        refs_html = (f"<div class='fnd-refs'><b>Referencias:</b> {_esc(', '.join(str(r) for r in refs))}</div>"
                      if refs else "")
 
         items.append(f"""
@@ -1024,14 +1057,14 @@ def render_findings_panel(findings):
                 <span class="fnd-title">{_esc(f.get('title', ''))}</span>
                 {tech_html}
                 {pivot_html}
-                <span class="fnd-src" title="Which collector produced this finding">{_esc(f.get('source', ''))}</span>
+                <span class="fnd-src" title="Qual coletor produziu este achado (ebpf, persistence, integrity, heuristic...)">{_esc(f.get('source', ''))}</span>
             </div>
-            <div class="fnd-target">{_esc(f.get('target', ''))}</div>
+            <div class="fnd-target" title="Objeto afetado: caminho de arquivo, unit, PID ou usuario">{_esc(f.get('target', ''))}</div>
             <div class="fnd-det" id="fnd-{idx}">
                 <div class="fnd-desc">{_esc(f.get('description', ''))}</div>
                 {rec_html}
                 {refs_html}
-                <div class="fnd-ev-title">Evidence</div>
+                <div class="fnd-ev-title">Evidencia</div>
                 {ev_html}
             </div>
         </div>""")
@@ -1050,8 +1083,8 @@ def render_attack_panel(findings):
     """
     ids = used_techniques(findings)
     if not ids:
-        return ("<div class='fnd-empty'>No ATT&amp;CK techniques were "
-                "referenced in this capture.</div>")
+        return ("<div class='fnd-empty'>Nenhuma tecnica ATT&amp;CK foi "
+                "referenciada nesta captura.</div>")
 
     # Quantos achados citam cada tecnica, para o analista pesar o que investigar.
     counts = {}
@@ -1060,34 +1093,77 @@ def render_attack_panel(findings):
         if tech:
             counts[tech] = counts.get(tech, 0) + 1
 
+    # Ordem canonica do kill chain, para apresentar as taticas na sequencia em
+    # que um ataque as percorre (nao na ordem alfabetica do identificador). E o
+    # que transforma uma lista de etiquetas numa leitura de PROGRESSAO.
+    ordem_taticas = ["Initial Access", "Execution", "Persistence",
+                     "Privilege Escalation", "Defense Evasion",
+                     "Credential Access", "Discovery", "Lateral Movement",
+                     "Collection", "Command and Control", "Exfiltration",
+                     "Impact"]
+
+    def _peso(tid):
+        info = describe(tid)
+        if not info:
+            return (99, tid)
+        _n, tatica, _d = info
+        primeira = (tatica or "").split(",")[0].strip()
+        try:
+            return (ordem_taticas.index(primeira), tid)
+        except ValueError:
+            return (90, tid)
+
     rows = []
-    for tid in ids:
+    for tid in sorted(ids, key=_peso):
         info = describe(tid)
         qty = counts.get(tid, 0)
         url = technique_url(tid)
         if info:
             name, tactic, desc = info
         else:
-            name, tactic, desc = ("Unknown technique", "-",
-                                  "This identifier is not in the local catalogue.")
+            name, tactic, desc = ("Tecnica desconhecida", "-",
+                                  "Este identificador ainda nao esta no catalogo "
+                                  "local desta versao. O codigo e valido; o que "
+                                  "falta e a legenda.")
+        # Selo de tatica destacado, colorido para leitura rapida do estagio.
+        taticas_selos = ""
+        for t in [x.strip() for x in (tactic or "").split(",") if x.strip()]:
+            taticas_selos += ("<span class='atk-tac-badge'>%s</span>"
+                              % _esc(t))
         rows.append(f"""
         <div class="atk-item">
             <div class="atk-head">
                 <span class="atk-id">{_esc(tid)}</span>
                 <span class="atk-name">{_esc(name)}</span>
-                <span class="atk-qty" title="Findings citing this technique">{qty}</span>
+                <span class="atk-qty" title="Quantos achados citam esta tecnica">{qty}x</span>
             </div>
-            <div class="atk-tactic">Tactic: {_esc(tactic)}</div>
+            <div class="atk-tactic">Tatica(s): {taticas_selos or _esc(tactic)}</div>
             <div class="atk-desc">{_esc(desc)}</div>
             <a class="atk-link" href="{_esc(url)}" target="_blank" rel="noopener noreferrer">
-                Reference: {_esc(url)}</a>
+                Referencia no MITRE: {_esc(url)}</a>
         </div>""")
 
-    intro = ("<div class='atk-intro'>MITRE ATT&amp;CK is a public catalogue of "
-             "adversary techniques observed in real intrusions. The techniques "
-             "below are the ones referenced by the findings in this capture. "
-             "Descriptions are stored locally so this report stays readable "
-             "offline.</div>")
+    ajuda = _report_help(
+        "O que e a matriz ATT&CK",
+        "<div style='color:#bbb;font-size:12px;line-height:1.6'>"
+        "MITRE ATT&CK e um catalogo publico de <b>tecnicas de ataque</b> "
+        "observadas em invasoes reais, organizadas por <b>tatica</b> (o objetivo "
+        "do atacante naquele passo: executar, persistir, evadir, exfiltrar...)."
+        "<br><br>As tecnicas abaixo sao as que os achados desta captura citam, "
+        "apresentadas na <b>ordem do kill chain</b> (das primeiras taticas as "
+        "ultimas), para se ler como uma progressao e nao como etiquetas soltas. "
+        "O numero e quantos achados citam cada uma.<br><br>"
+        "As descricoes ficam guardadas localmente, para o laudo continuar "
+        "legivel sem internet; o link leva ao MITRE para quem tiver conexao."
+        "</div>", 420)
+
+    intro = ("<div class='atk-intro' style='display:flex;align-items:flex-start;"
+             "justify-content:space-between;gap:12px'>"
+             "<span>MITRE ATT&amp;CK e um catalogo publico de tecnicas de "
+             "adversarios observadas em invasoes reais. As tecnicas abaixo, na "
+             "ordem do kill chain, sao as citadas pelos achados desta captura. "
+             "As descricoes ficam locais, para o laudo ser legivel offline.</span>"
+             + ajuda + "</div>")
 
     return intro + "<div class='atk-list'>" + "".join(rows) + "</div>"
 

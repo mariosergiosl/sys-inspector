@@ -87,8 +87,8 @@ def test_attack_panel_explains_the_technique():
 
 
 def test_attack_panel_without_techniques():
-    """Captura sem tecnicas nao quebra o painel."""
-    assert "No ATT&amp;CK techniques" in render_attack_panel([])
+    """Captura sem tecnicas nao quebra o painel (texto em PT)."""
+    assert "Nenhuma tecnica ATT&amp;CK" in render_attack_panel([])
 
 
 # ------------------------------------------------------------------------------
