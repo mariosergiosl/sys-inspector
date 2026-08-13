@@ -327,6 +327,31 @@ def _fmt_datahora(epoch, compacto=True):
             % (local, utc))
 
 
+def _dur_humana(seconds):
+    """
+    Duracao legivel e compacta ("3d 4h", "2h 15m", "45m", "30s").
+
+    Duas unidades no maximo: a maior que faz sentido mais a seguinte, que e o
+    suficiente para ler "ha quanto tempo" sem virar um relogio de precisao.
+    """
+    try:
+        s = int(seconds)
+    except (TypeError, ValueError):
+        return "?"
+    if s < 0:
+        return "?"
+    d, r = divmod(s, 86400)
+    h, r = divmod(r, 3600)
+    m, sec = divmod(r, 60)
+    if d:
+        return "%dd %dh" % (d, h)
+    if h:
+        return "%dh %dm" % (h, m)
+    if m:
+        return "%dm" % m
+    return "%ds" % sec
+
+
 def _human_age(seconds):
     """Idade legivel ("12s atras"), para o analista nao precisar calcular."""
     seconds = int(seconds)
@@ -623,7 +648,11 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                         agent_uuid, "ONLINE", hostname=host.get("hostname"),
                         ip=host.get("ip_address"), os_info=host.get("os_info"),
                         fqdn=host.get("fqdn"),
-                                       cycle_seconds=host.get("cycle_seconds"))
+                        cycle_seconds=host.get("cycle_seconds"),
+                        host_uptime=host.get("host_uptime"),
+                        agent_uptime=host.get("agent_uptime"),
+                        clock_offset=host.get("clock_offset"),
+                        clock_measured=host.get("clock_measured"))
                     controller.db.set_capabilities(agent_uuid,
                                                    host.get("capabilities"))
                 self._reply(resposta)
@@ -1798,12 +1827,36 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                                   % detalhe[:60])
 
             fqdn = a.get('fqdn') or ""
-            # Mostra o FQDN so quando acrescenta informacao ao nome curto.
-            fqdn_html = ("<br><small style='color:#777; font-family:monospace'>%s</small>"
-                         % fqdn) if fqdn and fqdn != host else ""
-            # O carimbo completo agora vive na coluna LAST SEEN; sob o host
-            # ficam apenas os identificadores (UUID e FQDN).
+            # FQDN agora tem COLUNA propria (pedido do Mario): o mesmo host
+            # aparece com nomes diferentes em sistemas diferentes, e ter o nome
+            # de dominio ao lado do curto evita ambiguidade na triagem. Vazio
+            # ou igual ao curto vira um traco, para a coluna nunca somir e
+            # distinguir "nao tem" de "nao coletado".
+            if fqdn and fqdn != host:
+                fqdn_col = ("<span style='color:#999;font-family:monospace;"
+                            "font-size:11px'>%s</span>" % _esc(fqdn))
+            elif fqdn == host:
+                fqdn_col = ("<span title='FQDN igual ao nome curto' "
+                            "style='color:#555'>&mdash;</span>")
+            else:
+                fqdn_col = ("<span title='host sem FQDN resolvivel' "
+                            "style='color:#555'>&mdash;</span>")
+            fqdn_html = ""
             seen_html = ""
+
+            # UPTIME: do HOST (desde o boot) e do AGENTE (desde que subiu). Os
+            # dois separados de proposito: um agente reiniciado num host antigo,
+            # ou um host recem-ligado com o agente de sempre, sao leituras
+            # diferentes na triagem, e so os dois numeros juntos as distinguem.
+            hu = a.get('host_uptime')
+            au = a.get('agent_uptime')
+            uptime_col = (
+                "<div title='Ha quanto tempo o HOST esta ligado (desde o boot)'>"
+                "&#128421; %s</div>"
+                "<div title='Ha quanto tempo o AGENTE esta coletando (desde que "
+                "subiu)' style='color:#888;font-size:11px'>&#129302; %s</div>"
+                % (_dur_humana(hu) if hu is not None else "?",
+                   _dur_humana(au) if au is not None else "?"))
 
             # Contagem por severidade, vinda em claro com a captura.
             findings = a.get('findings') or {}
@@ -1821,8 +1874,18 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             worst = next((c for lv, c in sev_colors.items() if findings.get(lv)), None)
             risk_border = f"border-left: 4px solid {worst};" if worst else ""
 
-            status_style = "color:#51cf66" if is_online else "color:#ff6b6b"
-            status_text = "ONLINE" if is_online else "OFFLINE"
+            # STATUS COMO ICONE (pedido do Mario): um ponto verde/vermelho le-se
+            # mais rapido que a palavra, e o rotulo continua no title para quem
+            # precisa da certeza. A cor da borda da linha ja carrega a gravidade;
+            # o ponto carrega a presenca.
+            if is_online:
+                status_cell = ("<span title='ONLINE: reportou dentro do "
+                               "intervalo esperado' style='color:#51cf66;"
+                               "font-size:20px'>&#9679;</span>")
+            else:
+                status_cell = ("<span title='OFFLINE: passou de dois ciclos sem "
+                               "reportar' style='color:#ff6b6b;font-size:20px'>"
+                               "&#9679;</span>")
             border_style = risk_border or ("border-left: 4px solid #51cf66;" if is_online else "border-left: 4px solid #ff6b6b;")
 
             rows += f"""
@@ -1833,16 +1896,18 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     {fqdn_html}{seen_html}
                 </td>
                 <td style='color:#ccc'>{ip}</td>
+                <td>{fqdn_col}</td>
                 {sev_cells}
                 <td style='color:#aaa'>{seen}</td>
                 <td>{proximo_html}</td>
-                <td><span style='{status_style}; font-weight:bold; font-size:11px; border:1px solid; padding:2px 6px; border-radius:3px'>{status_text}</span></td>
+                <td style='color:#aaa;font-size:12px'>{uptime_col}</td>
+                <td style='text-align:center'>{status_cell}</td>
                 <td style='white-space:nowrap'>
-                    <a href='/agent/{uuid}' class='btn-ico' title='Open the forensic report'>&#128269;</a>
+                    <a href='/agent/{uuid}' class='btn-ico' title='Abrir o laudo forense deste agente'>&#128269;</a>
                     <a href='/history/{uuid}' class='btn-ico' title='Capturas anteriores deste agente e comparacao entre duas: mostra o que mudou de uma para a outra'>&#128337;</a>
                     <a href='/cmd/collect/{uuid}' class='btn-ico' title='Solicitar captura agora. Entra na fila e o agente executa no proximo check-in (ate ~1 ciclo); a captura leva o tempo configurado (capture_duration)'>&#128248;</a>
-                    <a href='/cmd/chaos/{uuid}' class='btn-ico btn-lab' title='APENAS LAB: gera cenario de teste por 300s e captura em seguida. Entra na fila; o agente executa no proximo check-in'>&#9760;</a>
-                    <a href='/cmd/restart/{uuid}' class='btn-ico btn-warn' title='Restart the agent (queued)'>&#128260;</a>
+                    <a href='/cmd/chaos/{uuid}' class='btn-ico btn-lab' title='APENAS LAB: gera cenario de teste, ESPERA ficar pronto e captura em seguida. Entra na fila; o agente executa no proximo check-in'>&#9760;</a>
+                    <a href='/cmd/restart/{uuid}' class='btn-ico btn-warn' title='Reiniciar o agente (entra na fila)'>&#128260;</a>
                     {cmd_badge}
                     {cmd_state}
                 </td>
@@ -1875,7 +1940,20 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         </head><body>
         {cabecalho}
         <table>
-            <thead><tr><th>Hostname / UUID</th><th>IP Address</th><th>Crit</th><th>High</th><th>Med</th><th>Low</th><th>Last Seen</th><th>Next</th><th>Status</th><th>Action</th></tr></thead>
+            <thead><tr>
+                <th title="Nome curto e UUID estavel da origem da captura">Hostname / UUID</th>
+                <th title="Endereco pela rota de saida ate o servidor">IP</th>
+                <th title="Nome de dominio: o mesmo host aparece com nomes diferentes em sistemas diferentes">FQDN</th>
+                <th title="Achados criticos na ultima captura">Crit</th>
+                <th title="Achados de severidade alta">High</th>
+                <th title="Achados de severidade media">Med</th>
+                <th title="Achados de severidade baixa">Low</th>
+                <th title="Momento da ultima captura recebida, hora local e UTC">Last Seen</th>
+                <th title="AGENDADOR: proxima coleta esperada, a partir do ciclo do agente (capture_duration + interval). O agente coleta sozinho nessa cadencia; o icone de captura na acao pede uma coleta agora, fora do ciclo.">Next / cadencia</th>
+                <th title="Uptime do host (desde o boot) e do agente (desde que subiu)">Uptime</th>
+                <th title="Verde = reportou dentro do intervalo esperado; vermelho = passou de dois ciclos sem reportar">Status</th>
+                <th title="Abrir laudo, historico, pedir captura agora, cenario de teste (lab), reiniciar">Action</th>
+            </tr></thead>
             <tbody>{rows}</tbody>
         </table>
         </body></html>

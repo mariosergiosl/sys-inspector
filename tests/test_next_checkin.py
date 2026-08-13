@@ -71,5 +71,9 @@ def test_agent_without_cycle_does_not_break_the_view(codigo):
 
 
 def test_next_column_exists(codigo):
-    """A coluna esta declarada no cabecalho da tabela."""
-    assert "<th>Next</th>" in codigo
+    """
+    A coluna do proximo check-in esta no cabecalho. Passou a se chamar
+    "Next / cadencia" porque agora explica que ali vive o agendador (a cadencia
+    do ciclo do agente), nao so o instante do proximo contato.
+    """
+    assert "Next / cadencia" in codigo

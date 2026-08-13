@@ -145,7 +145,11 @@ class DatabaseManager:
                 # 3. Indexes
                 # FQDN do agente, em claro como os demais metadados de
                 # inventario. ALTER guardado: bancos antigos ganham a coluna.
-                for coluna, tipo in (("fqdn", "TEXT"), ("cycle_seconds", "INTEGER")):
+                for coluna, tipo in (("fqdn", "TEXT"), ("cycle_seconds", "INTEGER"),
+                                     ("host_uptime", "INTEGER"),
+                                     ("agent_uptime", "INTEGER"),
+                                     ("clock_offset", "REAL"),
+                                     ("clock_measured", "INTEGER")):
                     try:
                         conn.execute("ALTER TABLE agents ADD COLUMN %s %s"
                                      % (coluna, tipo))
@@ -268,7 +272,9 @@ class DatabaseManager:
             self.logger.error(f"Mark Synced Failed: {e}")
 
     def update_agent_status(self, uuid, status, hostname=None, ip=None,
-                            os_info=None, fqdn=None, cycle_seconds=None):
+                            os_info=None, fqdn=None, cycle_seconds=None,
+                            host_uptime=None, agent_uptime=None,
+                            clock_offset=None, clock_measured=None):
         try:
             with closing(self._get_conn()) as conn:
                 sql = "UPDATE agents SET status=?, last_seen=CURRENT_TIMESTAMP"
@@ -289,6 +295,21 @@ class DatabaseManager:
                 if cycle_seconds:
                     sql += ", cycle_seconds=?"
                     params.append(int(cycle_seconds))
+                # Uptime e desvio de relogio: aceitam ZERO como valor legitimo
+                # (host recem-ligado; relogio medido e em sincronia), por isso o
+                # teste e 'is not None', nao truthy.
+                if host_uptime is not None:
+                    sql += ", host_uptime=?"
+                    params.append(int(host_uptime))
+                if agent_uptime is not None:
+                    sql += ", agent_uptime=?"
+                    params.append(int(agent_uptime))
+                if clock_offset is not None:
+                    sql += ", clock_offset=?"
+                    params.append(float(clock_offset))
+                if clock_measured is not None:
+                    sql += ", clock_measured=?"
+                    params.append(1 if clock_measured else 0)
 
                 sql += " WHERE uuid=?"
                 params.append(uuid)
@@ -511,6 +532,8 @@ class DatabaseManager:
                 cursor = conn.execute("""
                     SELECT a.uuid, a.hostname, a.ip_address, a.os_info,
                            a.fqdn, a.cycle_seconds, a.status, a.last_seen,
+                           a.host_uptime, a.agent_uptime,
+                           a.clock_offset, a.clock_measured,
                            s.timestamp AS last_capture,
                            s.alert_score, s.is_alert, s.cpu_avg,
                            s.mem_used_mb, s.pids_count, s.findings_summary

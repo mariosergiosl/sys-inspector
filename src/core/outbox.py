@@ -78,6 +78,11 @@ class Outbox(object):
         self._next_attempt = 0.0
         # Ordens trazidas pelo ultimo check-in.
         self.pending_commands = []
+        # Instante em que este agente subiu, para reportar ha quanto ele coleta.
+        # Distinto do uptime do HOST: um agente reiniciado num host antigo, ou um
+        # host recem-ligado com o agente de sempre, sao situacoes diferentes na
+        # triagem, e so os dois numeros juntos as separam.
+        self._agent_started = time.time()
 
     # --------------------------------------------------------------------------
     # ESTADO
@@ -205,9 +210,21 @@ class Outbox(object):
         except Exception:
             pass
 
+        # Uptime do HOST (segundos desde o boot) e do AGENTE (desde que subiu).
+        # Os dois separam casos que a triagem confunde: host recem-ligado com o
+        # agente de sempre versus agente reiniciado num host antigo.
+        host_uptime = None
+        try:
+            with open("/proc/uptime", "r") as handle:
+                host_uptime = int(float(handle.readline().split()[0]))
+        except Exception:
+            host_uptime = None
+        agent_uptime = int(time.time() - self._agent_started)
+
         return {"hostname": hostname, "ip_address": address,
                 "os_info": os_info, "fqdn": fqdn, "cycle_seconds": ciclo,
                 "capabilities": capacidades,
+                "host_uptime": host_uptime, "agent_uptime": agent_uptime,
                 "clock_offset": clock.get("offset", 0.0),
                 "clock_measured": clock.get("measured", False),
                 "clock_source": clock.get("source", "unavailable")}
