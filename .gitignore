@@ -50,3 +50,7 @@ report/*.html
 ROADMAP-internal.md
 *-internal.md
 docs/internal/
+# Build artifacts (should not be tracked)
+dist/
+build/
+*.egg-info/
