@@ -555,6 +555,13 @@ class DatabaseManager:
         colunas em claro. Assim o analista consegue ordenar dezenas ou centenas
         de hosts por gravidade ("qual esta pior?") sem descriptografar nada, que
         seria caro e exporia conteudo desnecessariamente.
+
+        A ordem e ESTAVEL, por nome do host. Antes era por last_seen, que muda a
+        cada check-in: as linhas trocavam de lugar sozinhas entre atualizacoes da
+        tela e o operador perdia a referencia visual do host que estava olhando,
+        exatamente quando a tela se atualiza mais rapido, que e durante um
+        incidente. Painel vivo nao pode significar painel que se reorganiza; o
+        uuid entra como desempate para a ordem nunca depender do acaso.
         """
         try:
             with closing(self._get_conn()) as conn:
@@ -572,7 +579,7 @@ class DatabaseManager:
                         WHERE agent_uuid = a.uuid
                         ORDER BY id DESC LIMIT 1
                     )
-                    ORDER BY a.last_seen DESC
+                    ORDER BY a.hostname COLLATE NOCASE, a.uuid
                 """)
                 fleet = []
                 for row in cursor:
