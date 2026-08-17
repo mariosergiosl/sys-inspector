@@ -65,6 +65,17 @@ def test_custody_stamps_version_from_source():
     assert sig.parameters["collector_version"].default is None
 
 
+def test_obs_service_pins_the_current_release_tag():
+    """
+    O _service versionado no repo fixa a tag da versao ATUAL (vX.Y.Z), nao uma
+    antiga. Era a fonte de drift silencioso: ficou preso em v0.91.0 por releases
+    seguidos porque nada o cobria, enquanto o produto ja era outro.
+    """
+    s = _src("_service")
+    assert ('<param name="revision">v%s</param>' % __version__) in s, \
+        "_service nao aponta para a tag v%s" % __version__
+
+
 def test_shell_scripts_share_the_product_version():
     """Os scripts do lote de cenario/instalacao espelham a versao do produto."""
     for path in ("tools/chaos_maker.sh", "tools/agent_chaos.sh",
