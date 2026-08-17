@@ -31,7 +31,7 @@ from src.collectors.process_tree import ProcessNode  # Needed for rehydration
 
 # v0.70 Security Modules
 from src.core.crypto import (load_public_key, load_private_key, encrypt_data,
-                             decrypt_data, ensure_agent_identity, sign_bytes)
+                             decrypt_data)
 from src.core.custody import build_for_capture
 
 

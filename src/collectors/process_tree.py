@@ -16,7 +16,6 @@
 import os
 import pwd
 import grp
-import stat
 import hashlib
 import glob
 import re

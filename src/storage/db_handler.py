@@ -269,7 +269,7 @@ class DatabaseHandler(StorageProvider):
 
             current_size = os.path.getsize(self.db_path)
             if current_size > self.size_limit:
-                logging.info(f"[DB] Size limit reached ({current_size/1024/1024:.2f}MB). Pruning...")
+                logging.info(f"[DB] Size limit reached ({current_size / 1024 / 1024:.2f}MB). Pruning...")
 
                 # Pruning Strategy: Delete oldest 10% or fixed amount
                 # We simply delete the oldest 50 records to be safe and fast

@@ -49,8 +49,7 @@ MODE_SECURITY = "security"
 # do que o de apagar cedo.
 DEFAULT_MAX_AGE_DAYS = 90        # idade maxima do payload
 DEFAULT_MAX_TOTAL_MB = 10240     # teto de disco para as capturas (10 GB)
-DEFAULT_MAX_PER_AGENT = 500      # teto por agente, para um host falante nao
-                                 # empurrar os outros para fora
+DEFAULT_MAX_PER_AGENT = 500      # teto por agente, para um host falante nao empurrar os outros para fora
 DEFAULT_VACUUM_EVERY = 500       # a cada N remocoes, devolve espaco ao sistema
 
 

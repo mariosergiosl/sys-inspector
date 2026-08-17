@@ -29,7 +29,7 @@
 
 import logging
 
-from src.core.findings import (Finding, SEV_CRITICAL, SEV_HIGH, SEV_MEDIUM,
+from src.core.findings import (Finding, SEV_CRITICAL, SEV_HIGH,
                                SRC_HEURISTIC)
 from src.core.events import (EV_PROCESS_START, EV_CONNECTION, EV_PERSISTENCE,
                              EV_FINDING, corrected_ts)

@@ -177,7 +177,10 @@ def build_for_capture(db, config, payload, collector_version=None):
     try:
         ensure_agent_identity(agent_priv, agent_pub)
         agent_key = load_private_key(agent_priv)
-        signer = lambda data: sign_bytes(data, agent_key)
+
+        def _sign(data):
+            return sign_bytes(data, agent_key)
+        signer = _sign
     except Exception as exc:
         LOG.error("Agent identity unavailable, capture will be unsigned: %s", exc)
 

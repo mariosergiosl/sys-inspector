@@ -34,7 +34,7 @@ from src.core.crypto import load_private_key, decrypt_data
 from src.core.ingest import IngestQueue, process_batch
 from src.core.retention import RetentionPolicy
 from src.core.notify import Notifier
-from src.core.capabilities import summarize, missing_for_scenarios
+from src.core.capabilities import missing_for_scenarios
 from src.core.events import EventStore, events_from_capture
 from src.core import risk
 from src.core.attack import describe, technique_url
@@ -43,10 +43,9 @@ from src.core.correlation import correlate
 from src.core.commands import CommandQueue, ALLOWED, STUCK_LIMIT
 from src.core.tls import ensure_self_signed_cert
 from src.core.outbox import PATH_SLOT, PATH_INGEST, PATH_COMMAND_RESULT
-from src.core.snapshot_diff import (diff_snapshots, has_changes, classify,
+from src.core.snapshot_diff import (diff_snapshots, classify,
                                     summarize_risk, build_timeline)
 from src.exporters.html_report import _esc
-
 
 
 def _fmt_ts(valor):

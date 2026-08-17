@@ -319,7 +319,6 @@ class DaemonController:
         so comeca quando o cenario esta de pe.
         """
         import os
-        import time
         import subprocess
 
         duracao = str(int(params.get("duration", 300) or 300))
