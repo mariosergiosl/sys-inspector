@@ -91,18 +91,36 @@ def package_owner(path):
         return _owner_cache[real]
 
     owner = None
+    # Pergunta primeiro ao rpm, depois ao dpkg. Nao basta o binario existir para
+    # o sistema ser daquele gerenciador: o runner Ubuntu traz o rpm com um banco
+    # vazio, e consultar so ele responderia "sem dono" para um arquivo que na
+    # verdade pertence a um pacote dpkg. Tentar os dois e ficar com a primeira
+    # resposta positiva mantem a proveniencia correta nas duas bases.
     if shutil.which("rpm"):
         rc, out = _run(["rpm", "-qf", "--queryformat",
                         "%{NAME}-%{VERSION}-%{RELEASE}", real])
         if rc == 0 and out and "not owned" not in out:
             owner = out.strip()
-    elif shutil.which("dpkg"):
+    if owner is None and shutil.which("dpkg"):
         rc, out = _run(["dpkg", "-S", real])
         if rc == 0 and ":" in out:
             owner = out.split(":", 1)[0].strip()
 
     _owner_cache[real] = owner
     return owner
+
+
+def _rpm_owns(path):
+    """
+    Verdadeiro somente se o rpm reconhece o arquivo como pertencente a um
+    pacote. So o rpm sabe verificar o conteudo instalado (rpm -V); num host
+    dpkg, ou num host onde o binario rpm existe mas nao gerencia o sistema,
+    esta verificacao nao se aplica.
+    """
+    if not shutil.which("rpm"):
+        return False
+    rc, out = _run(["rpm", "-qf", path])
+    return rc == 0 and "not owned" not in out
 
 
 def verify_file(path):
@@ -128,7 +146,11 @@ def verify_file(path):
         return _verify_cache[real]
 
     result = None
-    if shutil.which("rpm") and package_owner(real):
+    # So verifica quando o proprio rpm e dono do arquivo. Rodar rpm -Vf num
+    # arquivo dpkg produz saida vazia, que seria lida como "integro" e mascararia
+    # uma adulteracao num host Debian/Ubuntu. Sem dono no rpm, o resultado fica
+    # None (desconhecido), que e a resposta honesta.
+    if _rpm_owns(real):
         rc, out = _run(["rpm", "-Vf", real])
         if rc == 0 and not out.strip():
             result = []  # integro

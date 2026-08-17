@@ -14,7 +14,6 @@
 # ==============================================================================
 
 import os
-import shutil
 import tempfile
 
 import pytest
@@ -61,7 +60,8 @@ def test_temp_file_is_not_packaged():
         os.unlink(path)
 
 
-@pytest.mark.skipif(not shutil.which("rpm"), reason="requer rpm")
+@pytest.mark.skipif(not integrity.has_package_manager(),
+                    reason="requer um gerenciador de pacotes (rpm ou dpkg)")
 def test_system_binary_is_owned_by_a_package():
     """Um binario de sistema tem dono identificavel."""
     for candidate in ("/bin/sh", "/usr/bin/env", "/bin/cat"):
@@ -71,7 +71,8 @@ def test_system_binary_is_owned_by_a_package():
     pytest.skip("nenhum binario de sistema encontrado")
 
 
-@pytest.mark.skipif(not shutil.which("rpm"), reason="requer rpm")
+@pytest.mark.skipif(not integrity.has_package_manager(),
+                    reason="requer um gerenciador de pacotes (rpm ou dpkg)")
 def test_symlink_resolves_to_the_real_owner():
     """
     O dono e consultado no ALVO do symlink. Sem isso, toda unit habilitada em
@@ -114,7 +115,8 @@ def test_unpackaged_artifact_keeps_its_severity():
         os.unlink(path)
 
 
-@pytest.mark.skipif(not shutil.which("rpm"), reason="requer rpm")
+@pytest.mark.skipif(not integrity.has_package_manager(),
+                    reason="requer um gerenciador de pacotes (rpm ou dpkg)")
 def test_packaged_intact_artifact_is_downgraded():
     """
     Arquivo que pertence a um pacote e confere com ele e software esperado:
