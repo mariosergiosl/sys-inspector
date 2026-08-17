@@ -376,6 +376,10 @@ class Outbox(object):
                     "metrics": item.get("metrics") or {},
                     "custody": item.get("custody") or {},
                     "findings_summary": item.get("findings_summary") or {},
+                    # Em claro, ao lado do payload cifrado: o servidor precisa
+                    # saber que TIPO de captura recebeu para aplicar a limpeza
+                    # certa, e nao pode abrir o conteudo para descobrir.
+                    "capture_type": item.get("capture_type") or "full",
                 })
             except Exception as exc:
                 LOG.debug("[OUTBOX] Delivery of snapshot %s failed: %s",

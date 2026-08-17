@@ -28,6 +28,11 @@ import logging
 import sqlite3
 from contextlib import closing
 
+# Constante compartilhada em vez de literal: o tipo de captura e lido em quatro
+# pontos (agente, transporte, ingestao, limpeza) e um literal solto em qualquer
+# um deles reintroduz a divergencia que a coluna existe para evitar.
+from src.core.database import CAPTURE_FULL
+
 LOG = logging.getLogger("Ingest")
 
 # Estados de uma entrada na fila.
@@ -304,6 +309,10 @@ def process_batch(queue, db, limit=None, on_stored=None):
                 metrics=payload.get("metrics") or {},
                 custody=payload.get("custody") or {},
                 findings_summary=payload.get("findings_summary") or {},
+                # O tipo vem do agente. Um agente antigo nao envia o campo, e
+                # nesse caso o padrao do insert vale: captura completa, que e a
+                # suposicao conservadora (guarda a mais, nunca apaga a menos).
+                capture_type=payload.get("capture_type") or CAPTURE_FULL,
             )
             # Registra quem e o host, para a frota nao listar tudo como
             # "unknown": esses campos viajam em claro justamente para isso.

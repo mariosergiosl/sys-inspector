@@ -467,7 +467,7 @@ class DatabaseManager:
                 # a captura de forma idempotente no reenvio.
                 cursor = conn.execute("""
                     SELECT id, json_blob, cpu_avg, mem_used_mb, pids_count,
-                           alert_score, custody, findings_summary
+                           alert_score, custody, findings_summary, capture_type
                     FROM snapshots
                     WHERE synced=0
                     ORDER BY id ASC LIMIT ?
@@ -487,6 +487,14 @@ class DatabaseManager:
                                     'score': r['alert_score']},
                         'custody': _load(r['custody']),
                         'findings_summary': _load(r['findings_summary']),
+                        # Viaja com a captura: quem decide o que a limpeza pode
+                        # descartar e o SERVIDOR, que guarda a frota inteira. Se
+                        # o tipo nao subir, o servidor assume o padrao e um
+                        # heartbeat barato entra no acervo como se fosse captura
+                        # completa, que e a mesma classe de defeito que este
+                        # projeto ja paga caro: duas pontas com o mesmo fato,
+                        # divergindo sem avisar.
+                        'capture_type': r['capture_type'] or CAPTURE_FULL,
                     })
                 return pending
         except Exception as e:
