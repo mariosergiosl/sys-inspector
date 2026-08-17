@@ -26,6 +26,16 @@ from contextlib import closing
 DEFAULT_DB_PATH = "/var/lib/sys-inspector/sys_inspector.db"
 DEFAULT_RETENTION_COUNT = 100
 
+# Tipos de captura. Guardar o tipo e o que permite a limpeza distinguir o barato
+# do probatorio: um heartbeat de agente ocioso pode ser descartado cedo, uma
+# captura completa e evidencia e nao deve sumir por politica automatica. Sem o
+# tipo gravado, qualquer retencao trata os dois igual, e o operador escolhe entre
+# guardar heartbeat demais ou apagar evidencia junto.
+CAPTURE_IDLE = "idle"      # heartbeat do estado ocioso, custo e tamanho fixos
+CAPTURE_FULL = "full"      # captura completa: eBPF, inventario, achados
+CAPTURE_CHAOS = "chaos"    # captura logo apos plantar o cenario de teste
+CAPTURE_TYPES = (CAPTURE_IDLE, CAPTURE_FULL, CAPTURE_CHAOS)
+
 
 class DatabaseManager:
     def __init__(self, db_path=None, max_snapshots=DEFAULT_RETENTION_COUNT):
@@ -135,7 +145,16 @@ class DatabaseManager:
                                       # ("qual host esta pior?") sem
                                       # descriptografar captura por captura.
                                       # Guarda numeros, nunca o conteudo.
-                                      ("findings_summary", "TEXT")):
+                                      ("findings_summary", "TEXT"),
+                                      # Que TIPO de captura e esta. Sem isso o
+                                      # banco nao distingue um heartbeat barato
+                                      # de uma captura eBPF completa, e qualquer
+                                      # limpeza trata os dois igual: ou guarda
+                                      # heartbeat demais, ou apaga evidencia
+                                      # junto. E o que torna a retencao granular
+                                      # possivel, e o que deixa a linha do tempo
+                                      # dizer o que cada ponto custou.
+                                      ("capture_type", "TEXT")):
                     try:
                         conn.execute("ALTER TABLE snapshots ADD COLUMN %s %s"
                                      % (column, ctype))
@@ -200,7 +219,8 @@ class DatabaseManager:
             return []
 
     def insert_snapshot(self, encrypted_bundle, agent_uuid="local", metrics=None,
-                        custody=None, findings_summary=None):
+                        custody=None, findings_summary=None,
+                        capture_type=CAPTURE_FULL):
         if metrics is None: metrics = {}
 
         # Prepare JSON before lock
@@ -223,8 +243,8 @@ class DatabaseManager:
                         agent_uuid, timestamp,
                         cpu_avg, mem_used_mb, pids_count, alert_score, is_alert,
                         json_blob, synced, digest, previous_digest, custody,
-                        findings_summary
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+                        findings_summary, capture_type
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
                 """, (
                     agent_uuid,
                     time.time(),
@@ -237,7 +257,8 @@ class DatabaseManager:
                     (custody or {}).get('digest'),
                     (custody or {}).get('previous_digest'),
                     json.dumps(custody) if custody else None,
-                    json.dumps(findings_summary) if findings_summary else None
+                    json.dumps(findings_summary) if findings_summary else None,
+                    capture_type or CAPTURE_FULL
                 ))
                 # Guarda o id da linha recem-inserida para retorno ao chamador
                 # (antes retornava True, o que fazia o log exibir "ID: True").

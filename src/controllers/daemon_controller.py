@@ -27,7 +27,7 @@ from src.collectors.system_inventory import collect_full_inventory
 from src.collectors.manager import (summarize_metrics, collect_findings,
                                     correlate_findings_with_processes)
 from src.core.findings import summarize_by_severity
-# from src.core.database import DatabaseManager
+from src.core.database import CAPTURE_FULL, CAPTURE_CHAOS
 from src.core.crypto import load_public_key, encrypt_data
 from src.core.outbox import Outbox
 from src.core.custody import build_for_capture
@@ -415,6 +415,15 @@ class DaemonController:
         full_data['mode'] = 'daemon'
         full_data['agent_uuid'] = self.agent_uuid
         full_data['cycle'] = cycle_id
+        # O TIPO da captura vem do motivo que a disparou, que o chamador ja
+        # informa em cycle_id. Fica DENTRO do payload (para o laudo poder dize-lo)
+        # e tambem em coluna propria, em claro, porque a limpeza precisa
+        # distinguir o descartavel do probatorio sem abrir a captura.
+        # Uma captura feita logo apos plantar o cenario nasce marcada como tal:
+        # ela mede a ferramenta, nao o host em uso, e misturar as duas na mesma
+        # serie historica distorce a comparacao entre capturas.
+        tipo = CAPTURE_CHAOS if cycle_id == "chaos" else CAPTURE_FULL
+        full_data['capture_type'] = tipo
 
         # Achados estaticos (persistencia), mesmo conjunto dos demais modos.
         findings = collect_findings(full_data['processes'])
@@ -439,12 +448,19 @@ class DaemonController:
         # em campo precisa ser tao defensavel quanto uma feita a mao.
         custody = build_for_capture(self.db, self.config, full_data)
 
+        # O TIPO da captura vem do motivo que a disparou, que o chamador ja
+        # informa em cycle_id. Gravar isso e o que separa, mais tarde, o que a
+        # limpeza automatica pode descartar do que e evidencia. Uma captura feita
+        # logo apos plantar o cenario nasce marcada como tal: ela mede a
+        # ferramenta, nao o host em uso, e misturar as duas na mesma serie
+        # historica distorce qualquer comparacao entre capturas.
         success = self.db.insert_snapshot(
             encrypted_bundle,
             agent_uuid=self.agent_uuid,
             metrics=metrics,
             custody=custody,
-            findings_summary=full_data.get('findings_summary')
+            findings_summary=full_data.get('findings_summary'),
+            capture_type=tipo
         )
 
         if success:
