@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           sys-inspector
-Version:        1.0.0
+Version:        1.0.1
 Release:        1%{?dist}
 Summary:        System inspector and forensic tool using eBPF (Multi-Agent/Web)
 
@@ -203,6 +203,9 @@ ln -sf %{_sbindir}/service %{buildroot}%{_sbindir}/rc%{name}
 %dir %attr(0750,root,root) /var/log/sys-inspector/reports
 
 %changelog
+* Mon Aug 17 2026 Mario Luz <mario.mssl@gmail.com> - 1.0.1-1
+- Fixed: file-ownership provenance now falls back to dpkg (resilient to usrmerge and alternatives) when rpm is present but does not own the file, so it works on Debian/Ubuntu hosts; content verification runs only under a real rpm owner.
+- Changed: restored a green CI by clearing the flake8/pylint backlog and ignoring style-only checks with a documented rationale.
 * Thu Aug 13 2026 Mario Luz <mario.mssl@gmail.com> - 1.0.0-1
 - Added: answer contract per finding (D-022) with a confidence level (confirmed/probable/heuristic) and a custody level (metadata/hash/full), so the report never presents a heuristic as a fact and states what was preserved.
 - Added: Manager command progress as a stepper (enqueued -> on the agent -> done/failed) with a live timer, replacing the flat status text.

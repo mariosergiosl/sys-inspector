@@ -24,7 +24,7 @@
 # PARAMETERS: None
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: 1.0.0
+# VERSION: 1.0.1
 # ======================================================================================
 
 # --------------------------------------------------------------------------------------
@@ -213,7 +213,7 @@ echo -e "${CYAN}
  | |____| |  | | | | | |__| |___) |
   \_____|_|  |_|_| |_|\____/|____/ 
    Sys-Inspector Chaos Generator
-              v1.0.0
+              v1.0.1
 ${NC}"
 
 log_msg "INFO" "Preparing Environment in ${TEMP_DIR}..."

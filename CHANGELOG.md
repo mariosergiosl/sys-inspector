@@ -5,6 +5,18 @@ All notable changes to the **Sys-Inspector** project will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-08-17
+
+Patch release: forensic file-ownership now works on dpkg-based systems, plus repository and CI housekeeping.
+
+### Fixed
+
+- **File provenance on Debian/Ubuntu.** Package-owner resolution fell back to `dpkg` only when `rpm` was absent, but a host can carry the `rpm` binary with an empty database. Ownership now queries `rpm` first and falls back to `dpkg`, resilient to usrmerge and alternatives symlinks, so `/bin/sh` and friends resolve correctly. Content verification (`rpm -V`) runs only when `rpm` truly owns the file, instead of reading empty output as "intact" and masking tampering on a dpkg host.
+
+### Changed
+
+- **Continuous Integration is green again.** The Code Quality workflow had been failing on a package-ownership test since early August; with it fixed, the accumulated flake8/pylint backlog was cleared (dead imports, a lambda assignment, a wrapped comment) and style-only checks (E121, E226, W504, C0209) are ignored with a documented rationale.
+
 ## [1.0.0] - 2026-08-13
 
 First stable release. The tool now runs as a distributed agent/server fleet with a normalized evidence model, a forensic report that reads as an investigation, and a single source of version truth.
