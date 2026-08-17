@@ -63,12 +63,21 @@ def test_temp_file_is_not_packaged():
 @pytest.mark.skipif(not integrity.has_package_manager(),
                     reason="requer um gerenciador de pacotes (rpm ou dpkg)")
 def test_system_binary_is_owned_by_a_package():
-    """Um binario de sistema tem dono identificavel."""
-    for candidate in ("/bin/sh", "/usr/bin/env", "/bin/cat"):
-        if os.path.exists(candidate):
-            assert integrity.package_owner(candidate)
-            return
-    pytest.skip("nenhum binario de sistema encontrado")
+    """
+    Ao menos um binario de sistema tem dono identificavel.
+
+    Testa varios candidatos em vez de parar no primeiro que existe: /bin/sh e
+    um symlink de alternativa que, sob usrmerge, o dpkg nem sempre resolve, e
+    travar so nele daria falso negativo num host onde outros binarios tem dono.
+    """
+    candidatos = [c for c in ("/usr/bin/env", "/bin/cat", "/bin/sh",
+                              "/usr/bin/python3", "/bin/ls")
+                  if os.path.exists(c)]
+    if not candidatos:
+        pytest.skip("nenhum binario de sistema encontrado")
+
+    donos = {c: integrity.package_owner(c) for c in candidatos}
+    assert any(donos.values()), "nenhum binario de sistema tem dono: %r" % donos
 
 
 @pytest.mark.skipif(not integrity.has_package_manager(),

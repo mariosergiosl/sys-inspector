@@ -102,9 +102,7 @@ def package_owner(path):
         if rc == 0 and out and "not owned" not in out:
             owner = out.strip()
     if owner is None and shutil.which("dpkg"):
-        rc, out = _run(["dpkg", "-S", real])
-        if rc == 0 and ":" in out:
-            owner = out.split(":", 1)[0].strip()
+        owner = _dpkg_owner(path)
 
     _owner_cache[real] = owner
     return owner
@@ -121,6 +119,60 @@ def _rpm_owns(path):
         return False
     rc, out = _run(["rpm", "-qf", path])
     return rc == 0 and "not owned" not in out
+
+
+def _usrmerge_variant(path):
+    """
+    Alterna um caminho entre /bin e /usr/bin (e afins) para contornar o
+    usrmerge. Nesses sistemas /bin e um link para /usr/bin, mas o banco do dpkg
+    registra o caminho na forma que o pacote instalou, entao a consulta precisa
+    tentar as duas grafias.
+    """
+    if path.startswith("/usr/"):
+        return path[4:]
+    if path.startswith(("/bin/", "/sbin/", "/lib/", "/lib64/")):
+        return "/usr" + path
+    return None
+
+
+def _parse_dpkg_search(out):
+    """Nome do pacote na saida de 'dpkg -S', ignorando linhas de diversion."""
+    for line in out.splitlines():
+        if not line or "diversion" in line or ":" not in line:
+            continue
+        return line.split(":", 1)[0].split(",")[0].strip()
+    return None
+
+
+def _dpkg_owner(path):
+    """
+    Dono via dpkg, resiliente a usrmerge e a symlinks de alternativa.
+
+    O caminho consultado pode diferir do que o dpkg registrou: com usrmerge
+    /bin e link para /usr/bin, e /bin/sh e um symlink de alternativa que
+    resolve para o dash. Tenta o caminho original, o resolvido e as variantes
+    com e sem /usr, ficando com a primeira resposta valida.
+    """
+    try:
+        real = os.path.realpath(path)
+    except Exception:
+        real = path
+
+    candidates = []
+    for base in (path, real):
+        if not base:
+            continue
+        for cand in (base, _usrmerge_variant(base)):
+            if cand and cand not in candidates:
+                candidates.append(cand)
+
+    for cand in candidates:
+        rc, out = _run(["dpkg", "-S", cand])
+        if rc == 0:
+            pkg = _parse_dpkg_search(out)
+            if pkg:
+                return pkg
+    return None
 
 
 def verify_file(path):
