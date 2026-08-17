@@ -44,6 +44,11 @@ ST_PENDING = "PENDING"
 ST_SENT = "SENT"
 ST_DONE = "DONE"
 ST_FAILED = "FAILED"
+# Cancelado pelo operador antes de sair para o agente. E um desfecho proprio, e
+# nao um apagamento: a linha fica, com quem cancelou e quando. Remover a linha
+# esconderia que o pedido chegou a existir, e o valor desta fila e justamente o
+# rastro de quem pediu o que.
+ST_CANCELLED = "CANCELLED"
 
 # Um comando esquecido na fila nao pode ser executado dias depois, quando o
 # contexto que o motivou nao existe mais.
@@ -181,6 +186,55 @@ class CommandQueue(object):
                  time.time(), requested_by or ""))
             conn.commit()
             return cur.lastrowid
+
+    def cancel(self, command_id, requested_by=""):
+        """
+        Cancela um pedido que ainda AGUARDA. Devolve True se cancelou.
+
+        Nunca toca em um pedido ja entregue: quando o agente esta com a ordem na
+        mao, o servidor nao tem como desfaze-la, e fingir que cancelou deixaria a
+        tela mentindo sobre o que vai acontecer no host. Um SENT perdido e
+        encerrado pelo expire_stuck, que e quem sabe distinguir demora de morte.
+
+        Idempotente: cancelar de novo devolve False sem efeito, entao um clique
+        repetido ou um recarregamento de pagina nao produzem dano.
+        """
+        quem = requested_by or "operador"
+        try:
+            with closing(self._conn()) as conn:
+                cur = conn.execute(
+                    "UPDATE agent_commands SET status = ?, finished_at = ?, "
+                    "result = ? WHERE id = ? AND status = ?",
+                    (ST_CANCELLED, time.time(),
+                     "cancelado por %s antes da entrega" % quem,
+                     command_id, ST_PENDING))
+                conn.commit()
+                return cur.rowcount > 0
+        except Exception as exc:
+            LOG.error("Cancelling command %s failed: %s", command_id, exc)
+            return False
+
+    def clear_pending(self, agent_uuid, requested_by=""):
+        """
+        Cancela tudo que AGUARDA neste agente e devolve quantos foram.
+
+        E o botao de recuperacao: quando a fila entope, o operador precisa
+        conseguir esvaziar pela propria tela, sem mexer no banco por fora, que
+        era a unica saida durante o incidente.
+        """
+        quem = requested_by or "operador"
+        try:
+            with closing(self._conn()) as conn:
+                cur = conn.execute(
+                    "UPDATE agent_commands SET status = ?, finished_at = ?, "
+                    "result = ? WHERE agent_uuid = ? AND status = ?",
+                    (ST_CANCELLED, time.time(),
+                     "fila limpa por %s" % quem, agent_uuid, ST_PENDING))
+                conn.commit()
+                return cur.rowcount
+        except Exception as exc:
+            LOG.error("Clearing queue of %s failed: %s", agent_uuid, exc)
+            return 0
 
     def list_for(self, agent_uuid=None, limit=50):
         """Historico de comandos, para o painel mostrar o que foi pedido."""
