@@ -393,33 +393,23 @@ def _selo_comando(ultimo):
     }.get(comando, "no agente")
 
     # Qual das tres paradas esta ativa. 0 enfileirado, 1 no agente, 2 desfecho.
+    # Cada estado diz qual parada esta ativa e como se chama o desfecho.
+    # Cancelado e desfecho PROPRIO: nao e falha (nada deu errado) nem conclusao
+    # (nada rodou). Tratado como "concluido" verde, mentia sobre o que aconteceu.
     if status == "PENDING":
-        ativo, falhou = 0, False
+        ativo, desfecho = 0, ("concluido", "#6bcB77")
     elif status == "SENT":
-        ativo, falhou = 1, False
+        ativo, desfecho = 1, ("concluido", "#6bcB77")
     elif status == "FAILED":
-        ativo, falhou = 2, True
+        ativo, desfecho = 2, ("falhou", "#ff4d4d")
+    elif status == "CANCELLED":
+        ativo, desfecho = 2, ("cancelado", "#9aa0a6")
     else:  # DONE (ou desconhecido) tratado como desfecho concluido
-        ativo, falhou = 2, False
+        ativo, desfecho = 2, ("concluido", "#6bcB77")
 
-    desfecho = ("falhou", "#ff4d4d") if falhou else ("concluido", "#6bcB77")
     paradas = [("enfileirado", "#7fb3d5"), (em_curso, "#ffd166"), desfecho]
 
-    # Trilha: paradas passadas em verde apagado com check, a atual em cor cheia
-    # com ponto, as futuras em cinza. E a proposta de "cor/icone por estado".
-    pecas = []
-    for i, (rotulo, cor) in enumerate(paradas):
-        if i < ativo:
-            pecas.append("<span style='color:#4a7a4a'>&#10003; %s</span>" % rotulo)
-        elif i == ativo:
-            marca = "&#9679; " if i != 2 else ""
-            pecas.append("<span style='color:%s; font-weight:bold'>%s%s</span>"
-                         % (cor, marca, rotulo))
-        else:
-            pecas.append("<span style='color:#555'>%s</span>" % rotulo)
-    trilha = " <span style='color:#444'>&rarr;</span> ".join(pecas)
-
-    # Carimbo de tempo da etapa atual e "ha quanto tempo" (cronometro vivo). O
+    # Carimbo de tempo da etapa ATIVA e "ha quanto tempo" (cronometro vivo). O
     # data-since deixa o JS atualizar a cada segundo entre os refreshes da pagina.
     carimbos = {0: ultimo.get("created_at"), 1: ultimo.get("delivered_at"),
                 2: ultimo.get("finished_at")}
@@ -438,6 +428,25 @@ def _selo_comando(ultimo):
         except Exception:
             tempo_html = ""
 
+    # Trilha: paradas passadas em verde apagado com check, a atual em cor cheia
+    # com ponto, as futuras em cinza. E a proposta de "cor/icone por estado".
+    #
+    # O tempo acompanha a etapa ATIVA, dentro da trilha. Solto no fim, logo
+    # depois da ultima parada, "ha 3m" era lido como "concluido ha 3m" enquanto
+    # o comando ainda estava rodando no agente, e nao se sabia se o cenario tinha
+    # terminado ou nao. O tempo pertence a etapa que esta acontecendo.
+    pecas = []
+    for i, (rotulo, cor) in enumerate(paradas):
+        if i < ativo:
+            pecas.append("<span style='color:#4a7a4a'>&#10003; %s</span>" % rotulo)
+        elif i == ativo:
+            marca = "&#9679; " if i != 2 else ""
+            pecas.append("<span style='color:%s; font-weight:bold'>%s%s</span>%s"
+                         % (cor, marca, rotulo, tempo_html))
+        else:
+            pecas.append("<span style='color:#555'>%s</span>" % rotulo)
+    trilha = " <span style='color:#444'>&rarr;</span> ".join(pecas)
+
     # Resultado completo no tooltip ("ver detalhes"), resumo visivel na linha.
     titulo = (" title='%s'" % _esc(resultado)) if resultado else ""
     linha_result = ""
@@ -445,8 +454,8 @@ def _selo_comando(ultimo):
         linha_result = ("<div style='color:#666; font-size:10px'>%s</div>"
                         % _esc(resultado[:70]))
 
-    return ("<div class='cmd-step'%s><span style='color:#888'>%s</span> %s%s%s</div>"
-            % (titulo, _esc(comando), trilha, tempo_html, linha_result))
+    return ("<div class='cmd-step'%s><span style='color:#888'>%s</span> %s%s</div>"
+            % (titulo, _esc(comando), trilha, linha_result))
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -496,8 +505,44 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # --- DASHBOARD ---
             self._serve_dashboard(controller.db, controller.commands)
 
-        elif self.path == '/log':
+        elif self.path.startswith('/log'):
+            # startswith, e nao igualdade, porque a tela aceita ?agent=<uuid>
+            # vindo do badge da fila de comandos na Manager.
             self._serve_command_log(controller)
+
+        elif self.path.startswith('/cmdcancel/'):
+            # /cmdcancel/<id>[?agent=<uuid>]: cancela UM pedido que aguarda.
+            alvo = self.path.split('?')[0].strip('/').split('/')
+            volta = "/log"
+            if "agent=" in self.path:
+                volta = "/log?agent=" + self.path.split("agent=")[1]
+            try:
+                if len(alvo) == 2:
+                    ok = controller.commands.cancel(int(alvo[1]),
+                                                    requested_by="dashboard")
+                    controller.logger.info("[CMD] cancel #%s -> %s", alvo[1], ok)
+            except Exception as e:
+                controller.logger.error("[CMD] Could not cancel: %s", e)
+            self.send_response(302)
+            self.send_header("Location", volta)
+            self.end_headers()
+            return
+
+        elif self.path.startswith('/cmdclear/'):
+            # /cmdclear/<uuid>: cancela TUDO que aguarda naquele agente. Nao
+            # toca no que ja foi entregue; e o botao de recuperacao da fila.
+            uuid_alvo = self.path.split('?')[0].strip('/').split('/')[-1]
+            try:
+                n = controller.commands.clear_pending(uuid_alvo,
+                                                      requested_by="dashboard")
+                controller.logger.info("[CMD] queue of %s cleared (%d)",
+                                       uuid_alvo, n)
+            except Exception as e:
+                controller.logger.error("[CMD] Could not clear queue: %s", e)
+            self.send_response(302)
+            self.send_header("Location", "/log?agent=" + uuid_alvo)
+            self.end_headers()
+            return
 
         elif self.path.startswith('/timeline'):
             self._serve_timeline(controller)
@@ -1689,7 +1734,14 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         """
         commands = controller.commands
         commands.expire_stuck()
-        registros = commands.list_for(limit=200)
+
+        # Filtro por agente, vindo do badge da fila de comandos na Manager. E o
+        # caminho de recuperacao: o operador clica no numero, ve o que esta preso
+        # naquele host e age ali mesmo, sem precisar mexer no banco por fora.
+        agente_filtro = ""
+        if "agent=" in self.path:
+            agente_filtro = self.path.split("agent=")[1].split("&")[0].strip()
+        registros = commands.list_for(agente_filtro or None, limit=200)
 
         # Identidade legivel de cada agente, buscada uma vez.
         frota = {}
@@ -1697,7 +1749,38 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             frota[a.get("uuid")] = a
 
         cores = {"PENDING": "#7fb3d5", "SENT": "#ffd166",
-                 "DONE": "#6bcB77", "FAILED": "#ff4d4d"}
+                 "DONE": "#6bcB77", "FAILED": "#ff4d4d",
+                 "CANCELLED": "#9aa0a6"}
+
+        # Cabecalho do recorte: diz de quem e a fila e oferece limpar o que
+        # aguarda. Aparece SEMPRE que ha filtro, mesmo com zero pendente (D-020),
+        # para o operador nunca ficar em duvida se a fila esta vazia ou se a tela
+        # deixou de reportar.
+        recorte_html = ""
+        if agente_filtro:
+            aguardando = commands.pending_count(agente_filtro)
+            nome = _identifica_agente(frota.get(agente_filtro), agente_filtro)
+            botao = ""
+            if aguardando:
+                botao = ("<a href='/cmdclear/%s' class='btn-warn' "
+                         "title='Cancela os %d pedido(s) que ainda aguardam. "
+                         "Nao afeta um pedido ja entregue ao agente.' "
+                         "style='margin-left:14px;color:#ff8c42;"
+                         "text-decoration:none'>&#128465; limpar a fila</a>"
+                         % (_esc(agente_filtro), aguardando))
+            recorte_html = (
+                "<div style='background:#1a1a1a;border:1px solid #333;"
+                "border-radius:6px;padding:10px 14px;margin-bottom:12px;"
+                "font-size:12px'>"
+                "<b style='color:#4ec9b0'>Fila de comandos</b> de %s "
+                "&nbsp;&middot;&nbsp; <b>%d</b> aguardando o agente perguntar%s"
+                "<div style='color:#777;font-size:11px;margin-top:5px'>"
+                "Esta e a fila de COMANDOS (pedidos esperando o agente). Nao "
+                "confundir com a fila de INGESTAO (capturas esperando gravacao "
+                "no servidor), que fica na tela Fila."
+                "<a href='/log' style='color:#4ec9b0;text-decoration:none;"
+                "margin-left:10px'>ver todos os agentes</a></div></div>"
+                % (nome, aguardando, botao))
 
         # O que cada acao faz, e a tecnica que ela exercita quando for o caso.
         # Sem isso "chaos" e uma palavra sem significado para quem nao escreveu
@@ -1758,6 +1841,19 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                            % (r["agent_uuid"], r["agent_uuid"], minutos,
                               r["agent_uuid"]))
 
+            # Cancelar so aparece no que AINDA AGUARDA. Um pedido entregue esta
+            # com o agente e o servidor nao tem como desfaze-lo; oferecer o botao
+            # ali seria prometer na tela algo que nao acontece no host.
+            if r["status"] == "PENDING":
+                atalhos = ("<div style='margin-top:4px'>"
+                           "<a href='/cmdcancel/%d?agent=%s' "
+                           "title='Cancela este pedido antes de ele sair para o "
+                           "agente. O registro permanece, marcado como "
+                           "cancelado.' style='color:#ff8c42;"
+                           "text-decoration:none;font-size:11px'>"
+                           "&#10006; cancelar</a></div>"
+                           % (r["id"], _esc(r.get("agent_uuid") or ""))) + atalhos
+
             linhas += ("<tr class='item'>"
                        "<td style='color:#777;width:40px'>%s</td>"
                        "<td style='color:#4ec9b0;width:110px'>%s</td>"
@@ -1797,7 +1893,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             "laudo, a lista de capturas e a janela da linha do tempo que cobre "
             "aquele momento.</div>" % STUCK_LIMIT)
 
-        corpo = ("<div class='controles'>"
+        corpo = (recorte_html
+                 + "<div class='controles'>"
                  "<span class='rotulo'>Registro de comandos</span>"
                  "<span style='color:#777;font-size:11px'>%d pedido(s), do mais "
                  "recente para o mais antigo. Recarrega sozinho a cada 15s."
@@ -1895,9 +1992,23 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # Estado do ultimo comando pedido. Sem isso o analista clica e nao
             # sabe se o agente ja pegou, se esta executando ou se terminou: a
             # acao vira um botao que aparentemente nao faz nada.
+            # SEMPRE renderiza, inclusive com zero (D-020). Antes o badge so
+            # existia quando havia pedido: no zero ele sumia da linha, e um
+            # controle que desaparece deixa o operador sem saber se a fila esta
+            # vazia ou se a tela parou de reportar. Zero e informacao.
+            #
+            # E a FILA DE COMANDOS (pedidos esperando o agente perguntar), que
+            # nao e a mesma coisa que a fila de ingestao da tela /queue (capturas
+            # esperando gravacao no servidor). As duas ja foram lidas como se
+            # fossem uma so e os numeros "divergiam"; o rotulo diz qual e qual.
             aguardando = db_commands.pending_count(uuid) if db_commands else 0
-            cmd_badge = ("<span class='cmd-badge' title='queued, waiting for the "
-                         "agent to check in'>%d</span>" % aguardando) if aguardando else ""
+            cmd_badge = (
+                "<a class='cmd-badge%s' href='/log?agent=%s' "
+                "title='Fila de comandos: %d pedido(s) aguardando este agente "
+                "perguntar. Clique para ver, cancelar ou limpar. Nao confundir "
+                "com a fila de ingestao (capturas), na tela Fila.'>%d</a>"
+                % ("" if aguardando else " cmd-badge-zero",
+                   _esc(uuid), aguardando, aguardando))
 
             # Estado do ultimo comando como STEPPER (etapa atual destacada),
             # separado da cadencia automatica da coluna Next. Ver _selo_comando.
@@ -2032,7 +2143,12 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             .btn-ico:hover {{ opacity:1; transform:scale(1.25); filter:none; }}
             .btn-lab:hover {{ text-shadow:0 0 8px #ff8c42; }}
             .btn-warn:hover {{ text-shadow:0 0 8px var(--red); }}
-            .cmd-badge {{ background:var(--acc); color:#fff; font-size:10px; padding:1px 7px; border-radius:8px; margin-left:4px; }}
+            .cmd-badge {{ background:var(--acc); color:#fff; font-size:10px; padding:1px 7px; border-radius:8px; margin-left:4px; text-decoration:none; }}
+            .cmd-badge:hover {{ filter:brightness(1.25); }}
+            /* Zero continua VISIVEL (D-020), apenas discreto: um controle que
+               some deixa o operador sem saber se a fila esta vazia ou se a tela
+               parou de reportar. */
+            .cmd-badge-zero {{ background:transparent; color:#666; border:1px solid #3a3a3a; }}
             .cmd-step {{ margin-top:5px; font-size:10px; line-height:1.5; max-width:340px; }}
             .btn-view:hover {{ background: #0078d4; border-color: #0078d4; }}
         </style>
