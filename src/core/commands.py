@@ -62,13 +62,44 @@ STUCK_LIMIT = 600
 # agente responderia "ja executei" quando ainda nem terminou.
 RETRY_AFTER = 420
 
+# Teto de pedidos aguardando por agente. Guarda contra enfileiramento em rajada:
+# em campo, cerca de 30 comandos foram parar na fila de um agente durante um
+# troubleshooting e rodaram todos em sequencia quando ele voltou, sem que o
+# operador tivesse como interromper pela interface.
+MAX_PENDING_PER_AGENT = 10
+
+
+class CommandRefused(Exception):
+    """
+    Pedido recusado na ENTRADA da fila.
+
+    Recusar e melhor do que deduplicar em silencio: o operador clicou esperando
+    uma acao, e precisa saber que ela nao foi enfileirada e por que. Deduplicar
+    calado seria mais uma fonte de divergencia entre o que a tela mostra e o que
+    o sistema fara.
+    """
+
+    def __init__(self, mensagem, existing_id=None):
+        Exception.__init__(self, mensagem)
+        self.existing_id = existing_id
+
+
+class DuplicateCommand(CommandRefused):
+    """Ja ha um pedido do mesmo tipo aguardando ou em execucao neste agente."""
+
+
+class QueueLimitReached(CommandRefused):
+    """O agente ja acumulou pedidos demais aguardando."""
+
 
 class CommandQueue(object):
     """Fila de comandos por agente, preenchida pelo analista."""
 
-    def __init__(self, db_path, ttl=DEFAULT_TTL):
+    def __init__(self, db_path, ttl=DEFAULT_TTL,
+                 max_pending=MAX_PENDING_PER_AGENT):
         self.db_path = db_path
         self.ttl = ttl
+        self.max_pending = max_pending
         self._init_schema()
 
     def _conn(self):
@@ -106,11 +137,43 @@ class CommandQueue(object):
         Recusa comandos fora da lista prevista: o servidor nao deve conseguir
         mandar o agente executar qualquer coisa, mesmo que a interface seja
         comprometida.
+
+        Recusa tambem duplicata e rajada, levantando CommandRefused. Repetir um
+        pedido que ja esta em voo nao e inofensivo: um cenario de teste se
+        replanta em cima de si mesmo e perde a cena, e um restart derruba o
+        agente no meio de uma captura.
         """
         if command not in ALLOWED:
             raise ValueError("command not allowed: %s" % command)
 
         with closing(self._conn()) as conn:
+            # Mesmo tipo ja em voo para o mesmo agente e quase sempre engano:
+            # clique repetido, ou nova tentativa durante uma lentidao. O estado
+            # SENT entra na checagem porque entregue nao e concluido; quando o
+            # agente morre com o pedido na mao, quem libera a vez e o
+            # expire_stuck, nao um segundo pedido empilhado.
+            ativo = conn.execute(
+                "SELECT id FROM agent_commands WHERE agent_uuid = ? "
+                "AND command = ? AND status IN (?, ?) "
+                "ORDER BY id DESC LIMIT 1",
+                (agent_uuid, command, ST_PENDING, ST_SENT)).fetchone()
+            if ativo:
+                raise DuplicateCommand(
+                    "ja existe um '%s' aguardando ou em execucao neste agente"
+                    % command, existing_id=ativo["id"])
+
+            # Teto por agente: barra a rajada mesmo quando os pedidos sao de
+            # tipos diferentes, caso que o dedup sozinho deixaria passar.
+            aguardando = conn.execute(
+                "SELECT COUNT(*) FROM agent_commands "
+                "WHERE agent_uuid = ? AND status = ?",
+                (agent_uuid, ST_PENDING)).fetchone()[0]
+            if aguardando >= self.max_pending:
+                raise QueueLimitReached(
+                    "o agente ja tem %d pedido(s) aguardando, teto de %d; "
+                    "limpe a fila antes de enfileirar outro"
+                    % (aguardando, self.max_pending))
+
             cur = conn.execute(
                 "INSERT INTO agent_commands (agent_uuid, command, params, "
                 "status, created_at, requested_by) VALUES (?, ?, ?, ?, ?, ?)",
