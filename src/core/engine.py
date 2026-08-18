@@ -75,6 +75,31 @@ class SysInspectorEngine:
 
             # Attach Probes (Network Connection Tracking)
             self.bpf.attach_kprobe(event="tcp_v4_connect", fn_name="kprobe__tcp_v4_connect")
+            # IPv6 e OPCIONAL de proposito: um kernel sem a funcao (IPv6 compilado
+            # fora) faria o attach levantar e derrubaria TODAS as sondas junto,
+            # trocando um ponto cego por uma cegueira total. Falha aqui vira
+            # capacidade ausente, registrada, nunca silencio.
+            self._probes_opcionais = {}
+            self._attach_opcional("tcp_v6_connect", "kprobe__tcp_v6_connect",
+                                  "conexao IPv6")
+
+            # Credencial, modulo de kernel e escuta. Todas opcionais pelo mesmo
+            # motivo: um simbolo ausente num kernel especifico nao pode derrubar
+            # as demais sondas junto, e a ausencia precisa ficar REGISTRADA, nao
+            # virar silencio indistinguivel de "nada aconteceu".
+            self._attach_opcional("commit_creds", "kprobe__commit_creds",
+                                  "mudanca de credencial")
+            for chamada, funcao, desc in (
+                    ("init_module", "syscall__init_module",
+                     "carga de modulo de kernel"),
+                    ("finit_module", "syscall__finit_module",
+                     "carga de modulo por descritor"),
+                    ("bind", "syscall__bind", "socket passando a escutar")):
+                self._attach_opcional(self.bpf.get_syscall_fnname(chamada),
+                                      funcao, desc)
+
+            # Fim de processo e tracepoint, nao kprobe: o BCC anexa sozinho pelo
+            # nome da funcao, entao nao entra na lista de attach explicito.
 
             # Attach Probes (Disk I/O Latency)
             self.bpf.attach_kprobe(event="vfs_read", fn_name="kprobe__vfs_read")
@@ -88,6 +113,31 @@ class SysInspectorEngine:
             print(f"[ERROR] Failed to load eBPF: {e}")
             traceback.print_exc()
             # Don't exit here, allow Manager to handle it
+
+    def _attach_opcional(self, evento, funcao, descricao):
+        """
+        Anexa uma sonda cuja ausencia e aceitavel, e REGISTRA o desfecho.
+
+        Nem todo kernel exporta todo simbolo. Anexar sem guarda faz uma unica
+        funcao ausente derrubar o motor inteiro; anexar com um except mudo cria
+        coisa pior, que e a ferramenta afirmar cobertura que nao tem. Uma sonda
+        que nao anexou produz o mesmo sintoma de uma sonda que nunca dispara:
+        nenhum evento. Sem este registro, nao ha como distinguir as duas.
+        """
+        try:
+            self.bpf.attach_kprobe(event=evento, fn_name=funcao)
+            self._probes_opcionais[evento] = True
+            print("[+] eBPF: %s (%s) anexada." % (evento, descricao))
+            return True
+        except Exception as exc:
+            self._probes_opcionais[evento] = False
+            print("[!] eBPF: %s (%s) INDISPONIVEL neste kernel: %s"
+                  % (evento, descricao, exc))
+            return False
+
+    def probes_opcionais(self):
+        """O que anexou e o que nao, para a tela de capacidades nao supor."""
+        return dict(getattr(self, "_probes_opcionais", {}))
 
     def _get_cpu_ticks(self, pid):
         try:
@@ -159,12 +209,68 @@ class SysInspectorEngine:
 
         elif ev_type == 'N':  # Network Connect
             try:
-                dst = socket.inet_ntop(socket.AF_INET, struct.pack("I", event.daddr))
                 port = socket.ntohs(event.dport)
-                conn_str = f"IPv4 -> {dst}:{port}"
+                # ip_ver diz a familia. Um evento antigo, ou de outra origem, vem
+                # com zero e e tratado como IPv4, que era o unico caso possivel
+                # antes desta sonda existir.
+                if getattr(event, "ip_ver", 4) == 6:
+                    dst = socket.inet_ntop(socket.AF_INET6,
+                                           bytes(bytearray(event.daddr6)))
+                    # Colchetes porque endereco v6 tem dois-pontos: sem eles nao
+                    # da para separar o endereco da porta ao ler.
+                    conn_str = f"IPv6 -> [{dst}]:{port}"
+                else:
+                    dst = socket.inet_ntop(socket.AF_INET,
+                                           struct.pack("I", event.daddr))
+                    conn_str = f"IPv4 -> {dst}:{port}"
                 if conn_str not in node.connections:  # Avoid duplicates
                     node.connections.append(conn_str)  # v0.70 uses List for JSON compat
             except: pass
+
+        elif ev_type == 'X':  # Fim de processo
+            # Guardado no proprio no: o diff entre capturas passa a ter o
+            # instante real do fim, em vez de deduzir "sumiu" por ausencia.
+            node.exited = True
+            node.exit_code = int(getattr(event, "exit_code", 0)) >> 8
+
+        elif ev_type == 'S':  # Mudanca de credencial (commit_creds)
+            # COLETA apenas. O julgamento de escalada precisa do loginuid e da
+            # arvore de ancestrais para nao acusar todo sudo legitimo, e isso e
+            # trabalho da regra, com o processo ja montado.
+            try:
+                anterior = int(event.uid)
+                novo = int(event.new_uid)
+                if anterior != novo:
+                    marca = "%d->%d" % (anterior, novo)
+                    if marca not in node.cred_changes:
+                        node.cred_changes.append(marca)
+                        node.loginuid_at_change = int(event.loginuid)
+            except Exception:
+                pass
+
+        elif ev_type == 'M':  # Carga de modulo de kernel
+            node.kernel_module_loads += 1
+            if filename and filename not in node.module_args:
+                node.module_args.append(filename)
+
+        elif ev_type == 'L':  # bind(): socket passando a escutar
+            try:
+                porta = socket.ntohs(event.dport)
+                familia = int(getattr(event, "ip_ver", 0))
+                if familia == 6:
+                    alvo = socket.inet_ntop(socket.AF_INET6,
+                                            bytes(bytearray(event.daddr6)))
+                    escuta = "IPv6 [%s]:%d" % (alvo, porta)
+                elif familia == 4:
+                    alvo = socket.inet_ntop(socket.AF_INET,
+                                            struct.pack("I", event.daddr))
+                    escuta = "IPv4 %s:%d" % (alvo, porta)
+                else:
+                    escuta = "local (nao IP)"
+                if escuta not in node.listening:
+                    node.listening.append(escuta)
+            except Exception:
+                pass
 
         elif ev_type == 'R':  # Read
             node.read_bytes_delta += event.io_bytes

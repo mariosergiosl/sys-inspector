@@ -36,6 +36,8 @@
 #include <linux/udp.h>
 // [PATCH] Include Version to handle Kernel 6.x logic
 #include <linux/version.h>
+// Credenciais: necessario para ler o novo conjunto em commit_creds.
+#include <linux/cred.h>
 
 // [PATCH] Compatibility Macro for Memory Reads (SLES 12/15 vs SLES 16)
 // Kernel 5.8+ enforces strict separation between user/kernel memory reads.
@@ -43,6 +45,17 @@
     #define SAFE_KREAD(dst, src) bpf_probe_read_kernel(dst, sizeof(dst), src)
 #else
     #define SAFE_KREAD(dst, src) bpf_probe_read(dst, sizeof(dst), src)
+#endif
+
+// Variante com tamanho EXPLICITO. A macro acima calcula sizeof sobre o argumento
+// recebido, que na pratica e um PONTEIRO, entao o tamanho lido e o do ponteiro e
+// nao o do campo de destino. Para campos de 4 bytes isso vinha passando porque o
+// campo seguinte era reescrito logo em seguida, mas nao e uma propriedade em que
+// se possa confiar, e um endereco IPv6 tem 16 bytes. Todo codigo novo usa esta.
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+    #define SAFE_KREAD_N(dst, n, src) bpf_probe_read_kernel(dst, n, src)
+#else
+    #define SAFE_KREAD_N(dst, n, src) bpf_probe_read(dst, n, src)
 #endif
 
 // Placeholder for the Python Agent PID (replaced at runtime by loader.py)
@@ -67,6 +80,18 @@ struct event_data_t {
     u32 daddr;
     u16 sport;
     u16 dport;
+    // Familia do endereco: 4 ou 6. Zero significa "evento que nao e de rede".
+    // Sem este campo nao ha como distinguir um destino IPv4 de um IPv6 truncado
+    // nos 4 primeiros bytes, e a conexao IPv6 apareceria como um IPv4 inventado.
+    u8  ip_ver;
+    u8  daddr6[16];    // destino IPv6, em ordem de rede
+
+    // Credenciais resultantes (type_id 'S'). Guardadas ao lado do loginuid que
+    // populate_basic_info ja coleta: o par (quem entrou, o que virou) e o que
+    // permite dizer se houve escalada, e nao apenas que o processo e root.
+    u32 new_uid;
+    u32 new_euid;
+    u32 exit_code;     // type_id 'X'
     u32 proto;         // [NEW] Protocol (TCP=6/UDP=17) for drops
     u64 net_len;       // Packet length
     
@@ -244,15 +269,151 @@ int kprobe__tcp_v4_connect(struct pt_regs *ctx, struct sock *sk) {
     if (populate_basic_info(&data)) return 0;
 
     data.type_id = 'N';
+    data.ip_ver = 4;
     struct sockaddr_in *daddr = (struct sockaddr_in *)PT_REGS_PARM2(ctx);
-    
+
     // [PATCH] Using SAFE_KREAD for Kernel 6.x compatibility
-    SAFE_KREAD(&data.daddr, &daddr->sin_addr.s_addr);
-    SAFE_KREAD(&data.dport, &daddr->sin_port);
-    
+    SAFE_KREAD_N(&data.daddr, sizeof(data.daddr), &daddr->sin_addr.s_addr);
+    SAFE_KREAD_N(&data.dport, sizeof(data.dport), &daddr->sin_port);
+
     // Get Source Info from Socket
     data.saddr = sk->__sk_common.skc_rcv_saddr;
     data.sport = sk->__sk_common.skc_num;
+
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+// 1b. TCP Connect sobre IPv6.
+//
+// Sem esta sonda, TODA conexao IPv6 e invisivel para a ferramenta: o host podia
+// falar com qualquer destino v6 e a arvore de processos nao registrava conexao
+// nenhuma. Nao e um detalhe de cobertura, e um ponto cego inteiro, e em rede
+// moderna o v6 costuma ser o caminho preferido quando existe.
+//
+// O simetrico do v4: o destino vem do sockaddr passado na chamada, e a porta de
+// origem do proprio socket.
+int kprobe__tcp_v6_connect(struct pt_regs *ctx, struct sock *sk) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+
+    data.type_id = 'N';
+    data.ip_ver = 6;
+
+    struct sockaddr_in6 *daddr = (struct sockaddr_in6 *)PT_REGS_PARM2(ctx);
+
+    // 16 bytes com tamanho explicito: aqui a macro que infere sizeof do ponteiro
+    // leria 8 e o endereco chegaria pela metade, silenciosamente.
+    SAFE_KREAD_N(&data.daddr6, sizeof(data.daddr6),
+                 &daddr->sin6_addr.in6_u.u6_addr8);
+    SAFE_KREAD_N(&data.dport, sizeof(data.dport), &daddr->sin6_port);
+
+    data.sport = sk->__sk_common.skc_num;
+
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+// ============================================================================
+// PROBES: CICLO DE VIDA, CREDENCIAIS, MODULO DE KERNEL E ESCUTA
+// ============================================================================
+
+// Fim de processo.
+//
+// Sem isto o agente so descobre que um processo sumiu comparando duas capturas,
+// e nunca sabe QUANDO ele terminou. E o que faltava para existir o evento
+// process.end e, com ele, a linha do tempo deixar de ter apenas nascimentos.
+TRACEPOINT_PROBE(sched, sched_process_exit) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+
+    data.type_id = 'X';
+
+    struct task_struct *tarefa = (struct task_struct *)bpf_get_current_task();
+    SAFE_KREAD_N(&data.exit_code, sizeof(data.exit_code), &tarefa->exit_code);
+
+    events.perf_submit(args, &data, sizeof(data));
+    return 0;
+}
+
+// Mudanca de credencial.
+//
+// UMA sonda em commit_creds cobre a CLASSE inteira, porque toda troca de
+// credencial do kernel passa por aqui: setuid, setresuid, capset, e tambem a
+// credencial forjada por um exploit de kernel. Tres sondas de syscall cobririam
+// apenas as trocas pedidas pelas vias normais, que sao justamente as que um
+// exploit NAO usa; a ficha AM-001 descreve um caminho cujo passo final e
+// exatamente uma chamada a commit_creds com credencial fabricada.
+//
+// Aqui so se COLETA o par (credencial que entrou, credencial que saiu). Julgar
+// se houve escalada e trabalho da regra, que precisa do loginuid e da arvore
+// para nao acusar todo sudo legitimo.
+int kprobe__commit_creds(struct pt_regs *ctx, struct cred *new_cred) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+
+    data.type_id = 'S';
+    SAFE_KREAD_N(&data.new_uid, sizeof(data.new_uid), &new_cred->uid.val);
+    SAFE_KREAD_N(&data.new_euid, sizeof(data.new_euid), &new_cred->euid.val);
+
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+// Carga de modulo de kernel: o caminho classico de rootkit.
+//
+// Hoje a ferramenta nao ve nenhuma. O coletor de persistencia le a configuracao
+// de autoload em disco, que mostra o que foi CONFIGURADO para carregar, nunca o
+// que esta sendo carregado agora. Um modulo inserido a mao nao deixa rastro
+// naquele caminho.
+int syscall__init_module(struct pt_regs *ctx) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'M';
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+int syscall__finit_module(struct pt_regs *ctx, int fd, const char __user *args_u) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'M';
+    // O nome do modulo nao vem no argumento; o que existe e o descritor do
+    // arquivo. Guarda-se os parametros, que costumam identificar a carga.
+    bpf_probe_read_user_str(&data.filename, sizeof(data.filename), args_u);
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+// bind(): o momento em que um socket passa a escutar.
+//
+// Um backdoor que abre porta era completamente invisivel: existe sonda de
+// conexao de SAIDA (tcp_connect) e nenhuma de ENTRADA. Guarda-se a familia e a
+// porta; o julgamento de "esta porta deveria existir?" e da regra, nao daqui.
+int syscall__bind(struct pt_regs *ctx, int fd, struct sockaddr *endereco) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+
+    data.type_id = 'L';
+
+    u16 familia = 0;
+    SAFE_KREAD_N(&familia, sizeof(familia), &endereco->sa_family);
+
+    if (familia == AF_INET) {
+        struct sockaddr_in *v4 = (struct sockaddr_in *)endereco;
+        data.ip_ver = 4;
+        SAFE_KREAD_N(&data.dport, sizeof(data.dport), &v4->sin_port);
+        SAFE_KREAD_N(&data.daddr, sizeof(data.daddr), &v4->sin_addr.s_addr);
+    } else if (familia == AF_INET6) {
+        struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)endereco;
+        data.ip_ver = 6;
+        SAFE_KREAD_N(&data.dport, sizeof(data.dport), &v6->sin6_port);
+        SAFE_KREAD_N(&data.daddr6, sizeof(data.daddr6),
+                     &v6->sin6_addr.in6_u.u6_addr8);
+    } else {
+        // AF_UNIX e demais familias: registra o bind sem endereco de rede.
+        data.ip_ver = 0;
+    }
 
     events.perf_submit(ctx, &data, sizeof(data));
     return 0;

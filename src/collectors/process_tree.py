@@ -474,6 +474,20 @@ class ProcessNode:
         self.connections = set()
         self.is_new = False
 
+        # Sinais das sondas de ciclo de vida, credencial, modulo e escuta.
+        # Declarados AQUI, e nao criados sob demanda no tratador de evento,
+        # porque to_json serializa vars(node): um campo que so passa a existir
+        # quando o evento ocorre sai do JSON nas capturas em que nao ocorreu, e
+        # a tela nao consegue distinguir "nao aconteceu" de "nao foi coletado".
+        # E a regra D-020 aplicada na origem do dado.
+        self.exited = False
+        self.exit_code = 0
+        self.cred_changes = []          # ex.: "1000->0"
+        self.loginuid_at_change = None  # quem entrou, no momento da troca
+        self.kernel_module_loads = 0
+        self.module_args = []
+        self.listening = []             # portas em que passou a escutar
+
         self.detection_reasons = []
 
     def update_static_info(self):
