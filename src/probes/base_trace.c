@@ -41,17 +41,32 @@
 
 // [PATCH] Compatibility Macro for Memory Reads (SLES 12/15 vs SLES 16)
 // Kernel 5.8+ enforces strict separation between user/kernel memory reads.
+// [CORRIGIDO] O tamanho vem do DESTINO APONTADO, nao do ponteiro.
+//
+// A versao anterior era `sizeof(dst)`, e como todo chamador passa `&campo`, o
+// que se media era o tamanho do PONTEIRO: oito bytes, sempre, qualquer que fosse
+// o destino. As consequencias nao eram cosmeticas:
+//
+//   - `struct iphdr` (20 bytes) recebia 8. Os campos protocol, saddr e daddr
+//     ficam nos bytes 9 a 19, entao NUNCA eram lidos do pacote: o evento de
+//     descarte reportava endereco de origem e destino vindos de lixo da pilha,
+//     e o filtro `iph.protocol == 6 || == 17` decidia sobre lixo.
+//   - campos de 2 bytes recebiam 8, escrevendo 6 alem do destino.
+//   - campos de 4 bytes vinham passando por acidente, porque o campo seguinte
+//     era reescrito logo depois. Acidente nao e contrato.
+//
+// `sizeof(*(dst))` resolve os dois casos sem tocar em nenhum chamador: para
+// `&escalar` da o tamanho do escalar, e para `&vetor` da o tamanho do vetor.
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
-    #define SAFE_KREAD(dst, src) bpf_probe_read_kernel(dst, sizeof(dst), src)
+    #define SAFE_KREAD(dst, src) bpf_probe_read_kernel(dst, sizeof(*(dst)), src)
 #else
-    #define SAFE_KREAD(dst, src) bpf_probe_read(dst, sizeof(dst), src)
+    #define SAFE_KREAD(dst, src) bpf_probe_read(dst, sizeof(*(dst)), src)
 #endif
 
-// Variante com tamanho EXPLICITO. A macro acima calcula sizeof sobre o argumento
-// recebido, que na pratica e um PONTEIRO, entao o tamanho lido e o do ponteiro e
-// nao o do campo de destino. Para campos de 4 bytes isso vinha passando porque o
-// campo seguinte era reescrito logo em seguida, mas nao e uma propriedade em que
-// se possa confiar, e um endereco IPv6 tem 16 bytes. Todo codigo novo usa esta.
+// Variante com tamanho EXPLICITO, para quando o destino nao carrega o proprio
+// tamanho no tipo, ou quando se quer ler deliberadamente menos do que o campo
+// comporta. Continua disponivel; com a macro acima corrigida deixou de ser
+// obrigatoria para o caso comum.
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
     #define SAFE_KREAD_N(dst, n, src) bpf_probe_read_kernel(dst, n, src)
 #else
