@@ -497,6 +497,7 @@ class ProcessNode:
         self.files_renamed = 0
         self.ns_changes = 0             # setns/unshare (fuga de conteiner)
         self.kexec_calls = 0            # troca de kernel
+        self.dns_queries = []           # dominios consultados (nome do destino)
 
         self.detection_reasons = []
 

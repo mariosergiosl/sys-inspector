@@ -74,3 +74,68 @@ def decodifica_saida(exit_code_bruto):
     como um codigo enorme e sem sentido no laudo.
     """
     return int(exit_code_bruto or 0) >> 8
+
+
+# ------------------------------------------------------------------------------
+# DNS
+# ------------------------------------------------------------------------------
+# Cabecalho DNS: 12 bytes antes da primeira pergunta.
+_DNS_CABECALHO = 12
+# Teto de rotulos por nome. Existe para o laco nunca depender do conteudo do
+# pacote: um datagrama truncado ou malformado nao pode prender o agente.
+_MAX_ROTULOS = 40
+
+
+def nome_dns(payload, tamanho=None):
+    """
+    Extrai o nome consultado de um datagrama DNS.
+
+    Recebe o pedaco BRUTO copiado pela sonda e devolve o nome, ou None quando o
+    pacote nao e uma consulta legivel. E aqui que o parse acontece, e nao no eBPF:
+    no espaco de usuario nao ha verificador limitando laco, e um nome truncado
+    resulta em None em vez de travar o kernel (D-030).
+
+    So le a secao de PERGUNTA, onde o nome aparece sem compressao. A compressao de
+    rotulos so ocorre nas respostas, que nao sao coletadas.
+    """
+    if not payload:
+        return None
+    dados = bytes(bytearray(payload))
+    if tamanho:
+        dados = dados[:int(tamanho)]
+    if len(dados) <= _DNS_CABECALHO:
+        return None
+
+    # QR=0 indica consulta; resposta nao interessa aqui.
+    flags = (dados[2] << 8) | dados[3]
+    if flags & 0x8000:
+        return None
+    # QDCOUNT: sem pergunta nao ha nome a extrair.
+    if ((dados[4] << 8) | dados[5]) < 1:
+        return None
+
+    partes = []
+    i = _DNS_CABECALHO
+    for _ in range(_MAX_ROTULOS):
+        if i >= len(dados):
+            return None            # datagrama cortado antes do fim do nome
+        tam = dados[i]
+        if tam == 0:
+            break                  # fim do nome
+        if tam & 0xC0:
+            return None            # ponteiro de compressao: nao ocorre em pergunta
+        i += 1
+        if i + tam > len(dados):
+            return None
+        try:
+            partes.append(dados[i:i + tam].decode("idna"))
+        except Exception:
+            try:
+                partes.append(dados[i:i + tam].decode("ascii", "replace"))
+            except Exception:
+                return None
+        i += tam
+    else:
+        return None                # excedeu o teto de rotulos
+
+    return ".".join(partes) if partes else None

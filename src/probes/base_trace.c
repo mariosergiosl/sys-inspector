@@ -107,6 +107,7 @@ struct event_data_t {
     u32 new_uid;
     u32 new_euid;
     u32 exit_code;     // type_id 'X'
+
     u32 proto;         // [NEW] Protocol (TCP=6/UDP=17) for drops
     u64 net_len;       // Packet length
     
@@ -127,6 +128,21 @@ struct event_data_t {
 
 // Event Buffer (High bandwidth events)
 BPF_PERF_OUTPUT(events);
+
+// Evento de consulta DNS, em canal PROPRIO.
+//
+// Nao cabe no evento comum: a pilha de um programa BPF tem 512 bytes no total, o
+// evento comum ja ocupa quase tudo, e acrescentar um buffer de payload nele fez a
+// sonda de descarte de pacote parar de carregar. Um evento pequeno e dedicado
+// resolve sem espremer o que ja existe, e deixa claro que este canal carrega bytes
+// crus a serem interpretados no espaco de usuario (D-030).
+struct dns_event_t {
+    u32 pid;
+    char comm[TASK_COMM_LEN];
+    u8  payload[96];
+    u16 payload_len;
+};
+BPF_PERF_OUTPUT(dns_events);
 
 // 1. Latency Tracking Maps (Temporary storage for start times)
 // Key: PID, Value: Timestamp (ns)
@@ -563,6 +579,88 @@ int syscall__kexec_load(struct pt_regs *ctx) {
     if (populate_basic_info(&data)) return 0;
     data.type_id = 'K';
     events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+// Consulta DNS: o NOME do destino, que hoje falta.
+//
+// A ferramenta ve o IP de toda conexao, e nao ve o dominio. Inteligencia de
+// ameaca trabalha por NOME: as listas de C2 casam dominio, nao endereco. Sem
+// isto, "conectou em 185.x.x.x" nao cruza com nada.
+//
+// Nome de dominio e METADADO, o "com quem", nao o "o que" foi dito: por isso
+// permanece no escopo mesmo depois da D-029, que tirou captura de conteudo.
+//
+// O programa NAO decodifica DNS. Copia um pedaco de tamanho fixo do datagrama e
+// entrega; o Python decodifica o nome. E a regra da D-030: o eBPF entrega bytes
+// delimitados, o espaco de usuario interpreta. Decodificar aqui exigiria laco
+// sobre rotulos com compressao dentro do verificador, que e o que fazia este item
+// parecer o mais dificil da lista.
+int kprobe__udp_sendmsg(struct pt_regs *ctx, struct sock *sk,
+                        struct msghdr *msg, size_t tamanho) {
+    // Interessa apenas o trafego de resolucao. A porta de destino vive no socket
+    // quando ele esta conectado, e no endereco do msghdr quando nao.
+    u16 dport = sk->__sk_common.skc_dport;
+    dport = ((dport >> 8) | (dport << 8));   // ordem de rede -> ordem do host
+
+    if (dport != 53) {
+        struct sockaddr_in *destino = NULL;
+        SAFE_KREAD_N(&destino, sizeof(destino), &msg->msg_name);
+        if (!destino) return 0;
+        u16 porta_msg = 0;
+        SAFE_KREAD_N(&porta_msg, sizeof(porta_msg), &destino->sin_port);
+        porta_msg = ((porta_msg >> 8) | (porta_msg << 8));
+        if (porta_msg != 53) return 0;
+    }
+
+    struct dns_event_t dns = {};
+    dns.pid = bpf_get_current_pid_tgid() >> 32;
+    if (dns.pid == FILTER_PID) return 0;
+    bpf_get_current_comm(&dns.comm, sizeof(dns.comm));
+
+    // Onde estao os bytes do datagrama.
+    //
+    // O campo foi renomeado no kernel (`iov` virou `__iov` no 6.4), e o que ali
+    // existe depende do TIPO do iterador, que e uma UNIAO:
+    //
+    //   ITER_UBUF  -> o ponteiro JA E o buffer do usuario (envio de segmento unico,
+    //                 que e o caso de toda consulta DNS por sendto)
+    //   ITER_IOVEC -> o ponteiro e um VETOR, e o buffer esta no primeiro elemento
+    //
+    // Foi exatamente aqui que a primeira versao falhou em silencio: ela supunha
+    // sempre o vetor e desreferenciava mais uma vez, lendo lixo. A sonda anexava,
+    // disparava, e nunca entregava nome nenhum, que e indistinguivel de "nenhuma
+    // consulta aconteceu".
+    //
+    // O tipo poderia ser lido de `iter_type`, mas o valor do enum MUDA entre
+    // versoes de kernel (neste, ITER_UBUF e 5). Em vez de fixar um numero que
+    // envelhece, usa-se o resultado da propria leitura como discriminante: se ler
+    // do ponteiro como buffer de usuario funciona, era ITER_UBUF. Isso vale em
+    // qualquer versao, sem tabela para manter.
+    void *ponteiro = NULL;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,4,0)
+    SAFE_KREAD_N(&ponteiro, sizeof(ponteiro), &msg->msg_iter.__iov);
+#else
+    SAFE_KREAD_N(&ponteiro, sizeof(ponteiro), &msg->msg_iter.iov);
+#endif
+    if (!ponteiro) return 0;
+
+    dns.payload_len = tamanho < sizeof(dns.payload)
+                      ? (u16)tamanho : (u16)sizeof(dns.payload);
+
+    // Leitura de USUARIO: o buffer pertence ao processo, nao ao kernel.
+    if (bpf_probe_read_user(&dns.payload, sizeof(dns.payload), ponteiro)) {
+        // Nao era buffer direto: tratar como vetor e buscar o primeiro segmento.
+        void *base = NULL;
+        if (bpf_probe_read_kernel(&base, sizeof(base),
+                                  &((const struct iovec *)ponteiro)->iov_base))
+            return 0;
+        if (!base) return 0;
+        if (bpf_probe_read_user(&dns.payload, sizeof(dns.payload), base))
+            return 0;
+    }
+
+    dns_events.perf_submit(ctx, &dns, sizeof(dns));
     return 0;
 }
 

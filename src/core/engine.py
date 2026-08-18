@@ -27,7 +27,7 @@ from bcc import BPF
 from src.utils.config_loader import load_config
 from src.probes.loader import load_probe_source
 from src.core.eventfmt import (formata_conexao, formata_escuta,
-                               decodifica_saida)
+                               decodifica_saida, nome_dns)
 from src.collectors.process_tree import ProcessTree, unsafe_path_in_cmdline
 # from src.collectors.system_inventory import collect_full_inventory
 
@@ -115,7 +115,9 @@ class SysInspectorEngine:
             # Sondas de funcao interna do kernel (sem prefixo de syscall).
             for evento, funcao, desc in (
                     ("vfs_unlink", "kprobe__vfs_unlink", "arquivo apagado"),
-                    ("vfs_rename", "kprobe__vfs_rename", "arquivo renomeado")):
+                    ("vfs_rename", "kprobe__vfs_rename", "arquivo renomeado"),
+                    ("udp_sendmsg", "kprobe__udp_sendmsg",
+                     "consulta DNS (nome do destino)")):
                 self._attach_opcional(evento, funcao, desc)
 
             # Conexao aceita: e kretprobe, o socket so existe no retorno.
@@ -382,6 +384,27 @@ class SysInspectorEngine:
     # [v0.70] NEW THREADING MODEL (Non-Blocking)
     # --------------------------------------------------------------------------
 
+    def _handle_dns_event(self, cpu, data, size):
+        """
+        Consulta DNS: o kernel entregou bytes crus, o nome sai aqui.
+
+        O parse fica no espaco de usuario de proposito (D-030): decodificar
+        rotulos DNS dentro do verificador do eBPF e caro e limitado, e aqui um
+        datagrama truncado apenas devolve None em vez de virar problema no kernel.
+        """
+        try:
+            evento = self.bpf["dns_events"].event(data)
+            nome = nome_dns(evento.payload, evento.payload_len)
+            if not nome:
+                return
+            with self.lock:
+                no = self.tree.nodes.get(evento.pid)
+                if no is not None and nome not in no.dns_queries:
+                    no.dns_queries.append(nome)
+        except Exception:
+            # Um datagrama estranho nao pode interromper o laco de coleta.
+            pass
+
     def _poll_loop(self):
         """Background thread loop to drain perf buffers."""
         print("[DEBUG] BPF Polling Thread Started.")
@@ -406,6 +429,13 @@ class SysInspectorEngine:
             # buffer continua valido e uma unica abertura basta.
             if not self._perf_buffer_aberto:
                 self.bpf["events"].open_perf_buffer(self._handle_bpf_event)
+                # Canal proprio das consultas DNS. Abre em try porque a sonda e
+                # opcional: num kernel onde ela nao anexou, o mapa existe mas
+                # nunca recebe nada, e a falta do canal nao pode derrubar a coleta.
+                try:
+                    self.bpf["dns_events"].open_perf_buffer(self._handle_dns_event)
+                except Exception as exc:
+                    print("[!] eBPF: canal DNS indisponivel: %s" % exc)
                 self._perf_buffer_aberto = True
 
             while self.running:
