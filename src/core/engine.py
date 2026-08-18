@@ -26,6 +26,8 @@ from bcc import BPF
 # Internal Modules
 from src.utils.config_loader import load_config
 from src.probes.loader import load_probe_source
+from src.core.eventfmt import (formata_conexao, formata_escuta,
+                               decodifica_saida)
 from src.collectors.process_tree import ProcessTree, unsafe_path_in_cmdline
 # from src.collectors.system_inventory import collect_full_inventory
 
@@ -209,20 +211,9 @@ class SysInspectorEngine:
 
         elif ev_type == 'N':  # Network Connect
             try:
-                port = socket.ntohs(event.dport)
-                # ip_ver diz a familia. Um evento antigo, ou de outra origem, vem
-                # com zero e e tratado como IPv4, que era o unico caso possivel
-                # antes desta sonda existir.
-                if getattr(event, "ip_ver", 4) == 6:
-                    dst = socket.inet_ntop(socket.AF_INET6,
-                                           bytes(bytearray(event.daddr6)))
-                    # Colchetes porque endereco v6 tem dois-pontos: sem eles nao
-                    # da para separar o endereco da porta ao ler.
-                    conn_str = f"IPv6 -> [{dst}]:{port}"
-                else:
-                    dst = socket.inet_ntop(socket.AF_INET,
-                                           struct.pack("I", event.daddr))
-                    conn_str = f"IPv4 -> {dst}:{port}"
+                conn_str = formata_conexao(
+                    getattr(event, "ip_ver", 4), event.daddr,
+                    getattr(event, "daddr6", b""), event.dport)
                 if conn_str not in node.connections:  # Avoid duplicates
                     node.connections.append(conn_str)  # v0.70 uses List for JSON compat
             except: pass
@@ -231,7 +222,7 @@ class SysInspectorEngine:
             # Guardado no proprio no: o diff entre capturas passa a ter o
             # instante real do fim, em vez de deduzir "sumiu" por ausencia.
             node.exited = True
-            node.exit_code = int(getattr(event, "exit_code", 0)) >> 8
+            node.exit_code = decodifica_saida(getattr(event, "exit_code", 0))
 
         elif ev_type == 'S':  # Mudanca de credencial (commit_creds)
             # COLETA apenas. O julgamento de escalada precisa do loginuid e da
@@ -255,18 +246,9 @@ class SysInspectorEngine:
 
         elif ev_type == 'L':  # bind(): socket passando a escutar
             try:
-                porta = socket.ntohs(event.dport)
-                familia = int(getattr(event, "ip_ver", 0))
-                if familia == 6:
-                    alvo = socket.inet_ntop(socket.AF_INET6,
-                                            bytes(bytearray(event.daddr6)))
-                    escuta = "IPv6 [%s]:%d" % (alvo, porta)
-                elif familia == 4:
-                    alvo = socket.inet_ntop(socket.AF_INET,
-                                            struct.pack("I", event.daddr))
-                    escuta = "IPv4 %s:%d" % (alvo, porta)
-                else:
-                    escuta = "local (nao IP)"
+                escuta = formata_escuta(
+                    getattr(event, "ip_ver", 0), event.daddr,
+                    getattr(event, "daddr6", b""), event.dport)
                 if escuta not in node.listening:
                     node.listening.append(escuta)
             except Exception:
