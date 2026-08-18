@@ -204,6 +204,26 @@ if [ "$ALL_MODE" = "true" ]; then
     ENABLE_FANO=true; ENABLE_CONT=true; ENABLE_GPU=true
 fi
 
+#--- Trava de gateway --------------------------------------------------
+# O caos de rede e de firewall e transitorio, mas no host que roteia o lab
+# ele derruba TODOS os outros agentes ao mesmo tempo, e o operador perde
+# justamente a frota que iria observar. Quem dispara pelo botao da tela nao
+# tem como saber em qual host esta clicando.
+#
+# A trava vive AQUI, no script canonico, e nao apenas no wrapper: os dois
+# chamadores (wrapper e daemon) herdam a mesma regra, em vez de cada um
+# reimplementar a sua e divergirem em silencio.
+#
+# Ela so age quando o host de fato POSSUI o IP de gateway do lab; nos demais
+# hosts a chamada segue igual.
+LAB_GATEWAY_IP="${LAB_GATEWAY_IP:-192.168.56.200}"
+if [ "${SAFE_ON_GATEWAY:-0}" = "1" ] \
+   && ip -o addr 2>/dev/null | grep -q "${LAB_GATEWAY_IP}"; then
+    ENABLE_NET=false
+    ENABLE_FW=false
+    echo "--- SAFE_ON_GATEWAY: este host possui ${LAB_GATEWAY_IP}; rede e firewall DESLIGADOS ---"
+fi
+
 # Visual Header
 echo -e "${CYAN}
    _____ _    _  ___   ____  _____ 

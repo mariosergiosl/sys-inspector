@@ -322,31 +322,79 @@ class DaemonController:
         import subprocess
 
         duracao = str(int(params.get("duration", 300) or 300))
-        candidatos = ["/opt/sys-inspector/tools/chaos_maker.sh",
+        # Alem dos caminhos de instalacao, procura ao lado do proprio codigo:
+        # rodando a partir da arvore de fontes, que e o fluxo de teste do
+        # laboratorio, o script vive em tools/ e nao em /opt nem /usr/bin.
+        raiz = os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))))
+        candidatos = [os.path.join(raiz, "tools", "chaos_maker.sh"),
+                      "/opt/sys-inspector/tools/chaos_maker.sh",
                       "/usr/bin/chaos_maker.sh"]
         script = next((c for c in candidatos if os.path.exists(c)), None)
         if not script:
             raise RuntimeError("chaos_maker.sh not installed on this host")
 
-        log_path = "/tmp/si_chaos_cmd.log"
+        # UM LOG POR RODADA. O arquivo unico reaproveitado era a causa de a
+        # captura sair cedo demais: o marcador de pronto de uma rodada ANTERIOR
+        # continuava no arquivo, a espera terminava antes de o cenario novo subir
+        # e a cena inteira se perdia. Truncar nao resolve, porque uma rodada
+        # ainda viva segue escrevendo no mesmo caminho depois do truncamento.
+        # Com um arquivo por rodada nao existe marcador alheio para confundir.
+        marca = "%d-%d" % (int(time.time()), os.getpid())
+        log_path = "/tmp/si_chaos_%s.log" % marca
         try:
             log_fh = open(log_path, "w")
-        except OSError:
-            log_fh = subprocess.DEVNULL
+        except OSError as exc:
+            # Sem log nao ha como saber quando o cenario ficou de pe. Capturar
+            # assim mediria uma cena que talvez nem exista, e o laudo diria
+            # "detectou pouco" quando o correto e dizer que a rodada nao vale.
+            raise RuntimeError(
+                "sem log para acompanhar o cenario (%s); rodada abortada" % exc)
+
+        self._limpar_logs_de_chaos_antigos()
+
+        # A trava do gateway e decidida pelo SCRIPT, que sabe conferir se este
+        # host possui o IP de roteamento do laboratorio. Aqui so se declara a
+        # intencao: quem clica o botao na tela nao tem como saber em qual host
+        # esta clicando, e derrubar a rede do gateway cega a frota inteira,
+        # justamente a frota que se queria observar.
+        ambiente = dict(os.environ)
+        ambiente["SAFE_ON_GATEWAY"] = "1"
+
         # stdout num arquivo (nao DEVNULL) para poder esperar o marcador de
         # pronto sem bloquear o processo do chaos, que segue escrevendo la.
         subprocess.Popen(["/bin/bash", script, "--all", "--duration", duracao],
                          stdout=log_fh, stderr=subprocess.STDOUT,
-                         start_new_session=True)
-        if hasattr(log_fh, "close"):
-            try: log_fh.close()
-            except OSError: pass
+                         start_new_session=True, env=ambiente)
+        try:
+            log_fh.close()
+        except OSError:
+            pass
 
         pronto = self._esperar_chaos_pronto(log_path, self.CHAOS_SETUP_TIMEOUT)
         estado = "pronto para captura" if pronto else \
             "setup nao confirmado em %ss (capturando mesmo assim)" \
             % self.CHAOS_SETUP_TIMEOUT
-        return "chaos rodando por %ss; %s" % (duracao, estado)
+        return "chaos rodando por %ss; %s (log %s)" % (duracao, estado, log_path)
+
+    # Quantos logs de rodada guardar. Servem para o operador entender depois o
+    # que aconteceu; guardar todos encheria /tmp num host que roda cenario com
+    # frequencia.
+    CHAOS_LOGS_MANTIDOS = 10
+
+    def _limpar_logs_de_chaos_antigos(self):
+        """Mantem apenas os logs de rodada mais recentes."""
+        import glob
+        try:
+            logs = sorted(glob.glob("/tmp/si_chaos_*.log"),
+                          key=os.path.getmtime)
+            for velho in logs[:-self.CHAOS_LOGS_MANTIDOS]:
+                try:
+                    os.unlink(velho)
+                except OSError:
+                    pass
+        except Exception as exc:
+            self.logger.debug("[CMD] Could not rotate chaos logs: %s", exc)
 
     def _esperar_chaos_pronto(self, log_path, timeout):
         """
