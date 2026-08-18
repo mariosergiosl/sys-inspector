@@ -59,6 +59,46 @@ ITEM = re.compile(r"^(\s*)-\s+\*\*\[(OK|PARC|DIREC|ADIADO|FORA|REGRA|--)\]\*\*\s
 ID_JA = re.compile(r"^`([A-Z]{1,2}-\d{3})`\s+")
 SECAO = re.compile(r"^##\s+(.*)$")
 SUBSECAO = re.compile(r"^###\s+(.*)$")
+# Dependencia declarada no proprio item: "(dep: C-001, F-014)". Fica no backlog,
+# junto do item, porque dependencia e propriedade DELE: mantida numa lista a
+# parte, ela envelheceria sem ninguem perceber.
+DEP = re.compile(r"\(dep:\s*([A-Z]{1,2}-\d{3}(?:\s*,\s*[A-Z]{1,2}-\d{3})*)\)")
+
+
+LEGENDA = """## Legenda
+
+**Letra do ID: a ORIGEM da demanda** (D-023). A separacao existe porque as tres
+nascentes tem cadencias incompativeis, e a infinita sufocaria as finitas se
+vivessem na mesma lista.
+
+| Letra | Gaveta | Nasce de | Comportamento |
+|---|---|---|---|
+| `F` | **Ferramenta** | uso, bug, divida tecnica, UX, documentacao | finito, diminui quando se trabalha |
+| `C` | **Capacidade** | visao de produto, arquitetura, coleta nova | finito, muda a fundacao |
+| `AM` | **Ameaca** | analise de ameaca externa (acervo proprio) | INFINITO, cresce sozinho |
+
+**Estado do item:**
+
+| Estado | Significa |
+|---|---|
+| concluido | Feito e verificado |
+| parcial | Comecado, falta parte declarada no item |
+| aberto | Nao comecou |
+| so direcionar | A ferramenta APONTA o caminho, nao executa (D-028, D-031) |
+| adiado | Correto, mas atras de outro item |
+| fora de escopo | Decidido NAO fazer, com a decisao que tirou |
+| regra permanente | Nao e tarefa: e regra que vale sempre |
+
+**Colunas de dependencia:**
+
+- **Depende de**: precisa daqueles itens prontos antes. Se algum estiver aberto,
+  este nao esta pronto para comecar.
+- **Destrava**: o que passa a ser possivel quando este fechar. Numero alto aqui
+  significa gargalo, e gargalo merece prioridade mesmo sendo pequeno.
+
+---
+
+"""
 
 
 def gaveta(secao):
@@ -71,7 +111,9 @@ def gaveta(secao):
 
 def limpa(texto):
     """Texto legivel numa celula: sem marcacao e sem quebrar a coluna."""
-    t = re.sub(r"\*\*|~~", "", texto)
+    # A dependencia tem coluna propria; repeti-la no texto so rouba espaco.
+    t = DEP.sub("", texto)
+    t = re.sub(r"\*\*|~~", "", t)
     t = t.replace("`", "").replace("|", "/").replace("\n", " ")
     return re.sub(r"\s+", " ", t).strip()
 
@@ -99,6 +141,7 @@ def ler_itens(caminho):
             continue
         corpo = m.group(3)
         existente = ID_JA.match(corpo)
+        deps = DEP.search(corpo)
         itens.append({
             "linha": n,
             "indent": m.group(1),
@@ -107,6 +150,7 @@ def ler_itens(caminho):
             "texto": corpo[existente.end():] if existente else corpo,
             "secao": secao,
             "subsecao": subsecao,
+            "dep": [d.strip() for d in deps.group(1).split(",")] if deps else [],
         })
     return itens, linhas
 
@@ -161,6 +205,7 @@ def gerar(itens, saida, origem):
     out.append("> dele. Editar aqui cria duas versoes do mesmo fato, que e a\n")
     out.append("> divergencia silenciosa que este projeto ja pagou caro.\n\n")
 
+    out.append(LEGENDA)
     out.append("## Panorama\n\n")
     out.append("| Estado | Quantos |\n|---|---:|\n")
     for e in ESTADOS:
@@ -180,18 +225,65 @@ def gerar(itens, saida, origem):
         barra = "#" * (pct // 10) + "." * (10 - pct // 10)
         out.append("| %s | %d | %d | `%s` %d%% |\n"
                    % (limpa(secao)[:58], ok, ab, barra, pct))
+    # Indice reverso: quem cada item destrava. Um item com muitos dependentes e
+    # gargalo, e gargalo pequeno merece prioridade sobre item grande e isolado.
+    destrava = {}
+    por_id = dict((i["id"], i) for i in itens if i["id"])
+    for i in itens:
+        for d in i["dep"]:
+            destrava.setdefault(d, []).append(i["id"])
+
+    abertos = [i for i in itens if i["estado"] in ("--", "PARC")]
+    prontos = []
+    travados = []
+    for i in abertos:
+        pendentes = [d for d in i["dep"]
+                     if d in por_id and por_id[d]["estado"] in ("--", "PARC")]
+        if pendentes:
+            travados.append((i, pendentes))
+        else:
+            prontos.append(i)
+
+    out.append("## Ordem logica: o que ja da para comecar\n\n")
+    out.append("Itens abertos SEM dependencia pendente, ordenados por quantos\n")
+    out.append("outros destravam. Gargalo pequeno vale mais que item grande e\n")
+    out.append("isolado, e e essa a leitura que a coluna Destrava entrega.\n\n")
+    out.append("| ID | Item | Destrava |\n|---|---|---|\n")
+    prontos.sort(key=lambda i: -len(destrava.get(i["id"], [])))
+    for i in prontos[:20]:
+        alvo = destrava.get(i["id"], [])
+        out.append("| `%s` | %s | %s |\n"
+                   % (i["id"], limpa(i["texto"])[:94],
+                      ", ".join("`%s`" % a for a in alvo) or "-"))
+    if len(prontos) > 20:
+        out.append("| ... | *e mais %d itens sem dependencia declarada* | |\n"
+                   % (len(prontos) - 20))
+    out.append("\n")
+
+    if travados:
+        out.append("## Travados: esperando outro item\n\n")
+        out.append("| ID | Item | Espera |\n|---|---|---|\n")
+        for i, pend in travados:
+            out.append("| `%s` | %s | %s |\n"
+                       % (i["id"], limpa(i["texto"])[:86],
+                          ", ".join("`%s`" % d for d in pend)))
+        out.append("\n")
+
     out.append("\n---\n\n")
 
     for secao in ordem_secao:
         out.append("## %s\n\n" % limpa(secao))
-        out.append("| ID | Estado | Item | Onde |\n|---|---|---|---|\n")
+        out.append("| ID | Estado | Item | Depende de | Destrava |\n"
+                   "|---|---|---|---|---|\n")
         ordenado = sorted(por_secao[secao],
                           key=lambda i: (ESTADOS.index(i["estado"]), i["linha"]))
         for i in ordenado:
-            out.append("| `%s` | %s | %s | %s |\n"
+            alvo = destrava.get(i["id"], [])
+            out.append("| `%s` | %s | %s | %s | %s |\n"
                        % (i["id"] or "-", ROTULO[i["estado"]],
-                          limpa(i["texto"])[:150],
-                          limpa(i["subsecao"])[:38] or "-"))
+                          limpa(i["texto"])[:128],
+                          ", ".join("`%s`" % d for d in i["dep"]) or "-",
+                          ", ".join("`%s`" % a for a in alvo) or "-"))
         out.append("\n")
 
     with io.open(saida, "w", encoding="utf-8") as fh:
