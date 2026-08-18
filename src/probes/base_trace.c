@@ -434,6 +434,138 @@ int syscall__bind(struct pt_regs *ctx, int fd, struct sockaddr *endereco) {
     return 0;
 }
 
+// Conexao ACEITA. O par do bind: bind diz que abriu porta, accept diz que alguem
+// entrou. Sem isto uma escuta maliciosa parece inofensiva ate ser usada.
+int kretprobe__inet_csk_accept(struct pt_regs *ctx) {
+    struct sock *sk = (struct sock *)PT_REGS_RC(ctx);
+    if (!sk) return 0;
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'A';
+    data.ip_ver = 4;
+    data.daddr = sk->__sk_common.skc_daddr;
+    data.saddr = sk->__sk_common.skc_rcv_saddr;
+    data.sport = sk->__sk_common.skc_num;
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+// ptrace: injecao e leitura de memoria alheia. Um processo lendo a memoria de
+// outro e legitimo em depurador e quase nada mais; num host de producao e um dos
+// sinais mais diretos de roubo de credencial e de injecao de codigo.
+int syscall__ptrace(struct pt_regs *ctx, long request, long pid_alvo) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'P';
+    data.inspector_pid = (u32)pid_alvo;   // quem esta sendo lido
+    data.prio = (int)request;             // operacao pedida
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+int syscall__process_vm_readv(struct pt_regs *ctx, long pid_alvo) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'P';
+    data.inspector_pid = (u32)pid_alvo;
+    data.prio = -1;                       // marca a via alternativa do ptrace
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+// memfd_create: arquivo que existe so em memoria, nunca toca o disco. E a base da
+// execucao fileless, e o coletor de disco por definicao nao alcanca.
+int syscall__memfd_create(struct pt_regs *ctx, const char __user *nome) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'G';
+    bpf_probe_read_user_str(&data.filename, sizeof(data.filename), nome);
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+// mprotect concedendo execucao a memoria gravavel. E o momento exato em que um
+// shellcode se torna executavel; o coletor de /proc so ve o RESULTADO, e depois.
+#ifndef PROT_EXEC
+#define PROT_EXEC 0x4
+#endif
+#ifndef PROT_WRITE
+#define PROT_WRITE 0x2
+#endif
+int syscall__mprotect(struct pt_regs *ctx, unsigned long inicio,
+                      size_t tamanho, unsigned long prot) {
+    if (!(prot & PROT_EXEC)) return 0;     // so interessa quando vira executavel
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'Z';
+    data.mem_vsz = (u64)tamanho;
+    data.prio = (int)prot;
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+// bpf(): rootkit baseado em eBPF. A ferramenta usa eBPF; um atacante tambem pode.
+// Nao registrar isto seria deixar cego justamente o mecanismo que nos sustenta.
+int syscall__bpf(struct pt_regs *ctx, int cmd) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'B';
+    data.prio = cmd;
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+// Apagar e renomear: anti-forense. Log removido no meio de um incidente e o
+// proprio incidente. O diff entre capturas ve o arquivo sumir, mas nao ve QUEM.
+int kprobe__vfs_unlink(struct pt_regs *ctx) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'U';
+    data.prio = 0;                         // 0 = apagou
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+int kprobe__vfs_rename(struct pt_regs *ctx) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'U';
+    data.prio = 1;                         // 1 = renomeou
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+// Troca de namespace: fuga de conteiner. setns entra num namespace alheio,
+// unshare cria um novo. Os dois aparecem em escape e em exploit de userns, como
+// o da ficha AM-001.
+int syscall__setns(struct pt_regs *ctx, int fd, int tipo_ns) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'C';
+    data.prio = tipo_ns;
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+int syscall__unshare(struct pt_regs *ctx, unsigned long flags) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'C';
+    data.prio = (int)flags;
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+// kexec_load: troca o kernel que sera carregado. E persistencia abaixo de tudo
+// que a ferramenta observa, e sobrevive ao reboot que o operador daria como cura.
+int syscall__kexec_load(struct pt_regs *ctx) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'K';
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
 // 2. Interface Buffer TX (Queuing) - Replaces simple tcp_sendmsg for lower level view
 TRACEPOINT_PROBE(net, net_dev_xmit) {
     u32 pid = bpf_get_current_pid_tgid() >> 32;

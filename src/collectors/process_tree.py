@@ -487,6 +487,16 @@ class ProcessNode:
         self.kernel_module_loads = 0
         self.module_args = []
         self.listening = []             # portas em que passou a escutar
+        self.accepted = []              # conexoes aceitas (alguem entrou)
+        self.mem_access = []            # ptrace/process_vm_readv em outro pid
+        self.memfd_created = 0          # execucao fileless
+        self.memfd_names = []
+        self.exec_mem_grants = 0        # mprotect concedendo execucao
+        self.bpf_calls = 0              # uso de eBPF por terceiros
+        self.files_deleted = 0          # anti-forense
+        self.files_renamed = 0
+        self.ns_changes = 0             # setns/unshare (fuga de conteiner)
+        self.kexec_calls = 0            # troca de kernel
 
         self.detection_reasons = []
 

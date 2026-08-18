@@ -96,9 +96,37 @@ class SysInspectorEngine:
                      "carga de modulo de kernel"),
                     ("finit_module", "syscall__finit_module",
                      "carga de modulo por descritor"),
-                    ("bind", "syscall__bind", "socket passando a escutar")):
+                    ("bind", "syscall__bind", "socket passando a escutar"),
+                    ("ptrace", "syscall__ptrace",
+                     "leitura/injecao em processo alheio"),
+                    ("process_vm_readv", "syscall__process_vm_readv",
+                     "leitura de memoria alheia"),
+                    ("memfd_create", "syscall__memfd_create",
+                     "arquivo so em memoria (fileless)"),
+                    ("mprotect", "syscall__mprotect",
+                     "memoria virando executavel"),
+                    ("bpf", "syscall__bpf", "uso de eBPF por terceiros"),
+                    ("setns", "syscall__setns", "entrada em namespace alheio"),
+                    ("unshare", "syscall__unshare", "criacao de namespace"),
+                    ("kexec_load", "syscall__kexec_load", "troca de kernel")):
                 self._attach_opcional(self.bpf.get_syscall_fnname(chamada),
                                       funcao, desc)
+
+            # Sondas de funcao interna do kernel (sem prefixo de syscall).
+            for evento, funcao, desc in (
+                    ("vfs_unlink", "kprobe__vfs_unlink", "arquivo apagado"),
+                    ("vfs_rename", "kprobe__vfs_rename", "arquivo renomeado")):
+                self._attach_opcional(evento, funcao, desc)
+
+            # Conexao aceita: e kretprobe, o socket so existe no retorno.
+            try:
+                self.bpf.attach_kretprobe(event="inet_csk_accept",
+                                          fn_name="kretprobe__inet_csk_accept")
+                self._probes_opcionais["inet_csk_accept"] = True
+                print("[+] eBPF: inet_csk_accept (conexao aceita) anexada.")
+            except Exception as exc:
+                self._probes_opcionais["inet_csk_accept"] = False
+                print("[!] eBPF: inet_csk_accept INDISPONIVEL: %s" % exc)
 
             # Fim de processo e tracepoint, nao kprobe: o BCC anexa sozinho pelo
             # nome da funcao, entao nao entra na lista de attach explicito.
@@ -253,6 +281,46 @@ class SysInspectorEngine:
                     node.listening.append(escuta)
             except Exception:
                 pass
+
+        elif ev_type == 'A':  # Conexao ACEITA (alguem entrou)
+            try:
+                origem = socket.inet_ntop(socket.AF_INET,
+                                          struct.pack("I", event.daddr))
+                marca = "aceita de %s na porta %d" % (origem, event.sport)
+                if marca not in node.accepted:
+                    node.accepted.append(marca)
+            except Exception:
+                pass
+
+        elif ev_type == 'P':  # ptrace / process_vm_readv
+            alvo_pid = int(event.inspector_pid)
+            via = "process_vm_readv" if int(event.prio) < 0 else "ptrace"
+            marca = "%s -> pid %d" % (via, alvo_pid)
+            if marca not in node.mem_access:
+                node.mem_access.append(marca)
+
+        elif ev_type == 'G':  # memfd_create (fileless)
+            node.memfd_created += 1
+            if filename and filename not in node.memfd_names:
+                node.memfd_names.append(filename)
+
+        elif ev_type == 'Z':  # memoria virando executavel
+            node.exec_mem_grants += 1
+
+        elif ev_type == 'B':  # uso de bpf() por terceiros
+            node.bpf_calls += 1
+
+        elif ev_type == 'U':  # apagou / renomeou (anti-forense)
+            if int(event.prio) == 1:
+                node.files_renamed += 1
+            else:
+                node.files_deleted += 1
+
+        elif ev_type == 'C':  # namespace (fuga de conteiner)
+            node.ns_changes += 1
+
+        elif ev_type == 'K':  # kexec_load
+            node.kexec_calls += 1
 
         elif ev_type == 'R':  # Read
             node.read_bytes_delta += event.io_bytes
