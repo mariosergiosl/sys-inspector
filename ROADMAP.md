@@ -71,7 +71,7 @@ This document outlines the development trajectory of **Sys-Inspector**.
 
 ## 🚧 In Progress / Next Steps
 
-- [ ] **Detection assurance loop**
+- [~] **Detection assurance loop** *(partly delivered)*
   - Agents report their capabilities so the server knows what can be measured
     on each host.
   - The test scenario declares what it ran, with the signal each check should
@@ -81,18 +81,21 @@ This document outlines the development trajectory of **Sys-Inspector**.
 - [ ] **Super-timeline**
   - A single ordered stream of every event (process spawn, persistence created,
     connection opened, finding raised), so sequence becomes visible.
-- [ ] **Correlation rules**
+- [x] **Correlation rules** *(delivered in v1.0.0)*
   - Turn several weak signals into one conclusion that no single signal
-    supports on its own.
+    supports on its own. Four rules run over real captured events: active
+    command channel, persistence created after activity, the same artefact seen
+    across several hosts, and a sequence of techniques read as one progression.
 - [ ] **SCAP / compliance cross-reference**
   - Static policy deviation combined with observed runtime execution, to answer
     whether a deviation was actually exercised.
 - [ ] **Dual eBPF backends**
   - BCC and libbpf/CO-RE available side by side, not one replacing the other,
     so results from two independent capture methods can be compared.
-- [ ] **Role-separated packaging**
+- [x] **Role-separated packaging** *(delivered in v1.0.0)*
   - Distinct agent, server and common packages, so an inspected host does not
-    carry server code.
+    carry server code. Four packages are published per release: base, agent,
+    server and scenarios.
 - [ ] **Container awareness**
   - Detect whether a PID belongs to a container; surface pod and container
     identity alongside the process.
