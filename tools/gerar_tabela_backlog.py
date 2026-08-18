@@ -245,20 +245,31 @@ def gerar(itens, saida, origem):
             prontos.append(i)
 
     out.append("## Ordem logica: o que ja da para comecar\n\n")
-    out.append("Itens abertos SEM dependencia pendente, ordenados por quantos\n")
-    out.append("outros destravam. Gargalo pequeno vale mais que item grande e\n")
-    out.append("isolado, e e essa a leitura que a coluna Destrava entrega.\n\n")
-    out.append("| ID | Item | Destrava |\n|---|---|---|\n")
-    prontos.sort(key=lambda i: -len(destrava.get(i["id"], [])))
-    for i in prontos[:20]:
-        alvo = destrava.get(i["id"], [])
-        out.append("| `%s` | %s | %s |\n"
-                   % (i["id"], limpa(i["texto"])[:94],
-                      ", ".join("`%s`" % a for a in alvo) or "-"))
-    if len(prontos) > 20:
-        out.append("| ... | *e mais %d itens sem dependencia declarada* | |\n"
-                   % (len(prontos) - 20))
-    out.append("\n")
+    out.append("Itens abertos sem dependencia pendente, **agrupados por tema**,\n")
+    out.append("porque agrupar por superficie tocada e o que elimina retrabalho\n")
+    out.append("(D-023). Dentro de cada tema, primeiro os que mais destravam.\n\n")
+    out.append("> **Cuidado ao ler:** ausencia aqui significa **dependencia nao\n")
+    out.append("> declarada**, nao dependencia inexistente. So o que foi escrito\n")
+    out.append("> como `(dep: ...)` no backlog e conhecido. Um tema inteiro que\n")
+    out.append("> apareca livre provavelmente tem cadeia interna por declarar.\n\n")
+
+    prontos_por_tema = {}
+    for i in prontos:
+        prontos_por_tema.setdefault(i["secao"], []).append(i)
+
+    for secao in ordem_secao:
+        lst = prontos_por_tema.get(secao)
+        if not lst:
+            continue
+        lst.sort(key=lambda i: -len(destrava.get(i["id"], [])))
+        out.append("**%s** (%d)\n\n" % (limpa(secao), len(lst)))
+        out.append("| ID | Item | Destrava |\n|---|---|---|\n")
+        for i in lst:
+            alvo = destrava.get(i["id"], [])
+            out.append("| `%s` | %s | %s |\n"
+                       % (i["id"], limpa(i["texto"])[:96],
+                          ", ".join("`%s`" % a for a in alvo) or "-"))
+        out.append("\n")
 
     if travados:
         out.append("## Travados: esperando outro item\n\n")
