@@ -140,6 +140,29 @@ SINAIS = (
      "Dominio resolvido pelo processo, capturado no proprio pacote. Puro "
      "registro por enquanto; e o insumo da analise de periodicidade de "
      "beaconing (regra futura, ainda nao implementada)."),
+
+    # [Lote 2, 2026-08-19] Sinais das sondas de SNI (C-022) e de arvore de
+    # montagem (C-023). A ordem dentro da tabela segue a severidade, como o
+    # resto: pivot_root em HIGH sobe, mount e SNI descem.
+    (16777216, "pivot_root", "trocou a raiz do sistema de arquivos", SEV_HIGH,
+     "pivot_root substitui a raiz que o processo enxerga. Fora de um runtime "
+     "de conteiner iniciando um conteiner, e o passo que transforma uma troca "
+     "de namespace em acesso efetivo a outra arvore de arquivos, e e a segunda "
+     "metade de uma fuga de conteiner: a primeira (setns/unshare) ja tem "
+     "sinal proprio, e as duas no mesmo processo descrevem a fuga inteira."),
+    (8388608, "mount_op", "montou sistema de arquivos", SEV_LOW,
+     "mount() executado por este processo. Volume normal e alto (systemd, "
+     "autofs, runtime de conteiner, automontagem de midia). O que muda a "
+     "leitura e a companhia: montagem com MS_BIND logo depois de uma troca de "
+     "namespace e a forma corrente de trazer um caminho do host para dentro "
+     "de um conteiner."),
+    (4194304, "tls_sni", "nome do destino em conexao TLS (SNI)", SEV_INFO,
+     "Nome do servidor declarado em claro pelo proprio ClientHello, no socket "
+     "da conexao. Alcanca o que o DNS nao alcanca: destino resolvido por "
+     "cache, endereco fixo sem consulta, ou resolucao por DoH. Puro registro, "
+     "como o DNS: o valor esta em cruzar o nome com listas de ameaca e em "
+     "amarrar o nome ao fluxo que de fato aconteceu, e nao a uma consulta "
+     "feita ao lado dele."),
 )
 
 # Ordem de exibicao ja e a ordem da tupla: do que mais pesa para o que menos.

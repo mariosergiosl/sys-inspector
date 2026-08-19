@@ -286,3 +286,96 @@ def test_titulo_do_bloco_probe_signals_nao_parece_um_carimbo_de_evento():
     assert "Probe Signals" in html
     assert not re.search(r"\d{4}-\d{2}-\d{2}", html), (
         "O titulo do bloco Probe Signals voltou a conter uma data isolada.")
+
+
+# ------------------------------------------------------------------------------
+# LOTE 2 (2026-08-19): os sinais novos nascem no registro unico, e o icone do
+# badge acompanha o dado em TODO lugar do detalhe do processo, nao so na tabela
+# Probe Signals (pedido do Mario).
+#
+# Estes testes nao repetem "existe botao de filtro?" e "existe linha na
+# legenda?": aqueles testes ja varrem TAG_MAP inteiro, e por isso passaram a
+# cobrir os sinais novos sozinhos, sem uma linha a mais. Era exatamente esse o
+# objetivo do registro unico, e o fato de nao ter dado trabalho e a prova de que
+# ele funcionou.
+# ------------------------------------------------------------------------------
+SINAIS_DO_LOTE_2 = ("TLS_SNI", "MOUNT_OP", "PIVOT_ROOT")
+
+
+def test_os_sinais_do_lote_2_estao_no_registro_unico(tags_renderizaveis):
+    for tag in SINAIS_DO_LOTE_2:
+        assert tag in tags_renderizaveis, tag
+
+
+def test_os_sinais_do_lote_2_sao_de_fato_produzidos_pelo_coletor(tags_produzidas):
+    """A outra metade: badge sem coletor e icone que nunca acende."""
+    for tag in SINAIS_DO_LOTE_2:
+        assert tag in tags_produzidas, tag
+
+
+def test_cada_sinal_do_lote_2_tem_bit_severidade_e_explicacao():
+    from src.core import risk
+    from src.core import badges as badges_reg
+
+    chaves = {chave: (sev, exp)
+              for _b, chave, _r, sev, exp in risk.SINAIS}
+    for tag in SINAIS_DO_LOTE_2:
+        chave = tag.lower()
+        assert chave in chaves, chave
+        severidade, explicacao = chaves[chave]
+        assert severidade, chave
+        # A explicacao e o texto que o analista le para decidir. Um rotulo
+        # tecnico curto ("mount") nao ensina nada a quem nao sabe o que
+        # perguntar.
+        assert len(explicacao) > 80, chave
+        # E a MESMA explicacao no badge: fonte unica (D-021/D-028).
+        assert badges_reg.TAG_MAP[tag][3] == explicacao
+
+
+def test_o_bloco_probe_signals_mostra_os_campos_do_lote_2_com_o_icone():
+    """
+    O pedido do Mario: o icone do badge tem que aparecer em todo lugar do
+    processo expandido que mostre dado ligado a ele, e nao so na arvore. Sem
+    isso o leitor precisa decorar qual emoji corresponde a qual campo.
+    """
+    from src.collectors.process_tree import ProcessNode
+    from src.core import badges as badges_reg
+    from src.exporters.html_report import _render_probe_signals
+
+    node = ProcessNode(4242, 1, "cliente-tls", 0)
+    node.tls_sni = ["chaos-sni-probe.sys-inspector.test"]
+    node.mount_ops = ["/mnt/alvo (flags 0x1000)"]
+    node.pivot_roots = ["/nova-raiz"]
+
+    html = _render_probe_signals(node)
+    for tag, valor in (("TLS_SNI", "chaos-sni-probe.sys-inspector.test"),
+                       ("MOUNT_OP", "/mnt/alvo"),
+                       ("PIVOT_ROOT", "/nova-raiz")):
+        assert valor in html, valor
+        assert badges_reg.TAG_MAP[tag][0] in html, tag
+
+
+def test_campo_vazio_do_lote_2_nao_desenha_linha_nenhuma():
+    """
+    D-020 na pratica: silencio no bloco significa "a sonda olhou e nao havia",
+    e nao "nao foi coletado". Uma linha "TLS SNI: 0" diria a mesma coisa que
+    "nao ha sonda de SNI", que sao fatos diferentes.
+    """
+    from src.collectors.process_tree import ProcessNode
+    from src.exporters.html_report import _render_probe_signals
+
+    node = ProcessNode(4242, 1, "processo-quieto", 0)
+    assert _render_probe_signals(node) == ""
+
+
+def test_os_sinais_do_lote_2_sobem_na_arvore_como_os_demais():
+    """
+    Regressao do F-201: os badges sobem para o ancestral a partir de uma lista
+    DERIVADA de TAG_MAP. Se alguem voltar a escrever essa lista a mao, os sinais
+    novos param de aparecer no PID 1 e o score da subarvore fica sem o icone que
+    o explica -- que foi exatamente o defeito corrigido no lote anterior.
+    """
+    from src.collectors.process_tree import TAGS_QUE_SOBEM_NA_ARVORE
+
+    for tag in SINAIS_DO_LOTE_2:
+        assert tag in TAGS_QUE_SOBEM_NA_ARVORE, tag

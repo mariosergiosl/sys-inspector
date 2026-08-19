@@ -96,6 +96,46 @@ features:
   security_inspection: true
 
 # ------------------------------------------------------------------------------
+# 5-B. FORENSICS: DIRECTED ACQUISITION (C-043, decision D-032)
+# ------------------------------------------------------------------------------
+# When a finding is raised, preserve enough of the artifact to IDENTIFY it and
+# DIRECT the next analysis -- never the bulk of it. Mass collection (memory
+# images, traffic dumps) is bench work and is deliberately out of scope: what is
+# kept here is the full-object hash, the metadata, and a small excerpt.
+#
+# DISABLED BY DEFAULT ON PURPOSE. Turning this on makes the agent WRITE to the
+# host it measures. That must be an operator decision, never a side effect of
+# upgrading the tool. While disabled, every finding still says so explicitly,
+# so "not collected" is never read as "nothing was there".
+forensics:
+  acquisition:
+    enabled: false
+
+    # Excerpt kept per artifact, in bytes. 4 KB covers an ELF header, the start
+    # of a shellcode and the first strings, which is what answers "which pattern
+    # is this". Raising it does not buy more identification, only more bytes.
+    excerpt_bytes: 4096
+
+    # Above this size the hash covers only the excerpt instead of the whole
+    # object, and the report states that. Hashing is cheap in space but not in
+    # READS: scanning a huge object on the measured host costs I/O nobody asked
+    # for.
+    hash_max_bytes: 16777216
+
+    # Full copies are made only for artifacts small enough to fit here. This is
+    # the CUSTODY_FULL case of D-032: the analyst gets the sample itself and does
+    # not have to come back to a host that may no longer exist.
+    copy_max_bytes: 262144
+
+    # Budget for the WHOLE capture. Without it, a host with 200 findings would
+    # acquire 200 times the per-artifact cap and the per-artifact cap would mean
+    # nothing.
+    capture_max_bytes: 4194304
+
+    # Where preserved copies land. Created with mode 0700, files with 0400.
+    dir: "/var/lib/sys-inspector/acquired"
+
+# ------------------------------------------------------------------------------
 # 6. SECURITY (Zero-Knowledge & Hybrid Encryption)
 # ------------------------------------------------------------------------------
 security:

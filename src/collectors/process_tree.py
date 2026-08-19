@@ -58,6 +58,13 @@ SCORE_NS_CHANGE = 524288
 SCORE_KEXEC_LOAD = 1048576
 SCORE_DNS_QUERY = 2097152
 
+# [Lote 2] Sinais das sondas de 2026-08-19. SNI completa o "com quem" onde o DNS
+# nao alcanca (cache, IP fixo, DoH); mount e pivot_root completam setns/unshare
+# na fuga de conteiner, que e o passo seguinte a troca de namespace.
+SCORE_TLS_SNI = 4194304
+SCORE_MOUNT_OP = 8388608
+SCORE_PIVOT_ROOT = 16777216
+
 # Diretorios de onde um binario legitimo normalmente NAO e executado.
 UNSAFE_EXEC_PREFIXES = ("/tmp/", "/dev/shm/", "/var/tmp/", "/run/shm/")
 
@@ -544,6 +551,14 @@ class ProcessNode:
         self.kexec_calls = 0            # troca de kernel
         self.dns_queries = []           # dominios consultados (nome do destino)
 
+        # [Lote 2, C-022/C-023] Declarados aqui pelo mesmo motivo dos de cima:
+        # to_json serializa vars(node), e um campo que so nasce quando o evento
+        # ocorre desaparece do JSON nas capturas em que nao ocorreu, tornando
+        # "nao aconteceu" indistinguivel de "nao foi coletado" (D-020).
+        self.tls_sni = []               # nomes vistos no ClientHello TLS
+        self.mount_ops = []             # montagens feitas por este processo
+        self.pivot_roots = []           # trocas da raiz do sistema de arquivos
+
         self.detection_reasons = []
 
     def update_static_info(self):
@@ -941,6 +956,18 @@ class ProcessTree:
         if n.dns_queries and "DNS_QUERY" not in n.context_tags:
             n.context_tags.append("DNS_QUERY")
         if "DNS_QUERY" in n.context_tags: n.anomaly_score |= SCORE_DNS_QUERY
+
+        if n.tls_sni and "TLS_SNI" not in n.context_tags:
+            n.context_tags.append("TLS_SNI")
+        if "TLS_SNI" in n.context_tags: n.anomaly_score |= SCORE_TLS_SNI
+
+        if n.mount_ops and "MOUNT_OP" not in n.context_tags:
+            n.context_tags.append("MOUNT_OP")
+        if "MOUNT_OP" in n.context_tags: n.anomaly_score |= SCORE_MOUNT_OP
+
+        if n.pivot_roots and "PIVOT_ROOT" not in n.context_tags:
+            n.context_tags.append("PIVOT_ROOT")
+        if "PIVOT_ROOT" in n.context_tags: n.anomaly_score |= SCORE_PIVOT_ROOT
 
     def aggregate_stats(self):
         """Bubble up stats AND BADGES using Recursive DFS."""

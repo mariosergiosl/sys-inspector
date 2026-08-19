@@ -21,7 +21,14 @@
 #                cred_change, kmod_load, new_listener, accepted_conn,
 #                mem_access, memfd_create, exec_mem_grant, bpf_use,
 #                file_deleted, file_renamed, ns_change, kexec_load, dns_query
-#   --all        Enable ALL tests (Default if no option is provided)
+#   --lote2      Enable the Lote 2 signals (2026-08-19): tls_sni (C-022),
+#                mount_op and pivot_root (C-023), plus the rootkit collector
+#                layers that are safe to trigger (C-037 S1/S2/S3)
+#   --rootkit    Load the DEMO kernel rootkit (C-037 layer S5). NOT included in
+#                --all: it taints the kernel until reboot and needs the module
+#                built by hand first (tools/rootkit_demo/, make). Read the
+#                README there before using it
+#   --all        Enable ALL tests EXCEPT --rootkit (Default if no option given)
 #   --duration   Duration in seconds before auto-stop (Default: 40)
 #   --help       Show this message
 #
@@ -58,6 +65,8 @@ ENABLE_DISK=false
 ENABLE_PROC=false
 ENABLE_FANO=false
 ENABLE_CONT=false
+ENABLE_LOTE2=false
+ENABLE_ROOTKIT=false
 ENABLE_GPU=false
 ENABLE_PROBES=false
 ALL_MODE=false
@@ -89,7 +98,7 @@ log_msg() {
 # DESCRIPTION: Prints the help message extracted from the file header.
 # PARAMETER: None
 usage() {
-    grep "^# OPTIONS:" "$0" -A 11 | sed 's/^#//'
+    grep "^# OPTIONS:" "$0" -A 19 | sed 's/^#//'
     exit 0
 }
 
@@ -144,6 +153,58 @@ cleanup() {
     # probe_ns_change nao e python: e o "unshare --fork --pid -- sleep 2"
     # em loop; pkill -P $$ (item 1) ja mata o subshell que o gera, e cada
     # "sleep 2" some sozinho pelo --fork --pid ao perder o pai unshare.
+
+    # [Lote 2] Artefatos de 2026-08-19.
+    pkill -f "probe_tls_sni.py"
+    pkill -f "probe_tls_sink.py"
+    pkill -f "probe_mount.sh"
+    pkill -f "probe_pivot_root.sh"
+
+    # 2.3 [Lote 2] Desfazer o que MODIFICA o host, e nao apenas matar processo.
+    #
+    # Esta e a diferenca entre os artefatos do Lote 2 e os anteriores: montagem,
+    # modulo de kernel e ld.so.preload sobrevivem a morte do processo que os
+    # criou. Deixar qualquer um dos tres para tras contamina a proxima rodada e,
+    # no caso do preload, o host inteiro.
+
+    # Montagem: o laco desmonta sozinho, mas se o script morreu entre o mount e
+    # o umount sobra uma montagem pendurada. Repetido porque pode haver mais de
+    # uma empilhada no mesmo ponto.
+    for _tentativa in 1 2 3; do
+        mountpoint -q "${TEMP_DIR}/mnt_destino" 2>/dev/null || break
+        umount "${TEMP_DIR}/mnt_destino" 2>/dev/null || break
+    done
+
+    # ld.so.preload: restaura o arquivo anterior, ou remove o que plantamos.
+    # ARMADILHA ja documentada (2026-08-07): remover o arquivo NAO desmapeia a
+    # biblioteca dos processos que ja estao rodando. Ao validar uma rodada
+    # seguinte, reiniciar os servicos (ou o host) antes de concluir que a
+    # limpeza falhou.
+    if [ -f "${TEMP_DIR}/preload_plantado" ]; then
+        if [ -f "${TEMP_DIR}/ld.so.preload.bak" ]; then
+            cp -f "${TEMP_DIR}/ld.so.preload.bak" /etc/ld.so.preload
+        else
+            rm -f /etc/ld.so.preload
+        fi
+        rm -f /usr/local/lib/libchaosprobe.so
+    fi
+
+    # Modulo in-tree carregado para provar a camada S1.
+    if [ -f "${TEMP_DIR}/kmod_carregado" ]; then
+        rmmod "$(cat "${TEMP_DIR}/kmod_carregado")" 2>/dev/null
+    fi
+
+    # Rootkit didatico: so pode sair DEPOIS de reaparecer sozinho na lista,
+    # porque rmmod o procura justamente na lista da qual ele saiu. O aviso
+    # importa: se a limpeza rodar antes de hide_seconds expirar, o modulo fica
+    # carregado ate o operador remove-lo a mao (ou ate o reboot).
+    if [ -f "${TEMP_DIR}/rootkit_carregado" ]; then
+        if rmmod sysinspector_demo_hide 2>/dev/null; then
+            log_msg "INFO" "[ROOTKIT] modulo didatico removido."
+        else
+            log_msg "WARN" "[ROOTKIT] sysinspector_demo_hide ainda escondido: aguarde o fim de hide_seconds e rode 'rmmod sysinspector_demo_hide'. O kernel segue tingido ate o reboot."
+        fi
+    fi
 
     # 3. Restore Network Rules
     if [ "$ENABLE_NET" = "true" ]; then
@@ -209,6 +270,8 @@ while [[ "$#" -gt 0 ]]; do
         --container) ENABLE_CONT=true ;;
         --gpu) ENABLE_GPU=true ;;
         --probes) ENABLE_PROBES=true ;;
+        --lote2) ENABLE_LOTE2=true ;;
+        --rootkit) ENABLE_ROOTKIT=true ;;
         --all) ALL_MODE=true ;;
         --duration) shift; DURATION="$1" ;;
         --help) usage ;;
@@ -220,6 +283,10 @@ done
 if [ "$ALL_MODE" = "true" ]; then
     ENABLE_NET=true; ENABLE_FW=true; ENABLE_DISK=true; ENABLE_PROC=true
     ENABLE_FANO=true; ENABLE_CONT=true; ENABLE_GPU=true; ENABLE_PROBES=true
+    ENABLE_LOTE2=true
+    # ENABLE_ROOTKIT fica DE FORA de --all deliberadamente: ele carrega codigo
+    # no kernel, tinge o host ate o proximo boot e tem risco de corrida na
+    # lista de modulos. Quem quiser tem que escrever --rootkit.
 fi
 
 #--- Trava de gateway --------------------------------------------------
@@ -873,6 +940,252 @@ EOF
     echo "      * (dns_query ja coberto pelo MODULE 1 / dns_noise)"
 else
     log_msg "TYPE" "[PROBES] SKIPPED"
+fi
+
+# --------------------------------------------------------------------------------------
+# MODULE 7.6: SINAIS DO LOTE 2 (C-022 SNI, C-023 mount/pivot_root, C-037 rootkit)
+# --------------------------------------------------------------------------------------
+# Mesma regra do MODULE 7.5, pelo mesmo motivo (achado do Mario em 2026-08-18):
+# cada sinal roda em PROCESSO PROPRIO, com nome autoexplicativo. Sinal
+# concentrado num processo so mascara erro de atribuicao, porque aquele PID
+# "deveria mesmo" ter todos os badges.
+#
+# Uma excecao inevitavel, e declarada: pivot_root NAO existe sozinho. Ele exige
+# um namespace de montagem proprio (senao trocaria a raiz do host inteiro) e uma
+# montagem para virar raiz. Entao o processo daquele artefato carrega tres
+# badges de proposito: NS_CHANGE, MOUNT_OP e PIVOT_ROOT. Isso nao e concentracao
+# preguicosa, e a forma real do evento: uma fuga de conteiner e exatamente essa
+# sequencia, e ve-la junta e o que se quer provar.
+if [ "$ENABLE_LOTE2" = "true" ]; then
+    log_msg "TYPE" "[LOTE2] C-022 SNI, C-023 mount/pivot_root, C-037 rootkit"
+
+    # ----------------------------------------------------------------------
+    # 1. tls_sni (C-022): ClientHello com SNI numa conexao para a porta 443.
+    # ----------------------------------------------------------------------
+    # O destino e um sorvedouro LOCAL, e nao um site na internet, por tres
+    # razoes: a prova nao pode depender de o lab ter saida para a internet, o
+    # nome consultado precisa ser previsivel para a conferencia, e nenhum
+    # trafego de teste deve sair do lab.
+    #
+    # O sorvedouro roda em processo SEPARADO de proposito. Se ele fosse uma
+    # thread do mesmo processo, o bind e o accept dele colariam os badges
+    # NEW_LISTENER e ACCEPTED_CONN no processo que deveria exibir apenas
+    # TLS_SNI, e a atribuicao do sinal ficaria impossivel de conferir.
+    #
+    # O handshake FALHA de proposito (o sorvedouro nao responde TLS). Nao
+    # importa: a sonda captura o ClientHello no tcp_sendmsg, que ja saiu.
+    cat << 'EOF' > "${TEMP_DIR}/probe_tls_sink.py"
+import socket
+import sys
+
+# Sorvedouro TLS: aceita a conexao na 443 e fecha. Existe so para o
+# ClientHello ter para onde ir. Nao fala TLS, e nao precisa.
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    srv.bind(("127.0.0.1", 443))
+except Exception as exc:
+    print("probe_tls_sink: nao consegui abrir a 443: %s" % exc)
+    sys.exit(1)
+srv.listen(8)
+while True:
+    try:
+        conn, _ = srv.accept()
+        conn.recv(4096)      # consome o ClientHello e descarta
+        conn.close()
+    except Exception:
+        pass
+EOF
+
+    cat << 'EOF' > "${TEMP_DIR}/probe_tls_sni.py"
+import socket
+import ssl
+import sys
+sys.path.insert(0, "/tmp/chaos_artifacts")
+from probe_lib import loop
+
+# Nome ARBITRARIO e reconhecivel: e por ele que se confere, no laudo, que o
+# SNI capturado veio deste artefato e nao de trafego real do host.
+NOME = "chaos-sni-probe.sys-inspector.test"
+
+
+def toca():
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    bruto = socket.create_connection(("127.0.0.1", 443), timeout=2)
+    try:
+        # O ClientHello (com o SNI) sai AQUI. O handshake nao completa,
+        # porque o sorvedouro nao responde TLS, e isso e irrelevante para a
+        # sonda: ela le o que foi enviado, nao o que foi respondido.
+        ctx.wrap_socket(bruto, server_hostname=NOME)
+    except Exception:
+        pass
+    finally:
+        try:
+            bruto.close()
+        except Exception:
+            pass
+
+
+loop(3, toca)
+EOF
+
+    python3 "${TEMP_DIR}/probe_tls_sink.py" >/dev/null 2>&1 &
+    echo "      * probe_tls_sink (sorvedouro na 443) PID: $!"
+    sleep 1
+    python3 "${TEMP_DIR}/probe_tls_sni.py" &
+    echo "      * probe_tls_sni PID: $! (SNI: chaos-sni-probe.sys-inspector.test)"
+
+    # ----------------------------------------------------------------------
+    # 2. mount_op (C-023): montagem real, confinada ao diretorio do cenario.
+    # ----------------------------------------------------------------------
+    # Bind mount de um diretorio do proprio cenario sobre outro diretorio do
+    # proprio cenario, desfeito logo em seguida. E uma montagem de verdade (a
+    # sonda esta na syscall, entao nao ha como simular), e ao mesmo tempo nao
+    # altera nada que o host use: origem e destino pertencem ao cenario.
+    mkdir -p "${TEMP_DIR}/mnt_origem" "${TEMP_DIR}/mnt_destino"
+    echo "conteudo de teste" > "${TEMP_DIR}/mnt_origem/marcador.txt"
+    cat << 'EOF' > "${TEMP_DIR}/probe_mount.sh"
+#!/bin/bash
+# Monta e desmonta em laco. O umount vem logo apos o mount de proposito: um
+# cenario interrompido no meio nao pode deixar montagem pendurada no host.
+BASE="/tmp/chaos_artifacts"
+while true; do
+    mount --bind "${BASE}/mnt_origem" "${BASE}/mnt_destino" 2>/dev/null
+    sleep 1
+    umount "${BASE}/mnt_destino" 2>/dev/null
+    sleep 2
+done
+EOF
+    chmod +x "${TEMP_DIR}/probe_mount.sh"
+    "${TEMP_DIR}/probe_mount.sh" &
+    echo "      * probe_mount PID: $!"
+
+    # ----------------------------------------------------------------------
+    # 3. pivot_root (C-023): a segunda metade da fuga de conteiner.
+    # ----------------------------------------------------------------------
+    # Roda dentro de um namespace de montagem PROPRIO. Sem isso a troca de raiz
+    # valeria para o host inteiro, que e a diferenca entre um teste e um
+    # incidente. Dentro do namespace, a nova raiz e um tmpfs em memoria, e tudo
+    # desaparece quando o processo termina.
+    cat << 'EOF' > "${TEMP_DIR}/probe_pivot_root.sh"
+#!/bin/bash
+# Este artefato dispara TRES sinais no mesmo processo, e isso e proposital:
+# pivot_root nao acontece sem unshare (NS_CHANGE) e sem mount (MOUNT_OP). A
+# sequencia inteira e o padrao de fuga de conteiner que se quer ver junto.
+while true; do
+    unshare --mount --fork -- /bin/bash -c '
+        NOVA=$(mktemp -d)
+        mount -t tmpfs tmpfs "$NOVA" 2>/dev/null || exit 0
+        mkdir -p "$NOVA/raiz_antiga" "$NOVA/bin" "$NOVA/tmp"
+        cd "$NOVA" || exit 0
+        pivot_root . raiz_antiga 2>/dev/null
+        sleep 2
+    ' 2>/dev/null
+    sleep 4
+done
+EOF
+    chmod +x "${TEMP_DIR}/probe_pivot_root.sh"
+    "${TEMP_DIR}/probe_pivot_root.sh" &
+    echo "      * probe_pivot_root PID: $! (dispara tambem NS_CHANGE e MOUNT_OP)"
+
+    # ----------------------------------------------------------------------
+    # 4. C-037 camada S1/S2: modulo de kernel carregado FORA do boot.
+    # ----------------------------------------------------------------------
+    # Modulo REAL, in-tree e assinado pela distribuicao: o evento e verdadeiro
+    # (o kernel de fato carrega um modulo agora, muito depois do boot) e o
+    # kernel NAO fica tingido, porque taint so sobe com modulo fora da arvore
+    # ou sem assinatura. Removido na limpeza.
+    #
+    # numdummies=0 evita que o modulo crie interface de rede nenhuma: o
+    # objetivo e o EVENTO da carga, nao um dispositivo novo no host medido.
+    LOTE2_KMOD=""
+    for candidato in dummy nls_iso8859_1 crc32_generic; do
+        if modinfo "$candidato" >/dev/null 2>&1; then
+            if [ "$candidato" = "dummy" ]; then
+                modprobe "$candidato" numdummies=0 2>/dev/null && LOTE2_KMOD="$candidato"
+            else
+                modprobe "$candidato" 2>/dev/null && LOTE2_KMOD="$candidato"
+            fi
+            [ -n "$LOTE2_KMOD" ] && break
+        fi
+    done
+    if [ -n "$LOTE2_KMOD" ]; then
+        echo "$LOTE2_KMOD" > "${TEMP_DIR}/kmod_carregado"
+        echo "      * probe_kmod_runtime: modulo '${LOTE2_KMOD}' carregado agora (S1)"
+    else
+        log_msg "WARN" "[LOTE2] nenhum modulo candidato disponivel: camada S1 do rootkit NAO provada nesta rodada"
+    fi
+
+    # ----------------------------------------------------------------------
+    # 5. C-037 camada S3: rootkit de espaco de usuario (ld.so.preload).
+    # ----------------------------------------------------------------------
+    # Segue a correcao de 2026-08-07, que continua valendo: a biblioteca fica
+    # num caminho de SISTEMA (/usr/local/lib), nunca em /tmp. Assim o detector
+    # de persistencia e a camada S3 disparam sobre o ARQUIVO e sobre a
+    # PROCEDENCIA da biblioteca, sem que o detector de runtime passe a marcar
+    # todo processo do host como "biblioteca de local nao confiavel".
+    #
+    # Sem gcc o artefato e PULADO e reportado, jamais substituido por um
+    # caminho inexistente: preload apontando para arquivo que nao existe faz o
+    # carregador reclamar em TODO processo do host, que e contaminar o alvo.
+    if command -v gcc >/dev/null 2>&1; then
+        echo 'void __attribute__((constructor)) chaos_stub(void) { }' \
+            > "${TEMP_DIR}/preload_stub.c"
+        if gcc -shared -fPIC -o /usr/local/lib/libchaosprobe.so \
+               "${TEMP_DIR}/preload_stub.c" 2>/dev/null; then
+            cp -f /etc/ld.so.preload "${TEMP_DIR}/ld.so.preload.bak" 2>/dev/null
+            echo "/usr/local/lib/libchaosprobe.so" > /etc/ld.so.preload
+            touch "${TEMP_DIR}/preload_plantado"
+            echo "      * probe_preload_rootkit: /etc/ld.so.preload plantado (S3)"
+        else
+            log_msg "WARN" "[LOTE2] gcc falhou ao construir o stub: camada S3 NAO provada nesta rodada"
+        fi
+    else
+        log_msg "WARN" "[LOTE2] gcc ausente: camada S3 do rootkit NAO provada nesta rodada"
+    fi
+
+    echo "      * (camada S4/taint: so e provada junto com --rootkit)"
+else
+    log_msg "TYPE" "[LOTE2] SKIPPED"
+fi
+
+# --------------------------------------------------------------------------------------
+# MODULE 7.7: ROOTKIT DE KERNEL DE VERDADE (C-037, camada S5) -- OPCAO PROPRIA
+# --------------------------------------------------------------------------------------
+# NAO entra em --all, e exige --rootkit escrito a mao. Duas razoes, as duas
+# serias:
+#
+#   1. O modulo TINGE o kernel (bits O e E) ate o proximo boot. Isso e
+#      irreversivel sem reiniciar, e passa a fazer a camada S4 do proprio
+#      coletor acusar o host pelo resto da sessao.
+#   2. Ele mexe na lista de modulos do kernel sem tomar module_mutex (que o
+#      kernel nao exporta). Numa VM ociosa o risco e remoto; num host com carga
+#      concorrente, uma corrida ali derruba o kernel.
+#
+# O .ko precisa ter sido compilado A MAO antes (tools/rootkit_demo/, make). O
+# cenario nao compila nada aqui de proposito: carregar codigo no kernel de um
+# host tem que ser um ato deliberado de quem opera, nunca efeito colateral de
+# rodar um script de teste.
+if [ "$ENABLE_ROOTKIT" = "true" ]; then
+    log_msg "TYPE" "[ROOTKIT] C-037 camada S5: modulo que se esconde da lista"
+    RK_KO="$(dirname "$0")/rootkit_demo/sysinspector_demo_hide.ko"
+    if [ -f "$RK_KO" ]; then
+        log_msg "WARN" "[ROOTKIT] o kernel ficara TINGIDO (O+E) ate o proximo boot"
+        if insmod "$RK_KO" hide_seconds=${DURATION} 2>/dev/null; then
+            touch "${TEMP_DIR}/rootkit_carregado"
+            echo "      * sysinspector_demo_hide carregado e ESCONDIDO por ${DURATION}s"
+            echo "      * confira: lsmod | grep sysinspector_demo_hide  (vazio)"
+            echo "      *          ls -d /sys/module/sysinspector_demo_hide  (existe)"
+        else
+            log_msg "ERR" "[ROOTKIT] insmod falhou (Secure Boot? modulo ja carregado?)"
+        fi
+    else
+        log_msg "ERR" "[ROOTKIT] ${RK_KO} nao existe. Compile antes: cd tools/rootkit_demo && make"
+    fi
+else
+    log_msg "TYPE" "[ROOTKIT] SKIPPED (exige --rootkit explicito; nunca entra em --all)"
 fi
 
 # --------------------------------------------------------------------------------------

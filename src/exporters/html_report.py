@@ -20,7 +20,8 @@ from src.exporters.web_assets import (HTML_TEMPLATE, CSS_BASE, JS_BLOCK,
                                       LEGEND_HTML, FILTER_BAR_HTML,
                                       BADGE_LEGEND_HTML)
 from src.core.findings import (SEV_INFO, SEVERITY_ORDER, confidence_label,
-                               custody_label, custody_level, CONF_CONFIRMED,
+                               custody_label, custody_level, has_referral,
+                               CONF_CONFIRMED,
                                CONF_PROBABLE, CONF_HEURISTIC, CUSTODY_NONE)
 from src.core import risk
 from src.core import badges as badges_reg
@@ -527,6 +528,13 @@ _PROBE_SIGNAL_ROWS = (
     ("ns_changes", "Namespace Changes", "count", "ns_change"),
     ("kexec_calls", "Kexec Calls", "count", "kexec_load"),
     ("dns_queries", "DNS Queries", "list", "dns_query"),
+    # [Lote 2, 2026-08-19] SNI logo abaixo do DNS de proposito: sao a mesma
+    # pergunta ("com quem este processo falou") por dois caminhos, e ler os
+    # dois lado a lado e o que mostra o caso interessante -- fluxo TLS para um
+    # nome que NAO aparece em nenhuma consulta DNS desta captura.
+    ("tls_sni", "TLS SNI (nome do destino)", "list", "tls_sni"),
+    ("mount_ops", "Mount Operations", "list", "mount_op"),
+    ("pivot_roots", "Pivot Root", "list", "pivot_root"),
 )
 
 _EXPLICACAO_RISCO_POR_CHAVE = {
@@ -1119,17 +1127,96 @@ def _confidence_badge(confidence):
 
 
 def _custody_line(custody):
-    """Linha de custodia: o que foi de fato preservado do artefato."""
+    """
+    Linha de custodia: o que foi de fato preservado do artefato, e o que NAO foi.
+
+    [C-043/D-032] Passou a declarar os limites, e nao so o nivel. Tres coisas
+    tinham que aparecer, porque cada uma muda a leitura da evidencia:
+
+    - o ESCOPO do hash. Um sha256 calculado so sobre o recorte identifica o
+      recorte, nao o objeto. Exibi-lo do mesmo jeito que o hash do objeto
+      inteiro faria o leitor concluir que a amostra esta identificada quando
+      nao esta;
+    - a TRUNCAGEM do recorte, pelo mesmo motivo: recorte cortado em silencio e
+      lido como artefato inteiro (D-020);
+    - o MOTIVO de nao haver aquisicao. "Aquisicao desligada neste agente" e
+      uma resposta; a ausencia muda de significado quando se sabe disso.
+    """
     nivel = custody_level(custody)
-    extra = ""
-    if isinstance(custody, dict) and custody.get("sha256"):
-        extra = " (sha256 %s...)" % _esc(str(custody["sha256"])[:12])
-    aviso = ("" if nivel != CUSTODY_NONE else
+    dados = custody if isinstance(custody, dict) else {}
+    partes = []
+
+    if dados.get("sha256"):
+        escopo = dados.get("hash_scope", "full")
+        if escopo == "full":
+            rotulo = "sha256 do objeto inteiro"
+        else:
+            rotulo = ("sha256 do RECORTE apenas (objeto grande demais para "
+                      "varrer no host medido)")
+        partes.append("%s: <code>%s</code>" % (rotulo, _esc(str(dados["sha256"]))))
+
+    if dados.get("size"):
+        partes.append("tamanho do objeto: %s" % _esc(format_bytes(dados["size"])))
+
+    if dados.get("excerpt_bytes"):
+        corte = (" de %s, o restante NAO foi preservado"
+                 % _esc(format_bytes(dados.get("size", 0)))
+                 if dados.get("truncated") else " (objeto inteiro)")
+        partes.append("recorte preservado: %s%s"
+                      % (_esc(format_bytes(dados["excerpt_bytes"])), corte))
+
+    if dados.get("copy_path"):
+        partes.append("copia integral em <code>%s</code>"
+                      % _esc(str(dados["copy_path"])))
+    if dados.get("copy_error"):
+        partes.append("<span style='color:var(--red)'>a copia falhou: %s</span>"
+                      % _esc(str(dados["copy_error"])))
+
+    if dados.get("acquired") is False and dados.get("reason"):
+        partes.append("<span style='color:#999'>nao adquirido: %s</span>"
+                      % _esc(str(dados["reason"])))
+
+    aviso = ("" if nivel != CUSTODY_NONE or partes else
              " &mdash; nada do artefato foi retido para pericia")
+    detalhe = ("<div class='fnd-cust-det'>" + " &middot; ".join(partes) + "</div>"
+               if partes else "")
+
     return ("<div class='fnd-custody' title='Custodia: o que foi preservado do "
-            "artefato para a pericia. Hoje a ferramenta coleta metadado; hash e "
-            "copia do artefato entram no roadmap.'><b>Custodia:</b> %s%s%s</div>"
-            % (_esc(custody_label(custody)), extra, aviso))
+            "artefato para a pericia. A aquisicao e DIRIGIDA (D-032): hash, "
+            "metadado e um recorte pequeno, o suficiente para identificar e "
+            "direcionar. A massa que PROVA e trabalho de bancada.'>"
+            "<b>Custodia:</b> %s%s%s</div>"
+            % (_esc(custody_label(custody)), aviso, detalhe))
+
+
+def _referral_block(referral):
+    """
+    Encaminhamento a bancada (C-044), VISIVEL no detalhe do achado.
+
+    Nao vai em title/tooltip de proposito. A D-028 pede todo encaminhamento
+    DITO, e um texto que so aparece com o mouse em cima nao esta dito: numa lista
+    de dezenas de achados ninguem passa o mouse em cada um para descobrir se
+    havia direcionamento ali.
+
+    Ausencia tambem e resposta: quando o achado se conclui dentro do alcance da
+    frota, o bloco simplesmente nao aparece, e isso significa "nao precisa de
+    bancada", nao "esqueceram de preencher" (D-020).
+    """
+    if not has_referral(referral):
+        return ""
+    return (
+        "<div class='fnd-referral'>"
+        "<div class='fnd-ref-hdr'>&#128269; Encaminhamento a bancada"
+        "<span class='fnd-ref-why'>o que esta ferramenta NAO conclui, e quem "
+        "conclui</span></div>"
+        "<table class='fnd-ref-tbl'>"
+        "<tr><td class='fnd-ref-k'>Analise necessaria</td><td>%s</td></tr>"
+        "<tr><td class='fnd-ref-k'>Por que este achado a motiva</td><td>%s</td></tr>"
+        "<tr><td class='fnd-ref-k'>Objeto</td><td><code>%s</code></td></tr>"
+        "</table></div>"
+        % (_esc(referral.get("analysis", "")),
+           _esc(referral.get("reason", "")),
+           _esc(referral.get("object", ""))))
 
 
 def _evidence_key_html(key):
@@ -1269,6 +1356,7 @@ def render_findings_panel(findings):
         # detalhe, junto da evidencia). Vem do contrato de resposta do achado.
         conf_html = _confidence_badge(f.get("confidence"))
         custody_html = _custody_line(f.get("custody"))
+        referral_html = _referral_block(f.get("referral"))
 
         items.append(f"""
         <div class="fnd-item" data-sev="{_esc(sev)}" data-source="{_esc(f.get('source', ''))}" data-technique="{_esc(technique)}">
@@ -1285,6 +1373,7 @@ def render_findings_panel(findings):
                 <div class="fnd-desc">{_esc(f.get('description', ''))}</div>
                 {rec_html}
                 {custody_html}
+                {referral_html}
                 {refs_html}
                 <div class="fnd-ev-title">Evidencia</div>
                 {ev_html}

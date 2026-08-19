@@ -117,6 +117,16 @@ TAG_MAP = {
                   _sig("ns_change")),
     "KEXEC_LOAD": ("☢️", "t-kexec", "Carregou kernel via kexec_load", _sig("kexec_load")),
     "DNS_QUERY": ("🌐", "t-dns", "Consulta DNS observada", _sig("dns_query")),
+    # [Lote 2] Sondas de 2026-08-19. SNI e o par do DNS (o mesmo "com quem",
+    # por outro caminho); MOUNT_OP e PIVOT_ROOT sao o par de NS_CHANGE (a
+    # segunda metade da fuga de conteiner). Icone proximo do parente de
+    # proposito: quem ja aprendeu um reconhece o outro.
+    "TLS_SNI": ("🔐", "t-sni", "Nome do destino em conexao TLS (SNI)",
+                _sig("tls_sni")),
+    "MOUNT_OP": ("🗄️", "t-mount", "Montou sistema de arquivos (mount)",
+                 _sig("mount_op")),
+    "PIVOT_ROOT": ("🌀", "t-pivot", "Trocou a raiz do sistema de arquivos (pivot_root)",
+                   _sig("pivot_root")),
 }
 
 # Badges desenhados por caminho proprio em _render_badges (nao vem de uma

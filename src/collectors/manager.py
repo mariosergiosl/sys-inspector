@@ -118,7 +118,7 @@ def correlate_findings_with_processes(findings, processes):
     return findings
 
 
-def collect_findings(processos=None):
+def collect_findings(processos=None, config=None):
     """
     Executa os coletores de achados estaticos e devolve a lista normalizada,
     deduplicada e ordenada por severidade (mais grave primeiro).
@@ -126,8 +126,21 @@ def collect_findings(processos=None):
     Hoje cobre a enumeracao de persistencia; novas fontes (integridade, SCAP)
     entram aqui e herdam automaticamente a deduplicacao e a ordenacao, mantendo
     um unico ponto de composicao de Findings.
+
+    PARAMETER config: configuracao do agente. Serve a aquisicao dirigida
+              (C-043): o Acquirer nasce AQUI, um por captura, porque o orcamento
+              total de bytes e por captura. Um objeto de vida longa acumularia
+              gasto entre capturas e desligaria a aquisicao sozinho depois de
+              algumas horas, sem avisar (a falha do agente que emudece, D-015).
     """
     findings = []
+    acquirer = None
+    try:
+        from src.core.acquisition import Acquirer
+        acquirer = Acquirer(config)
+    except Exception as exc:
+        logging.getLogger("CollectorMgr").error(
+            f"[COLLECT] Acquirer indisponivel: {exc}")
     try:
         findings.extend(collect_persistence())
     except Exception as exc:
@@ -137,12 +150,21 @@ def collect_findings(processos=None):
         findings.extend(collect_hidden())
     except Exception as exc:
         logging.getLogger("CollectorMgr").error(f"[COLLECT] Hidden scan failed: {exc}")
+    # [C-037] Rootkit: o detector de processo oculto acima pega quem esconde
+    # PROCESSO; este pega quem esconde a si mesmo dentro do kernel, cruzando as
+    # tres listas de modulos e o taint. Sao perguntas diferentes, e por isso dois
+    # coletores e nao um.
+    try:
+        from src.collectors.rootkit import collect_rootkit
+        findings.extend(collect_rootkit())
+    except Exception as exc:
+        logging.getLogger("CollectorMgr").error(f"[COLLECT] Rootkit scan failed: {exc}")
     # Reusa a arvore ja coletada em vez de varrer /proc de novo: o custo extra
     # no host inspecionado fica proximo de zero.
     if processos:
         try:
             from src.collectors.memory_forensics import collect_memory_forensics
-            findings.extend(collect_memory_forensics(processos))
+            findings.extend(collect_memory_forensics(processos, acquirer))
         except Exception as exc:
             logging.getLogger("CollectorMgr").error(
                 f"[COLLECT] Memory forensics failed: {exc}")

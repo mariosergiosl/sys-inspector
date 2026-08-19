@@ -144,6 +144,32 @@ struct dns_event_t {
 };
 BPF_PERF_OUTPUT(dns_events);
 
+// Evento de ClientHello TLS, para extrair o SNI (C-022).
+//
+// Mesmo molde do DNS, e pelo mesmo motivo: bytes crus num canal proprio, parse
+// no Python (D-030). Duas diferencas, as duas deliberadas.
+//
+// 1. O BUFFER NAO FICA NA PILHA. Um programa BPF tem 512 bytes de pilha no
+//    TOTAL, e o SNI pode estar depois do byte 200 do ClientHello (a extensao
+//    server_name vem depois de random, session_id e da lista de cifras). Um
+//    buffer util aqui ja estoura a pilha sozinho. A saida e um mapa PERCPU de
+//    um elemento so, usado como area de rascunho: mora no mapa, nao na pilha, e
+//    por ser por-CPU nao precisa de trava.
+// 2. A leitura e CLAMPADA pelo tamanho do envio, nunca fixa. Ler um tamanho
+//    fixo maior que o buffer do processo e a mesma familia de defeito do
+//    SAFE_KREAD que media o ponteiro: a leitura falha inteira (nao ha leitura
+//    parcial) e a sonda passa a nao entregar nada, indistinguivel de "nao houve
+//    ClientHello". A mascara "& (tamanho - 1)" existe porque o verificador do
+//    kernel so aceita tamanho variavel quando consegue provar o limite.
+struct tls_event_t {
+    u32 pid;
+    char comm[TASK_COMM_LEN];
+    u16 payload_len;
+    u8  payload[512];
+};
+BPF_PERCPU_ARRAY(tls_rascunho, struct tls_event_t, 1);
+BPF_PERF_OUTPUT(tls_events);
+
 // 1. Latency Tracking Maps (Temporary storage for start times)
 // Key: PID, Value: Timestamp (ns)
 BPF_HASH(io_start, u32, u64);
@@ -187,6 +213,34 @@ static int populate_basic_info(struct event_data_t *data) {
         data->mem_peak_rss = task->mm->hiwater_rss << 12;
     }
     return 0;
+}
+
+// Onde o msghdr guarda os bytes que o processo mandou enviar.
+//
+// Extraido da sonda de DNS, que foi onde o problema apareceu e foi resolvido, e
+// agora compartilhado com a sonda de TLS/SNI. O motivo de existir como funcao e
+// que este conhecimento tem VERSAO: o campo `iov` virou `__iov` no kernel 6.4, e
+// manter a guarda de versao copiada em duas sondas e a receita da divergencia
+// silenciosa -- uma delas seria corrigida um dia e a outra nao.
+//
+// ATENCAO ao usar: o ponteiro devolvido NAO e necessariamente o buffer. O membro
+// e uma UNIAO cujo conteudo depende do tipo do iterador:
+//
+//   ITER_UBUF  -> o ponteiro JA E o buffer do usuario (envio de segmento unico)
+//   ITER_IOVEC -> o ponteiro e um VETOR; o buffer esta no primeiro elemento
+//
+// Quem chama resolve isso TENTANDO ler como buffer direto e caindo para o vetor
+// se falhar, e nao lendo `iter_type`: o valor do enum muda entre versoes de
+// kernel, e usar o resultado da propria leitura como discriminante vale em
+// qualquer versao, sem tabela para manter.
+static void *ponteiro_do_msg_iter(struct msghdr *msg) {
+    void *ponteiro = NULL;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,4,0)
+    SAFE_KREAD_N(&ponteiro, sizeof(ponteiro), &msg->msg_iter.__iov);
+#else
+    SAFE_KREAD_N(&ponteiro, sizeof(ponteiro), &msg->msg_iter.iov);
+#endif
+    return ponteiro;
 }
 
 // ============================================================================
@@ -637,30 +691,142 @@ int kprobe__udp_sendmsg(struct pt_regs *ctx, struct sock *sk,
     // envelhece, usa-se o resultado da propria leitura como discriminante: se ler
     // do ponteiro como buffer de usuario funciona, era ITER_UBUF. Isso vale em
     // qualquer versao, sem tabela para manter.
-    void *ponteiro = NULL;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,4,0)
-    SAFE_KREAD_N(&ponteiro, sizeof(ponteiro), &msg->msg_iter.__iov);
-#else
-    SAFE_KREAD_N(&ponteiro, sizeof(ponteiro), &msg->msg_iter.iov);
-#endif
+    void *ponteiro = ponteiro_do_msg_iter(msg);
     if (!ponteiro) return 0;
 
-    dns.payload_len = tamanho < sizeof(dns.payload)
-                      ? (u16)tamanho : (u16)sizeof(dns.payload);
+    // [2026-08-19] O tamanho da leitura passou a vir do ENVIO, e nao mais fixo
+    // em sizeof(payload). A versao anterior lia sempre 96 bytes; uma consulta
+    // curta ("a.com" da uns 28 bytes) so era lida por sorte, porque o resto dos
+    // 96 caia na mesma pagina ja mapeada. Quando nao cai, bpf_probe_read_user
+    // falha a leitura INTEIRA (nao existe leitura parcial) e a sonda deixa de
+    // entregar, que e indistinguivel de "nenhuma consulta aconteceu" -- o mesmo
+    // desfecho do defeito original desta sonda. A mascara existe porque o
+    // verificador so aceita tamanho variavel com limite provado.
+    u32 n = (u32)tamanho;
+    if (n > sizeof(dns.payload) - 1) n = sizeof(dns.payload) - 1;
+    dns.payload_len = (u16)n;
 
     // Leitura de USUARIO: o buffer pertence ao processo, nao ao kernel.
-    if (bpf_probe_read_user(&dns.payload, sizeof(dns.payload), ponteiro)) {
+    if (bpf_probe_read_user(&dns.payload, n & (sizeof(dns.payload) - 1), ponteiro)) {
         // Nao era buffer direto: tratar como vetor e buscar o primeiro segmento.
         void *base = NULL;
         if (bpf_probe_read_kernel(&base, sizeof(base),
                                   &((const struct iovec *)ponteiro)->iov_base))
             return 0;
         if (!base) return 0;
-        if (bpf_probe_read_user(&dns.payload, sizeof(dns.payload), base))
+        if (bpf_probe_read_user(&dns.payload, n & (sizeof(dns.payload) - 1), base))
             return 0;
     }
 
     dns_events.perf_submit(ctx, &dns, sizeof(dns));
+    return 0;
+}
+
+// SNI: o NOME do destino quando a conexao e TLS (C-022).
+//
+// O DNS entrega o nome quando o processo resolve. Isso deixa dois buracos que a
+// pericia sente: quem resolve por cache (ou por IP fixo, ou por DoH) nunca gera
+// consulta DNS, e num host com varios servicos nao ha como amarrar a resolucao
+// que aconteceu antes ao fluxo que aconteceu depois. O SNI fecha os dois: ele
+// viaja EM CLARO dentro do proprio ClientHello, no mesmo socket da conexao, e
+// portanto e o nome dito PELA conexao, nao ao lado dela.
+//
+// Continua sendo METADADO, o "com quem", nao o "o que": a D-029 tirou conteudo
+// do escopo e a nota dela ja registra que DNS e SNI nao caem nessa regra.
+//
+// Nao decodifica nada aqui, so entrega bytes (D-030). O parse do ClientHello,
+// que e um encadeamento de campos de tamanho variavel, fica no Python.
+//
+// tcp_sendmsg e uma das funcoes mais quentes do kernel, entao a filtragem e em
+// tres degraus, do mais barato para o mais caro:
+//   1. porta de destino 443, lida direto do socket (sem tocar em memoria de
+//      usuario);
+//   2. tres bytes do inicio do buffer, o suficiente para reconhecer um registro
+//      de handshake TLS (0x16) da versao 3.x -- isso descarta TODO o trafego de
+//      dados ja cifrado, que e a esmagadora maioria dos envios numa conexao;
+//   3. so entao a copia do bloco maior, e ainda assim para o mapa de rascunho.
+int kprobe__tcp_sendmsg(struct pt_regs *ctx, struct sock *sk,
+                        struct msghdr *msg, size_t tamanho) {
+    u16 dport = sk->__sk_common.skc_dport;
+    dport = ((dport >> 8) | (dport << 8));   // ordem de rede -> ordem do host
+    if (dport != 443) return 0;
+
+    // Um ClientHello nao cabe em menos que isto (5 de registro + 4 de handshake
+    // + 2 de versao + 32 de random). Menor que isso nao ha o que parsear.
+    if (tamanho < 44) return 0;
+
+    void *ponteiro = ponteiro_do_msg_iter(msg);
+    if (!ponteiro) return 0;
+
+    // Resolve o buffer real. Mesma licao da sonda de DNS: o membro da uniao pode
+    // ja SER o buffer (segmento unico) ou ser um vetor. Aqui a tentativa custa
+    // tres bytes, entao o degrau 2 do filtro e o proprio discriminante.
+    void *base = ponteiro;
+    u8 cabeca[3] = {};
+    if (bpf_probe_read_user(&cabeca, sizeof(cabeca), base)) {
+        if (bpf_probe_read_kernel(&base, sizeof(base),
+                                  &((const struct iovec *)ponteiro)->iov_base))
+            return 0;
+        if (!base) return 0;
+        if (bpf_probe_read_user(&cabeca, sizeof(cabeca), base)) return 0;
+    }
+    // 0x16 = registro de handshake; 0x03 = familia TLS 1.x na camada de
+    // registro (todas as versoes, inclusive a 1.3, se apresentam como 3.x aqui).
+    if (cabeca[0] != 0x16 || cabeca[1] != 0x03) return 0;
+
+    int zero = 0;
+    struct tls_event_t *ev = tls_rascunho.lookup(&zero);
+    if (!ev) return 0;
+
+    ev->pid = bpf_get_current_pid_tgid() >> 32;
+    if (ev->pid == FILTER_PID) return 0;
+    bpf_get_current_comm(&ev->comm, sizeof(ev->comm));
+
+    // Tamanho vindo do ENVIO, nunca fixo: ver o comentario da struct.
+    u32 n = (u32)tamanho;
+    if (n > sizeof(ev->payload) - 1) n = sizeof(ev->payload) - 1;
+    ev->payload_len = (u16)n;
+    if (bpf_probe_read_user(&ev->payload, n & (sizeof(ev->payload) - 1), base))
+        return 0;
+
+    tls_events.perf_submit(ctx, ev, sizeof(*ev));
+    return 0;
+}
+
+// mount e pivot_root: o que faltava da fuga de conteiner (C-023).
+//
+// setns e unshare, que ja existem, contam metade da historia: eles mostram o
+// processo TROCANDO de namespace. A outra metade e o que ele faz depois de
+// trocar, e e ai que mora a fuga: montar o sistema de arquivos do host dentro do
+// conteiner (mount), ou trocar a propria raiz (pivot_root). Sem estas duas, a
+// arvore registra "mudou de namespace" e para exatamente antes do passo que
+// transforma isolamento quebrado em acesso ao host.
+//
+// Os dois eventos compartilham o type_id porque respondem a mesma pergunta ("o
+// que este processo fez com a arvore de montagem"); prio separa qual foi.
+int syscall__mount(struct pt_regs *ctx, const char __user *origem,
+                   const char __user *destino, const char __user *tipo,
+                   unsigned long flags) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'T';
+    data.prio = 0;                          // 0 = mount
+    data.mem_vsz = (u64)flags;              // MS_BIND, MS_RDONLY, etc.
+    // O DESTINO e o que importa para a pericia: e onde o conteudo passou a
+    // aparecer. A origem sem o destino nao diz onde o dado ficou acessivel.
+    bpf_probe_read_user_str(&data.filename, sizeof(data.filename), destino);
+    events.perf_submit(ctx, &data, sizeof(data));
+    return 0;
+}
+
+int syscall__pivot_root(struct pt_regs *ctx, const char __user *nova_raiz,
+                        const char __user *raiz_antiga) {
+    struct event_data_t data = {};
+    if (populate_basic_info(&data)) return 0;
+    data.type_id = 'T';
+    data.prio = 1;                          // 1 = pivot_root
+    bpf_probe_read_user_str(&data.filename, sizeof(data.filename), nova_raiz);
+    events.perf_submit(ctx, &data, sizeof(data));
     return 0;
 }
 

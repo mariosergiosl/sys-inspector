@@ -474,7 +474,7 @@ class DaemonController:
         full_data['capture_type'] = tipo
 
         # Achados estaticos (persistencia), mesmo conjunto dos demais modos.
-        findings = collect_findings(full_data['processes'])
+        findings = collect_findings(full_data['processes'], self.config)
         serialized = [f.to_dict() for f in findings]
         # Liga o achado estatico ao runtime, como no modo snapshot: sem isso a
         # captura do agente nunca oferece o atalho do achado para o processo

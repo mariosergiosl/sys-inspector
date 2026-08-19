@@ -290,6 +290,40 @@ body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:
 }
 .tag:hover { transform: scale(1.2); transition: 0.1s; background: rgba(255,255,255,0.1); }
 
+/* Detalhe da custodia: os LIMITES da aquisicao, logo abaixo do nivel. Fonte
+   menor mas cor legivel de proposito -- e ressalva, nao rodape decorativo. */
+.fnd-cust-det {
+    margin-top: 3px; font-size: 10.5px; color: #a0a0a0; line-height: 1.5;
+    white-space: normal; word-break: break-word;
+}
+.fnd-cust-det code { color: var(--cyn); font-size: 10px; word-break: break-all; }
+
+/* --- ENCAMINHAMENTO A BANCADA (C-044) --- */
+/* Bloco visualmente distinto do resto do detalhe do achado de proposito: ele
+   nao fala com o operador do host, fala com quem vai continuar o trabalho fora
+   da frota, e essa mudanca de interlocutor precisa ser vista antes de ser lida. */
+.fnd-referral {
+    margin: 8px 0; padding: 8px 10px;
+    border-left: 3px solid var(--cyn);
+    background: rgba(78,201,176,0.06);
+    border-radius: 0 3px 3px 0;
+}
+.fnd-ref-hdr {
+    color: var(--cyn); font-weight: bold; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px;
+}
+.fnd-ref-why {
+    display: block; text-transform: none; letter-spacing: 0;
+    font-weight: normal; color: #8a8a8a; font-size: 10px; margin-top: 1px;
+}
+.fnd-ref-tbl { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.fnd-ref-tbl td {
+    padding: 2px 6px 2px 0; vertical-align: top;
+    white-space: normal; overflow: visible; text-overflow: clip;
+}
+.fnd-ref-k { color: #999; width: 190px; font-weight: bold; }
+.fnd-ref-tbl code { color: var(--yel); word-break: break-all; }
+
 /* Visually Hidden (But searchable/filterable) */
 .visually-hidden {
     position: absolute;

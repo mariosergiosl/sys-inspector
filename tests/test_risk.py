@@ -167,8 +167,14 @@ def test_bit_desconhecido_e_denunciado():
     descartado em silencio: sinal perdido sem rastro leva o analista a concluir
     que nao havia nada.
     """
-    # Bit acima de todos os conhecidos hoje (o maior e 2097152, dns_query).
-    assert risk.unknown_bits(4194304) == 4194304
+    # O bit e CALCULADO a partir da propria tabela, e nao escrito a mao.
+    # A versao anterior fixava 4194304 ("acima de todos os conhecidos hoje") e
+    # quebrou no primeiro sinal novo que ocupou esse bit, no Lote 2. Um teste
+    # que envelhece assim ensina a errada: o proximo mantenedor troca o numero
+    # e segue, quando a pergunta que o teste faz ("um bit que ninguem conhece e
+    # denunciado?") nao depende de numero nenhum.
+    livre = max(bit for bit, _c, _r, _s, _e in risk.SINAIS) << 1
+    assert risk.unknown_bits(livre) == livre
     assert risk.unknown_bits(2 + 8) == 0
 
 
