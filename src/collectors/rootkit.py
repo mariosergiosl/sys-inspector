@@ -38,6 +38,10 @@
 #              - S2: DKMS, VirtualBox, nvidia e drivers compilados no host nao
 #                    pertencem a pacote e sao legitimos.
 #              - S4: o bit "proprietary" sobe com qualquer driver fechado.
+#              - S5-a: /proc/kallsyms anota trampolim de ftrace e programa eBPF
+#                    com a MESMA notacao "[nome]" dos modulos. Sem filtrar, o
+#                    proprio agente desta ferramenta faria o detector acusar
+#                    rootkit em toda captura (medido em host real, 2026-08-19).
 #              - S5-c: uma corrida entre carga e leitura pode produzir
 #                    divergencia momentanea.
 #
@@ -156,6 +160,23 @@ def modulos_em_sysfs(raiz=""):
     return achados
 
 
+# Nomes que aparecem entre colchetes em /proc/kallsyms e NAO sao modulos.
+#
+# Achado medindo em host real (2026-08-19), e o achado mais importante deste
+# coletor: o kernel usa a mesma notacao "[nome]" para anotar simbolos que nao
+# pertencem a modulo nenhum -- trampolins de ftrace e programas eBPF compilados
+# em tempo de execucao. Sem esta lista, os dois viravam achado CRITICAL de
+# "modulo escondido" em qualquer host com eBPF ativo, o que inclui **o proprio
+# agente desta ferramenta**: ela acusaria rootkit por causa de si mesma, em toda
+# captura, em todo host.
+#
+# Um detector que acusa sempre nao e um detector sensivel, e um detector morto:
+# depois do terceiro alarme falso ninguem mais le o quarto, e o achado
+# verdadeiro passa junto com o resto.
+PSEUDO_MODULOS_KALLSYMS = frozenset(("bpf", "ftrace", "kprobes", "ftrace_mod"))
+PREFIXO_PSEUDO = "__builtin__"
+
+
 def modulos_em_kallsyms(raiz=""):
     """
     Modulos citados em /proc/kallsyms, pelo sufixo "[nome]" dos simbolos.
@@ -169,7 +190,10 @@ def modulos_em_kallsyms(raiz=""):
     texto = _ler(caminho)
     if not texto:
         return set()
-    return set(re.findall(r"\[([\w\-]+)\]\s*$", texto, re.MULTILINE))
+    achados = set(re.findall(r"\[([\w\-]+)\]\s*$", texto, re.MULTILINE))
+    return {nome for nome in achados
+            if nome not in PSEUDO_MODULOS_KALLSYMS
+            and not nome.startswith(PREFIXO_PSEUDO)}
 
 
 def _boot_time(raiz=""):

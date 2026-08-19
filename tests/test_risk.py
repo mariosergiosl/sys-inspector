@@ -55,6 +55,10 @@ def test_bits_batem_com_o_coletor():
         "ns_change": pt.SCORE_NS_CHANGE,
         "kexec_load": pt.SCORE_KEXEC_LOAD,
         "dns_query": pt.SCORE_DNS_QUERY,
+        # [Lote 2] Sondas de 2026-08-19.
+        "tls_sni": pt.SCORE_TLS_SNI,
+        "mount_op": pt.SCORE_MOUNT_OP,
+        "pivot_root": pt.SCORE_PIVOT_ROOT,
     }
 
     aqui = dict((chave, bit) for bit, chave, _r, _s, _e in risk.SINAIS)

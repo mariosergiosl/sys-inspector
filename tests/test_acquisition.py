@@ -232,22 +232,52 @@ def test_regiao_de_memoria_do_proprio_processo_e_lida():
     hash, recorte, tetos), que e a mesma usada sobre a regiao W+X de um
     processo suspeito.
     """
-    regiao = None
+    candidatas = []
     with io.open("/proc/self/maps", "r") as fh:
         for linha in fh:
             partes = linha.split()
             if len(partes) >= 2 and partes[1].startswith("r"):
-                regiao = partes[0]
-                break
-    assert regiao, "nenhuma regiao legivel encontrada"
-    inicio, fim = regiao.split("-")
+                candidatas.append(partes[0])
+    assert candidatas, "nenhuma regiao legivel encontrada"
 
     # Teto de hash baixo de proposito: o teste afere a MECANICA, e a regiao
     # sorteada pode ser grande. Varrer megabytes aqui so deixaria a suite lenta.
     a = Acquirer(_cfg(dir="/tmp/sys-inspector-test-acq", excerpt_bytes=256,
-                      hash_max_bytes=65536))
-    r = a.acquire_memory_region(os.getpid(), inicio, fim)
-    assert r["acquired"] is True
+                      hash_max_bytes=65536, capture_max_bytes=1024 * 1024))
+
+    # Percorre ate uma dar certo, em vez de exigir a PRIMEIRA.
+    #
+    # Achado ao rodar isto na VM: nem toda regiao marcada como legivel em
+    # /proc/PID/maps pode ser lida por /proc/PID/mem. As primeiras entradas (o
+    # mapeamento do proprio executavel) devolvem EIO no kernel 6.4. Isso nao e
+    # defeito do modulo, e uma propriedade da interface -- e e justamente por
+    # isso que o modulo trata falha de leitura como "nao consegui ler", com o
+    # motivo declarado, em vez de deixar a excecao subir.
+    lido = None
+    for regiao in candidatas:
+        inicio, fim = regiao.split("-")
+        r = a.acquire_memory_region(os.getpid(), inicio, fim)
+        if r.get("acquired"):
+            lido = (regiao, r)
+            break
+
+    assert lido, "nenhuma das regioes legiveis pode ser adquirida"
+    regiao, r = lido
     assert r["excerpt_bytes"] > 0
     assert r["sha256"]
     assert r["region"] == regiao
+
+
+@pytest.mark.skipif(not os.path.exists("/proc/self/mem"),
+                    reason="exige /proc (Linux)")
+def test_regiao_ilegivel_devolve_o_motivo_em_vez_de_excecao():
+    """
+    A outra metade do achado acima. Uma regiao que consta como legivel e nao
+    pode ser lida e caso REAL e frequente; ela nao pode derrubar a captura nem
+    sumir sem explicacao do laudo.
+    """
+    a = Acquirer(_cfg(dir="/tmp/sys-inspector-test-acq"))
+    # Endereco alto e certamente nao mapeado.
+    r = a.acquire_memory_region(os.getpid(), "7ffffffff000", "7ffffffff100")
+    assert r["acquired"] is False
+    assert r["reason"] == ILEGIVEL

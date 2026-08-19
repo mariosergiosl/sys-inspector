@@ -112,6 +112,41 @@ check_root() {
     fi
 }
 
+# NAME:         escreve_probe_lib
+# DESCRIPTION:  Cria a biblioteca compartilhada dos artefatos de sonda.
+#               Vive numa funcao, e nao dentro do bloco --probes, porque o
+#               MODULE 7.6 (--lote2) tambem a importa: presa ao outro bloco,
+#               rodar --lote2 sozinho quebrava com ImportError.
+escreve_probe_lib() {
+    [ -f "${TEMP_DIR}/probe_lib.py" ] && return 0
+    cat << 'EOF' > "${TEMP_DIR}/probe_lib.py"
+import ctypes
+import time
+
+libc = ctypes.CDLL(None, use_errno=True)
+
+# Numeros de syscall x86_64. Sem dependencia de versao de libc porque nem
+# toda glibc antiga expoe wrapper para as mais novas (memfd_create, bpf).
+SYS_INIT_MODULE = 175
+SYS_BPF = 321
+SYS_KEXEC_LOAD = 246
+SYS_MEMFD_CREATE = 319
+
+PTRACE_ATTACH = 16
+PTRACE_DETACH = 17
+
+
+def loop(segundos, funcao):
+    """Roda 'funcao' em loop nesta sonda, sem derrubar o processo se falhar."""
+    while True:
+        try:
+            funcao()
+        except Exception:
+            pass
+        time.sleep(segundos)
+EOF
+}
+
 # NAME: cleanup
 # DESCRIPTION: Restores system state, kills child processes and removes artifacts.
 # PARAMETER: None
@@ -689,6 +724,8 @@ fi
 if [ "$ENABLE_PROBES" = "true" ]; then
     log_msg "TYPE" "[PROBES] F-201: 13 sinais novos do anomaly score"
 
+    escreve_probe_lib
+
     # [2026-08-18, achado do Mario] Ate aqui os 12 sinais rodavam em UM
     # processo so (threads dentro do mesmo artifact_probes.py). Funciona,
     # mas concentra tudo numa unica linha da arvore: um bug de atribuicao
@@ -702,32 +739,6 @@ if [ "$ENABLE_PROBES" = "true" ]; then
     # boilerplate de ctypes/numeros de syscall); ainda assim cada
     # probe_*.py roda como PROCESSO TOP-LEVEL proprio (python3 "$f" &), nao
     # como thread dentro de um processo maior.
-    cat << 'EOF' > "${TEMP_DIR}/probe_lib.py"
-import ctypes
-import time
-
-libc = ctypes.CDLL(None, use_errno=True)
-
-# Numeros de syscall x86_64. Sem dependencia de versao de libc porque nem
-# toda glibc antiga expoe wrapper para as mais novas (memfd_create, bpf).
-SYS_INIT_MODULE = 175
-SYS_BPF = 321
-SYS_KEXEC_LOAD = 246
-SYS_MEMFD_CREATE = 319
-
-PTRACE_ATTACH = 16
-PTRACE_DETACH = 17
-
-
-def loop(segundos, funcao):
-    """Roda 'funcao' em loop nesta sonda, sem derrubar o processo se falhar."""
-    while True:
-        try:
-            funcao()
-        except Exception:
-            pass
-        time.sleep(segundos)
-EOF
 
     # 1. cred_change: commit_creds, root trocando de uid via sudo.
     cat << 'EOF' > "${TEMP_DIR}/probe_cred_change.py"
@@ -958,6 +969,8 @@ fi
 # sequencia, e ve-la junta e o que se quer provar.
 if [ "$ENABLE_LOTE2" = "true" ]; then
     log_msg "TYPE" "[LOTE2] C-022 SNI, C-023 mount/pivot_root, C-037 rootkit"
+
+    escreve_probe_lib
 
     # ----------------------------------------------------------------------
     # 1. tls_sni (C-022): ClientHello com SNI numa conexao para a porta 443.

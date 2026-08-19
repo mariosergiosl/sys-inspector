@@ -139,7 +139,18 @@ BPF_PERF_OUTPUT(events);
 struct dns_event_t {
     u32 pid;
     char comm[TASK_COMM_LEN];
-    u8  payload[96];
+    // [2026-08-19] Era 96. Virou 128 por uma razao que NAO e capacidade: a
+    // mascara "n & (tamanho - 1)", que o verificador exige para aceitar leitura
+    // de tamanho variavel, so funciona quando o tamanho e POTENCIA DE DOIS.
+    // Com 96, a mascara vira "n & 95", que nao e contigua em bits: um envio de
+    // 40 bytes lia 40 & 95 = 8 bytes, e o parser montava nome a partir de
+    // zeros. Medido: nomes saiam como "te" seguido de bytes nulos.
+    //
+    // Isso e a MESMA familia do defeito original desta sonda e do SAFE_KREAD:
+    // uma conta de tamanho errada que nao levanta erro nenhum, so entrega dado
+    // fabricado. Com 128 a mascara e "n & 127", contigua, e a leitura passa a
+    // valer o que foi pedido.
+    u8  payload[128];
     u16 payload_len;
 };
 BPF_PERF_OUTPUT(dns_events);

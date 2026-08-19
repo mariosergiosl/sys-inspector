@@ -292,3 +292,49 @@ def test_fonte_ausente_devolve_vazio_em_vez_de_explodir(tmpdir):
     assert modulos_em_kallsyms(raiz) == set()
     assert taint_flags(raiz) == []
     assert collect_rootkit(raiz, agora=BOOT) == []
+
+
+# ------------------------------------------------------------------------------
+# O FALSO POSITIVO QUE APARECEU MEDINDO EM HOST REAL (2026-08-19)
+# ------------------------------------------------------------------------------
+def test_pseudo_modulos_do_kallsyms_nao_viram_rootkit(tmpdir):
+    """
+    O achado mais caro deste coletor, e ele so apareceu rodando no host de
+    verdade: /proc/kallsyms usa a MESMA notacao "[nome]" para anotar simbolos
+    que nao pertencem a modulo nenhum -- trampolins de ftrace e programas eBPF
+    compilados em tempo de execucao.
+
+    Sem filtro, os dois viravam achado CRITICAL de "modulo escondido" em
+    qualquer host com eBPF ativo. Isso inclui o proprio agente desta ferramenta,
+    que E um programa eBPF: ela acusaria rootkit por causa de si mesma, em toda
+    captura, em todo host.
+
+    Detector que acusa sempre nao e sensivel, e morto: depois do terceiro
+    alarme falso ninguem le o quarto, e o verdadeiro passa junto.
+    """
+    raiz = _host(
+        tmpdir,
+        proc_modules=_linha_modulo("xfs"),
+        sysfs={"xfs": ("live", BOOT + 10)},
+        kallsyms=("ffffffffc0001000 t xfs_init\t[xfs]\n"
+                  "ffffffffa0001000 t bpf_prog_abc\t[bpf]\n"
+                  "ffffffffa0002000 t ftrace_tramp\t[__builtin__ftrace]\n"
+                  "ffffffffa0003000 t kp_handler\t[kprobes]\n"))
+    assert collect_rootkit(raiz, agora=BOOT + 10000) == []
+
+
+def test_o_filtro_de_pseudo_modulo_nao_engole_um_modulo_de_verdade(tmpdir):
+    """
+    A contrapartida: o filtro nao pode virar desculpa para deixar passar. Um
+    nome que nao esta na lista de pseudo-modulos continua sendo denunciado, e um
+    rootkit que se chamasse "bpf_evil" nao se beneficiaria do prefixo.
+    """
+    raiz = _host(
+        tmpdir,
+        proc_modules=_linha_modulo("xfs"),
+        sysfs={"xfs": ("live", BOOT + 10)},
+        kallsyms=("ffffffffa0001000 t hook\t[bpf]\n"
+                  "ffffffffa0009000 t hook\t[bpf_evil]\n"))
+    achados = collect_rootkit(raiz, agora=BOOT + 10000)
+    assert len(achados) == 1
+    assert "bpf_evil" in achados[0].title
