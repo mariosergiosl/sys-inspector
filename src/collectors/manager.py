@@ -156,7 +156,7 @@ def collect_findings(processos=None, config=None):
     # coletores e nao um.
     try:
         from src.collectors.rootkit import collect_rootkit
-        findings.extend(collect_rootkit())
+        findings.extend(collect_rootkit(acquirer=acquirer))
     except Exception as exc:
         logging.getLogger("CollectorMgr").error(f"[COLLECT] Rootkit scan failed: {exc}")
     # Reusa a arvore ja coletada em vez de varrer /proc de novo: o custo extra

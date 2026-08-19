@@ -287,7 +287,7 @@ def _finding_modulo_escondido(nome, onde_aparece, onde_falta, confianca):
             obj="modulo de kernel '%s' no host inspecionado" % nome))
 
 
-def collect_rootkit(raiz="", agora=None):
+def collect_rootkit(raiz="", agora=None, acquirer=None):
     """
     Roda as cinco camadas e devolve os Findings.
 
@@ -295,6 +295,9 @@ def collect_rootkit(raiz="", agora=None):
               montarem uma arvore /proc + /sys sintetica e exercitarem o caminho
               POSITIVO de cada camada sem um rootkit real na maquina.
     PARAMETER agora: instante de referencia, para o teste nao depender do relogio.
+    PARAMETER acquirer: core.acquisition.Acquirer (C-043), ou None. Serve a
+              camada S3: a biblioteca pre-carregada E a amostra, e ate aqui o
+              achado mandava preserva-la sem preservar nada.
     """
     achados = []
     agora = int(agora if agora is not None else time.time())
@@ -390,7 +393,7 @@ def collect_rootkit(raiz="", agora=None):
                 "historico de comandos: quem estava no host naquele minuto.")))
 
     # --- S3: sequestro por biblioteca no espaco de usuario --------------------
-    achados.extend(_camada_preload(raiz))
+    achados.extend(_camada_preload(raiz, acquirer))
 
     # --- S4: taint do kernel --------------------------------------------------
     achados.extend(_camada_taint(raiz))
@@ -412,7 +415,7 @@ def _caminho_do_ko(nome):
     return None
 
 
-def _camada_preload(raiz=""):
+def _camada_preload(raiz="", acquirer=None):
     """
     S3: rootkit de espaco de usuario via /etc/ld.so.preload.
 
@@ -439,6 +442,16 @@ def _camada_preload(raiz=""):
         pertence = _tem_pacote(lib) if not raiz else None
         existe = os.path.exists(lib if not raiz
                                 else os.path.join(raiz, lib.lstrip("/")))
+        # [C-043] A biblioteca E a amostra: e ela que o perito precisa ler para
+        # dizer o que o rootkit esconde. A recomendacao abaixo ja mandava
+        # preserva-la; sem isto, mandava e nao fazia.
+        custodia = {"level": CUSTODY_METADATA}
+        if acquirer is not None and existe and not raiz:
+            try:
+                custodia = acquirer.acquire_file(lib)
+            except Exception as exc:
+                LOG.error("[RK] Aquisicao de %s falhou: %s", lib, exc)
+
         achados.append(Finding(
             title="Biblioteca pre-carregada em todo processo do host: %s" % lib,
             severity=SEV_HIGH if pertence is False else SEV_MEDIUM,
@@ -461,7 +474,7 @@ def _camada_preload(raiz=""):
                       "library_exists": existe, "owned_by_package": pertence},
             technique="T1574.006",
             confidence=CONF_CONFIRMED if not existe else CONF_PROBABLE,
-            custody={"level": CUSTODY_METADATA},
+            custody=custodia,
             recommendation=(
                 "Nao remover o arquivo antes de preservar a biblioteca: ela e a "
                 "amostra. Remover /etc/ld.so.preload tambem NAO desmapeia a "
