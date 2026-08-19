@@ -31,7 +31,11 @@ import re
 import pytest
 
 FONTE_COLETOR = os.path.join("src", "collectors", "process_tree.py")
-FONTE_LAUDO = os.path.join("src", "exporters", "html_report.py")
+# [F-201] O mapa de badges saiu de dentro de html_report.py (onde vivia
+# aninhado em _render_badges) para src/core/badges.py: registro unico
+# compartilhado tambem pela barra de filtro do topo (web_assets.py), para as
+# duas paradas de renderizacao nunca mais divergirem entre si.
+FONTE_BADGES = os.path.join("src", "core", "badges.py")
 
 # Rotulos com tratamento proprio em outro trecho do laudo: a contagem de falhas
 # de rede e o selo de severidade tem renderizacao dedicada, e ZOMBIE_PARENT e
@@ -59,10 +63,10 @@ def tags_produzidas():
 
 @pytest.fixture(scope="module")
 def tags_renderizaveis():
-    """Todo rotulo que o laudo sabe desenhar."""
-    fonte = _ler(FONTE_LAUDO)
-    bloco = fonte.split("tag_map = {")[1].split("\n    }")[0]
-    return set(re.findall(r'^\s{8}"([^"]+)"\s*:', bloco, re.MULTILINE))
+    """Todo rotulo que o laudo sabe desenhar (badge E filtro, mesma fonte)."""
+    fonte = _ler(FONTE_BADGES)
+    bloco = fonte.split("TAG_MAP = {")[1].split("\n}")[0]
+    return set(re.findall(r'^\s{4}"([^"]+)"\s*:', bloco, re.MULTILINE))
 
 
 # ------------------------------------------------------------------------------
@@ -174,3 +178,111 @@ def test_drawable_labels_that_nothing_produces_are_known(tags_produzidas,
     orfaos = tags_renderizaveis - tags_produzidas - {"INSPECTOR"}
     assert orfaos == {"IMMUTABLE"}, (
         "Mudou o conjunto de rotulos sem coletor correspondente: %s" % sorted(orfaos))
+
+
+# ------------------------------------------------------------------------------
+# A BARRA DE FILTRO NASCE DO MESMO REGISTRO QUE O BADGE (achado do Mario,
+# 2026-08-18): um sinal com badge e sem filtro correspondente esta presente
+# so formalmente numa arvore de centenas de processos (D-028).
+# ------------------------------------------------------------------------------
+def test_toda_tag_do_registro_tem_botao_de_filtro():
+    """
+    Cada chave de badges.TAG_MAP vira um <span class="filter-btn"> na barra do
+    topo. Testa contra o HTML gerado, nao contra uma segunda lista escrita a
+    mao, pelo mesmo motivo do resto deste arquivo.
+    """
+    from src.core import badges as badges_reg
+    from src.exporters.web_assets import FILTER_BAR_HTML
+
+    for tag in badges_reg.TAG_MAP:
+        assert ("setFilter('%s', this)" % tag) in FILTER_BAR_HTML, tag
+
+
+def test_toda_tag_do_registro_tem_linha_na_legenda_de_badges():
+    """A legenda dos badges (popup '?' ao lado de Filters) lista toda tag."""
+    from src.core import badges as badges_reg
+    from src.exporters.web_assets import BADGE_LEGEND_HTML
+
+    for tag in badges_reg.TAG_MAP:
+        assert ("<td>%s</td>" % tag) in BADGE_LEGEND_HTML, tag
+
+
+def test_legenda_de_score_nao_trunca_o_texto():
+    """
+    Regressao: a regra global 'td { white-space:nowrap; text-overflow:ellipsis }'
+    da arvore de processos vazava para dentro do popup de legenda do score e
+    cortava rotulo/severidade no meio da palavra ("carregou kernel via ke...",
+    "Hig..."). '.score-tooltip td' (seletor de classe + elemento) tem
+    especificidade maior que 'td' sozinho e por isso sempre vence, mas so se a
+    regra PROPRIA existir; sem ela o popup herda a truncagem da arvore.
+    """
+    from src.exporters.web_assets import CSS_BASE
+
+    assert ".score-tooltip td {" in CSS_BASE
+    inicio = CSS_BASE.index(".score-tooltip td {")
+    bloco = CSS_BASE[inicio:inicio + 300]
+    assert "white-space: normal" in bloco
+    assert "overflow: visible" in bloco
+
+
+# ------------------------------------------------------------------------------
+# SIGNIFICADO FORENSE VISIVEL, NAO SO EM HOVER (achado do Mario, 2026-08-18:
+# "ainda estou tentando entender a numeracao e valores" no popup de score, e
+# "so tem o numero 3" no bloco Probe Signals do detalhe do processo).
+# ------------------------------------------------------------------------------
+def test_popup_de_score_mostra_a_explicacao_sem_precisar_de_hover():
+    """
+    A explicacao de cada sinal aparece como texto, nao so no title="".
+    Compara contra a versao ESCAPADA (a mesma funcao que o renderizador usa):
+    varias explicacoes citam "ATT&CK", e o "&" vira "&amp;" no HTML.
+    """
+    from src.core import risk
+    from src.exporters.web_assets import LEGEND_HTML, _esc_legenda
+
+    for _bit, _chave, _rotulo, _sev, explicacao in risk.SINAIS:
+        assert _esc_legenda(explicacao) in LEGEND_HTML, explicacao[:40]
+
+
+def test_popup_de_badges_traz_significado_forense_alem_do_rotulo_tecnico():
+    """Cada linha da legenda de badges tem um segundo texto (o 'leg-sig')."""
+    from src.core import badges as badges_reg
+    from src.exporters.web_assets import BADGE_LEGEND_HTML, _esc_legenda
+
+    for _tag, (_icone, _cls, _tooltip, significado) in badges_reg.TAG_MAP.items():
+        assert _esc_legenda(significado) in BADGE_LEGEND_HTML, significado[:40]
+
+
+def test_bloco_probe_signals_explica_cada_numero_que_mostra():
+    """
+    O bloco de detalhe do processo (Probe Signals) nao pode voltar a mostrar
+    so o numero cru ("BPF Calls: 3") sem dizer o que aquilo significa.
+    """
+    from src.core import risk
+    from src.exporters.html_report import (
+        _PROBE_SIGNAL_ROWS, _EXPLICACAO_RISCO_POR_CHAVE)
+
+    chaves_de_risco = {chave for _b, chave, _r, _s, _e in risk.SINAIS}
+    for _campo, rotulo, _modo, chave_risco in _PROBE_SIGNAL_ROWS:
+        assert chave_risco in chaves_de_risco, rotulo
+        assert len(_EXPLICACAO_RISCO_POR_CHAVE[chave_risco]) > 40, rotulo
+
+
+def test_titulo_do_bloco_probe_signals_nao_parece_um_carimbo_de_evento():
+    """
+    Regressao: o titulo era "Probe Signals (2026-08-17)". A data e de
+    quando as SONDAS foram codificadas, nao do instante do evento; o Mario
+    leu como se fosse timestamp e perguntou onde estava hora/minuto/segundo.
+    Sem hora/minuto/segundo, uma data isolada no titulo e sempre ambigua:
+    trava que o titulo nao volta a conter uma data sozinha (regex de data
+    ISO, "AAAA-MM-DD").
+    """
+    import re
+    from src.collectors.process_tree import ProcessNode
+    from src.exporters.html_report import _render_probe_signals
+
+    node = ProcessNode(42, 1, "proc", 0)
+    node.bpf_calls = 3
+    html = _render_probe_signals(node)
+    assert "Probe Signals" in html
+    assert not re.search(r"\d{4}-\d{2}-\d{2}", html), (
+        "O titulo do bloco Probe Signals voltou a conter uma data isolada.")

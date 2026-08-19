@@ -125,7 +125,8 @@ def test_template_placeholders_are_consistent():
     import re
     found = set(re.findall(r"\{([A-Z_]+)\}", HTML_TEMPLATE))
     expected = {"VERSION", "HOSTNAME", "TIMESTAMP", "CSS_BLOCK", "JS_BLOCK",
-                "LEGEND_HTML", "OS_CONTENT", "DISK_CONTENT", "NET_CONTENT",
+                "LEGEND_HTML", "FILTER_BAR_HTML", "BADGE_LEGEND_HTML",
+                "OS_CONTENT", "DISK_CONTENT", "NET_CONTENT",
                 "FINDINGS_CONTENT", "FINDINGS_BADGE", "ATTACK_CONTENT",
                 "ATTACK_BADGE", "TABLE_ROWS"}
     assert found == expected, found ^ expected

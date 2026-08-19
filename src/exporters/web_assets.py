@@ -14,6 +14,7 @@
 # ==============================================================================
 
 from src.core import risk
+from src.core import badges as badges_reg
 
 # ------------------------------------------------------------------------------
 # 1. LEGEND COMPONENT
@@ -27,19 +28,116 @@ from src.core import risk
 
 
 def _linhas_legenda():
+    """
+    Duas linhas por sinal: a compacta (bit/rotulo/severidade) e, logo
+    abaixo, a explicacao por extenso, sempre VISIVEL.
+
+    [2026-08-18] Antes a explicacao so ia no title (hover): o Mario testou
+    e relatou "ainda estou tentando entender a numeracao e valores" -- um
+    popup cujo unico jeito de entender cada linha e passar o mouse em cima,
+    uma de cada vez, nao ensina nada de longe. A explicacao de risk.SINAIS
+    ja e escrita nesse tom (o que o sinal representa para seguranca/pericia,
+    nao so o nome tecnico); so precisava parar de estar escondida.
+    """
     linhas = ""
-    for bit, _chave, rotulo, severidade, _explicacao in risk.SINAIS:
+    for bit, _chave, rotulo, severidade, explicacao in risk.SINAIS:
         linhas += ("<tr><td>+%d</td><td>%s</td>"
                    "<td style='color:%s'>%s</td></tr>"
-                   % (bit, rotulo, risk.CORES.get(severidade, "#888"),
-                      severidade))
+                   "<tr class='leg-exp-row'><td></td>"
+                   "<td colspan='2'><span class='leg-sig'>%s</span></td></tr>"
+                   % (bit, _esc_legenda(rotulo),
+                      risk.CORES.get(severidade, "#888"), severidade,
+                      _esc_legenda(explicacao)))
     return linhas
 
 
+def _esc_legenda(valor):
+    """Escape minimo para texto vindo de risk.SINAIS dentro de atributo/celula."""
+    return (str(valor).replace("&", "&amp;").replace('"', "&quot;")
+            .replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _botoes_filtro():
+    """
+    Um botao de filtro por chave de src.core.badges.TAG_MAP, na mesma ordem.
+
+    Existia aqui uma lista de 11 botoes escrita a mao, que ja tinha ficado
+    para tras (IMMUTABLE e DELETED tinham badge e nenhum filtro) antes mesmo
+    do F-201 acrescentar 13 badges novos. Um sinal presente que ninguem
+    consegue isolar numa arvore de centenas de processos esta la so
+    formalmente (D-028); gerar daqui, do MESMO registro que desenha o badge,
+    e o que impede a proxima divergencia.
+    """
+    linhas = ""
+    for tag, (icone, _cls, tooltip, _sig) in badges_reg.TAG_MAP.items():
+        linhas += ('<span class="filter-btn" onclick="setFilter(\'%s\', this)" '
+                   'title="%s">%s</span>\n                    '
+                   % (tag, tooltip, icone))
+    return linhas
+
+
+FILTER_BAR_HTML = _botoes_filtro()
+
+# Badges que a barra de filtro desenha por caminho proprio (fora do
+# TAG_MAP): NEW (node.is_new) e NET ERR (contadores agregados). Precisam de
+# legenda tambem, senao o popup mente por omissao sobre dois botoes que
+# estao bem ali do lado.
+_BADGES_FORA_DO_MAPA = (
+    ("NEW", "✨", "Processo novo nesta captura, ausente na anterior.",
+     "Sozinho e neutro (todo host cria processos o tempo todo). O valor "
+     "forense esta em CRUZAR com o resto da arvore: processo novo com "
+     "caminho gravavel, ou novo direto sob PID 1 sem passar por um "
+     "gerenciador de servico conhecido, pesa mais que o badge isolado."),
+    ("NET ERR", "❌",
+     "Falhas de rede do processo (retransmissoes TCP + pacotes descartados), somadas.",
+     "Pode ser so problema de infraestrutura (link instavel, MTU errado). "
+     "Tambem e a assinatura de C2 mal configurado ou de exfiltracao para "
+     "um destino que bloqueia/reseta a conexao repetidamente."),
+)
+
+
+def _linhas_legenda_badges():
+    linhas = ""
+    for tag, icone, explicacao, significado in _BADGES_FORA_DO_MAPA:
+        linhas += ("<tr><td>%s</td><td>%s</td><td>%s<br><span class='leg-sig'>%s</span></td></tr>"
+                   % (icone, _esc_legenda(tag), _esc_legenda(explicacao),
+                      _esc_legenda(significado)))
+    for tag, (icone, _cls, explicacao, significado) in badges_reg.TAG_MAP.items():
+        linhas += ("<tr><td>%s</td><td>%s</td><td>%s<br><span class='leg-sig'>%s</span></td></tr>"
+                   % (icone, _esc_legenda(tag), _esc_legenda(explicacao),
+                      _esc_legenda(significado)))
+    return linhas
+
+
+BADGE_LEGEND_HTML = ("""
+<div class="score-legend-wrapper">
+    <span class="legend-icon" title="Legenda dos badges" onclick="toggleLegend(this)">?</span>
+    <div class="legend-backdrop" onclick="this.closest('.score-legend-wrapper').classList.remove('open')"></div>
+    <div class="score-tooltip">
+        <span class="legend-close" onclick="this.closest('.score-legend-wrapper').classList.remove('open')" title="Fechar">&times;</span>
+        <h4>Badges da arvore de processos</h4>
+        <div style="font-size:10px; color:#999; margin-bottom:6px;">
+            Rotulo tecnico (o que a sonda observou) e, logo abaixo em cinza,
+            o que isso costuma significar para seguranca e pericia.
+        </div>
+        <table class="badge-legend">%s</table>
+        <div style="font-size:9px; color:#777; margin-top:5px;
+                    border-top:1px solid #333; padding-top:2px;">
+            * Clique num icone da barra de Filters para isolar so os
+            processos com aquele sinal. Esta lista e a mesma fonte que
+            desenha os icones (src/core/badges.py): nunca fica desatualizada
+            em relacao aos botoes ao lado.
+        </div>
+    </div>
+</div>
+""" % _linhas_legenda_badges())
+
 LEGEND_HTML = ("""
 <div class="score-legend-wrapper">
-    <span class="legend-icon" title="Anomaly Score Rules">?</span>
+    <span class="legend-icon" title="Anomaly Score Rules" onclick="toggleLegend(this)">?</span>
+    <div class="legend-backdrop" onclick="this.closest('.score-legend-wrapper').classList.remove('open')"></div>
     <div class="score-tooltip">
+        <span class="legend-close" onclick="this.closest('.score-legend-wrapper').classList.remove('open')" title="Fechar">&times;</span>
         <h4>Sinais do anomaly score (campo de bits)</h4>
         <table>%s</table>
         <div style="font-size:9px; color:#777; margin-top:5px;
@@ -244,19 +342,64 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
 .lib-list { max-height:150px; overflow-y:auto; background:#1a1a1a; padding:5px; border:1px solid #333; color:#bbb; }
 
 /* Legend Tooltip */
-.score-legend-wrapper { position: relative; display: inline-flex; align-items: center; justify-content: center; margin-left: 8px; cursor: help; vertical-align: middle; }
-.legend-icon { background: var(--drk); border: 1px solid var(--acc); color: var(--acc); width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; }
+/* [FIX] Era :hover com o popup ancorado (position:absolute) perto do icone
+   "?". Em monitor pequeno, com o icone la embaixo na barra de filtros, o
+   popup nascia estourando o rodape da janela; rolar ATE ele tirava o mouse
+   da area de hover e ele fechava sozinho antes do analista ler a metade de
+   baixo. Agora e clique (ver toggleLegend no JS) e o popup e FIXED e
+   CENTRALIZADO na tela: sempre cabe inteiro no viewport, em qualquer
+   resolucao, e o scroll interno (quando a lista nao cabe) fica sempre
+   alcancavel porque o popup nao depende mais de onde o botao esta na
+   pagina nem do mouse continuar sobre ele. */
+.score-legend-wrapper { position: relative; display: inline-flex; align-items: center; justify-content: center; margin-left: 8px; vertical-align: middle; }
+.legend-icon { background: var(--drk); border: 1px solid var(--acc); color: var(--acc); width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; cursor: pointer; }
+.legend-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 9998;
+    background: rgba(0,0,0,0.6);
+}
+.score-legend-wrapper.open .legend-backdrop { display: block; }
 .score-tooltip {
-    display: none; position: absolute; right: 0; top: 30px; z-index: 9999;
-    background: #1e1e1e; border: 1px solid var(--acc); padding: 10px;
-    width: 280px; box-shadow: 0 5px 15px rgba(0,0,0,0.9); border-radius: 4px;
+    display: none; position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%); z-index: 9999;
+    background: #1e1e1e; border: 1px solid var(--acc); padding: 14px;
+    width: 460px; max-width: 90vw; max-height: 80vh; overflow-y: auto;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.9); border-radius: 6px;
     text-align: left;
 }
-.score-legend-wrapper:hover .score-tooltip { display: block; }
-.score-tooltip h4 { margin: 0 0 8px 0; color: var(--acc); border-bottom: 1px solid #333; padding-bottom: 4px; font-size: 12px; text-transform: uppercase; }
-.score-tooltip table { width: 100%; border-collapse: collapse; }
-.score-tooltip td { padding: 3px 0; border-bottom: 1px solid #333; color: #ccc; font-size: 11px; }
-.score-tooltip td:first-child { color: var(--red); font-weight: bold; text-align: right; padding-right: 10px; width: 40px; }
+.score-legend-wrapper.open .score-tooltip { display: block; }
+.legend-close {
+    position: absolute; top: 8px; right: 10px; cursor: pointer;
+    color: #888; font-size: 16px; font-weight: bold; line-height: 1;
+}
+.legend-close:hover { color: var(--red); }
+.score-tooltip h4 { margin: 0 0 8px 0; color: var(--acc); border-bottom: 1px solid #333; padding-bottom: 4px; font-size: 12px; text-transform: uppercase; padding-right: 20px; }
+.score-tooltip table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+/* [FIX] O 'td { white-space:nowrap; text-overflow:ellipsis }' global (regra da
+   arvore de processos) vazava para esta tabela e cortava rotulo e severidade
+   no meio da palavra ("carregou kernel via ke...", "Hig..."). Aqui o texto
+   PRECISA quebrar linha: e a unica explicacao de cada sinal que o laudo
+   oferece antes do analista clicar num processo de verdade. */
+.score-tooltip td {
+    padding: 4px 4px; border-bottom: 1px solid #333; color: #ccc; font-size: 11px;
+    white-space: normal; overflow: visible; text-overflow: clip; vertical-align: top;
+}
+.score-tooltip td:first-child { color: var(--red); font-weight: bold; text-align: right; padding-right: 8px; width: 52px; }
+.score-tooltip td:nth-child(2) { width: auto; }
+.score-tooltip td:last-child { width: 60px; font-weight: bold; text-align: right; white-space: nowrap; }
+/* Legenda de badges: 1a coluna e o icone (nao um numero), 2a e o nome curto
+   em destaque, 3a a explicacao -- layout diferente da legenda de score. */
+.score-tooltip table.badge-legend td:first-child { color: inherit; font-weight: normal; text-align: center; padding-right: 4px; width: 26px; font-size: 15px; }
+.score-tooltip table.badge-legend td:nth-child(2) { color: #fff; font-weight: bold; width: 96px; white-space: normal; }
+.score-tooltip table.badge-legend td:last-child { width: auto; font-weight: normal; text-align: left; white-space: normal; color: #ccc; }
+/* Significado forense/seguranca: mais discreto que o rotulo tecnico acima
+   dele, mas legivel -- e a resposta a "o que isso quer dizer de verdade". */
+.leg-sig { color: #888; font-size: 10px; font-style: italic; display: inline-block; margin-top: 2px; }
+/* Linha de explicacao do popup de score: continuacao visual da linha
+   compacta acima dela, sem borda propria repetida. */
+.leg-exp-row td { border-bottom: 1px solid #333 !important; padding-top: 0 !important; padding-bottom: 6px !important; }
+/* Significado forense no bloco "Probe Signals" do detalhe do processo
+   (mesmo texto de risk.SINAIS, ver _render_probe_signals). */
+.probe-sig { color: #888; font-size: 10px; font-style: italic; white-space: normal; margin-top: 2px; }
 
 /* --- TABS (Findings / Processes) --- */
 /* A troca de aba usa esta classe, nunca o estilo inline: o cabecalho da tabela
@@ -793,6 +936,40 @@ JS_BLOCK = r"""
                       '. Use "Ver todos os niveis" para limpar o filtro.');
         }
     }
+
+    // --- LEGENDAS DE AJUDA (score / badges) ---
+    // [FIX] Eram :hover puro: em monitor pequeno o popup nasce perto do
+    // icone "?" (que fica la embaixo, na barra de filtros ja rolada) e
+    // estoura o rodape da tela. Rolar ATE o popup tira o mouse da area de
+    // hover, e ele fecha antes de dar para ler o resto -- o analista nunca
+    // via a segunda metade da lista. Clique fixa o popup ABERTO (nao
+    // depende do mouse continuar sobre nada) e centralizado na tela (nao
+    // depende de onde o botao esta na pagina), entao o scroll interno
+    // sempre fica alcancavel em qualquer resolucao.
+    function toggleLegend(el) {
+        var wrapper = el.closest('.score-legend-wrapper');
+        if (!wrapper) return;
+        var estavaAberto = wrapper.classList.contains('open');
+        document.querySelectorAll('.score-legend-wrapper.open').forEach(function (w) {
+            w.classList.remove('open');
+        });
+        if (!estavaAberto) wrapper.classList.add('open');
+    }
+
+    document.addEventListener('click', function (e) {
+        if (e.target.closest && e.target.closest('.score-legend-wrapper')) return;
+        document.querySelectorAll('.score-legend-wrapper.open').forEach(function (w) {
+            w.classList.remove('open');
+        });
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.score-legend-wrapper.open').forEach(function (w) {
+                w.classList.remove('open');
+            });
+        }
+    });
 """
 
 # ------------------------------------------------------------------------------
@@ -879,16 +1056,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 <div class="leg-grp" style="border:none; margin-left:auto; display:flex; align-items:center;">
                     <span class="leg-lbl">Filters</span>
                     <span class="filter-btn" onclick="setFilter('NEW', this)" title="New Processes">✨</span>
-                    <span class="filter-btn" onclick="setFilter('SSH', this)" title="SSH Connections">🔌</span>
-                    <span class="filter-btn" onclick="setFilter('SUDO', this)" title="Privileged (Sudo)">🛡️</span>
-                    <span class="filter-btn" onclick="setFilter('CONTAINER', this)" title="Containerized">📦</span>
-                    <span class="filter-btn" onclick="setFilter('EDR/AV', this)" title="Security Inspectors - EDR (Endpoint Detection and Response) / AV (Antivirus)">💊</span>
-                    <span class="filter-btn" onclick="setFilter('EDR-WAIT', this)" title="Process Frozen by EDR/AV (Wchan Wait)">🧊</span>
-                    <span class="filter-btn" onclick="setFilter('GPU', this)" title="GPU Activity">🕹️</span>
-                    <span class="filter-btn" onclick="setFilter('MINER', this)" title="Mining Signature">⛏️</span>
-                    <span class="filter-btn" onclick="setFilter('UNSAFE', this)" title="Unsafe Path">☢️</span>
+                    {FILTER_BAR_HTML}
                     <span class="filter-btn" onclick="setFilter('NET ERR', this)" title="Network Errors">❌</span>
-                    <span class="filter-btn" onclick="setFilter('ZOMBIE', this)" title="Zombies">🧟</span>
+                    {BADGE_LEGEND_HTML}
 
                     <span class="btn-clear" onclick="setFilter('')">🧹 CLEAR</span>
                     <span class="btn-act" onclick="window.print()" title="Save PDF">🖨️</span>

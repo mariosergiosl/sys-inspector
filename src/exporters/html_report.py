@@ -16,11 +16,14 @@
 import re
 import datetime
 import html as html_lib
-from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, JS_BLOCK, LEGEND_HTML
+from src.exporters.web_assets import (HTML_TEMPLATE, CSS_BASE, JS_BLOCK,
+                                      LEGEND_HTML, FILTER_BAR_HTML,
+                                      BADGE_LEGEND_HTML)
 from src.core.findings import (SEV_INFO, SEVERITY_ORDER, confidence_label,
                                custody_label, custody_level, CONF_CONFIRMED,
                                CONF_PROBABLE, CONF_HEURISTIC, CUSTODY_NONE)
 from src.core import risk
+from src.core import badges as badges_reg
 from src.core.attack import describe, technique_url, used_techniques
 
 
@@ -111,6 +114,38 @@ def build_disk_string(path, mount_map, is_container=False):
     if path.startswith("/"):
         return "<span class='disk-str'>(FS: Host Filesystem | Mount info missing)</span>"
 
+    return ""
+
+
+# [2026-08-18, pedido do Mario] "Probe Signals" nao e o UNICO lugar do
+# detalhe do processo com dado ligado a um badge -- Security Forensics
+# tambem e. As frases de detection_reasons sao texto livre (nao tem uma
+# chave estruturada como as sondas do F-201), entao o icone vem de casar um
+# pedaco do texto com o badge que aquela deteccao de fato dispara em
+# process_tree.py. Ordem importa: o primeiro pedaco que bater vence.
+_ICONE_POR_TRECHO_DO_MOTIVO = (
+    ("Executable deleted from disk", "DELETED"),
+    ("INTEGRITY: Binary file has been deleted", "DELETED"),
+    ("Fileless execution from memory", "DELETED"),
+    ("Unsafe Library Path", "UNSAFE"),
+    ("Executed from unsafe path", "UNSAFE"),
+    ("LOCATION: Executed from temporary", "UNSAFE"),
+    ("GPU Hardware Access", "GPU"),
+    ("GPU Library Loaded", "GPU"),
+    ("Heuristic Name Match", "MINER"),
+    ("Filesystem Anomaly", "IMMUTABLE"),
+    ("Security Inspector", "EDR/AV"),
+    ("INSPECTION TYPE", "EDR/AV"),
+    ("Sync mode causes", "EDR/AV"),
+    ("ZOMBIE/DEFUNCT", "ZOMBIE"),
+)
+
+
+def _icone_do_motivo(motivo):
+    """Icone do badge que este motivo de deteccao dispara, ou "" se nenhum bater."""
+    for trecho, tag in _ICONE_POR_TRECHO_DO_MOTIVO:
+        if trecho in motivo:
+            return badges_reg.TAG_MAP.get(tag, ("",))[0]
     return ""
 
 
@@ -282,27 +317,10 @@ def _severity_label(score):
 # ------------------------------------------------------------------------------
 def _render_badges(node, tree=None):
     badges = []
-    tag_map = {
-        "SSH": ("🔌", "t-ssh", "Active SSH Connection"),
-        "SUDO": ("🛡️", "t-sudo", "Running via Sudo"),
-        "MINER": ("⛏️", "t-miner", "Crypto Mining Signature"),
-        "UNSAFE": ("☢️", "t-unsafe", "Unsafe Path (/tmp, /dev/shm)"),
-        "EDR/AV": ("💊", "t-edr", "Security Inspectors - EDR/AV"),
-        "INSPECTOR": ("💊", "t-edr", "Security Inspectors - EDR/AV"),
-        "EDR-WAIT": ("🧊", "t-edr", "Process Frozen by EDR/AV (Wchan Wait)"),
-        "GPU": ("🕹️", "t-gpu", "Accessing GPU Resources"),
-        "CONTAINER": ("📦", "t-cont", "Containerized Process"),
-        "ZOMBIE": ("🧟", "t-zombie", "Zombie Process"),
-        "IMMUTABLE": ("🔒", "t-immutable", "Immutable File Attribute"),
-        # O binario sumiu do disco enquanto o processo continua rodando. E um
-        # dos sinais mais fortes que a arvore carrega: apagar o executavel apos
-        # a execucao e tecnica corrente para nao deixar amostra para analise
-        # (ATT&CK T1070.004). Faltava aqui, e como o laco abaixo descartava em
-        # silencio tudo que nao estivesse neste mapa, o coletor detectava, o
-        # dado trafegava ate o laudo e a interface o jogava fora sem aviso.
-        "DELETED": ("👻", "t-deleted",
-                    "Binario apagado do disco com o processo em execucao")
-    }
+    # Registro unico (src/core/badges.py): a barra de filtro do topo nasce da
+    # MESMA lista, para um sinal novo nunca aparecer so como badge sem forma
+    # de isolar na arvore (D-028).
+    tag_map = badges_reg.TAG_MAP
 
     if node.is_new:
         badges.append('<span class="tag t-new" data-filter="NEW" title="New Process">✨<span class="visually-hidden">NEW</span></span>')
@@ -333,7 +351,13 @@ def _render_badges(node, tree=None):
             continue
 
         if tag in tag_map and tag not in seen:
-            icon, cls, tooltip = tag_map[tag]
+            icon, cls, tooltip, significado = tag_map[tag]
+            # O significado forense/seguranca entra no MESMO tooltip do
+            # badge, nao so no popup de legenda: quem esta olhando UM
+            # processo especifico nao devia precisar abrir outra tela para
+            # entender o que aquele icone quer dizer (achado do Mario,
+            # 2026-08-18).
+            tooltip += "\n\n" + significado
             if tag == "ZOMBIE" and tree:
                 parent_node = tree.get(node.ppid)
                 if parent_node:
@@ -455,11 +479,16 @@ def _render_exe_provenance(node):
     if not exe_path:
         return ""
 
+    # [2026-08-18, pedido do Mario] O icone do badge que essa condicao
+    # dispara (DELETED, mesma tag para os dois casos -- ver
+    # process_tree.py::_collect_exe_provenance) junto do rotulo, para ligar
+    # visualmente esta linha ao selo que aparece na arvore.
+    icone_deleted = badges_reg.TAG_MAP["DELETED"][0]
     flags = []
     if getattr(node, "exe_deleted", False):
-        flags.append("<span class='tag t-unsafe'>DELETED FROM DISK</span>")
+        flags.append(f"<span class='tag t-unsafe'>{icone_deleted} DELETED FROM DISK</span>")
     if getattr(node, "exe_memfd", False):
-        flags.append("<span class='tag t-unsafe'>FILELESS (memfd)</span>")
+        flags.append(f"<span class='tag t-unsafe'>{icone_deleted} FILELESS (memfd)</span>")
     flag_html = (" ".join(flags)) if flags else ""
 
     size = getattr(node, "exe_size", 0)
@@ -475,6 +504,87 @@ def _render_exe_provenance(node):
         for lbl, val in rows)
 
     return ("<div class='det-blk'><span class='det-title'>Executable Provenance</span>"
+            f"<table class='ctx-tbl'>{body}</table></div>")
+
+
+# [F-201] Ordem de exibicao: chave em process_tree.py/risk.py, rotulo da
+# linha, funcao que formata a lista/contador daquele campo do Node, e a
+# chave em risk.SINAIS que explica o que aquele numero significa para
+# seguranca/pericia (mesmo texto do popup do anomaly score e do badge --
+# fonte unica, D-021/D-028). None quando o campo nao vira bit (nenhum caso
+# hoje: todo campo que aparece aqui ja tem badge e sinal correspondente).
+_PROBE_SIGNAL_ROWS = (
+    ("cred_changes", "Credential Changes", "list", "cred_change"),
+    ("kernel_module_loads", "Kernel Modules Loaded", "count_with_args:module_args", "kmod_load"),
+    ("listening", "Listening", "list", "new_listener"),
+    ("accepted", "Accepted Connections", "list", "accepted_conn"),
+    ("mem_access", "Memory Access", "list", "mem_access"),
+    ("memfd_created", "Memfd Created", "count_with_args:memfd_names", "memfd_create"),
+    ("exec_mem_grants", "Exec Mem Grants (mprotect)", "count", "exec_mem_grant"),
+    ("bpf_calls", "BPF Calls", "count", "bpf_use"),
+    ("files_deleted", "Files Deleted", "count", "file_deleted"),
+    ("files_renamed", "Files Renamed", "count", "file_renamed"),
+    ("ns_changes", "Namespace Changes", "count", "ns_change"),
+    ("kexec_calls", "Kexec Calls", "count", "kexec_load"),
+    ("dns_queries", "DNS Queries", "list", "dns_query"),
+)
+
+_EXPLICACAO_RISCO_POR_CHAVE = {
+    chave: explicacao for _bit, chave, _rotulo, _sev, explicacao in risk.SINAIS
+}
+
+
+def _render_probe_signals(node):
+    """
+    Dado bruto das sondas de 2026-08-17 que ainda nao tem bloco proprio no
+    laudo (F-201). So aparece linha para campo que TEM dado: silencio aqui
+    significa "a sonda olhou e nao havia", nao "nao foi coletado" (D-020) --
+    os campos existem sempre no Node (ver ProcessNode.__init__), so o valor
+    varia.
+
+    [2026-08-18] Cada linha traz, junto do numero cru, o QUE aquele numero
+    significa para seguranca/pericia (mesmo texto de risk.SINAIS que ja
+    explica o badge e o popup de score). Antes so o numero aparecia ("BPF
+    Calls: 3"), e o Mario relatou ter que ir procurar em outro lugar o que
+    aquilo queria dizer -- e a mesma dica que motivou D-028 (todo indicador
+    presente, todo encaminhamento dito): um numero sem explicacao ao lado e
+    presenca so formal.
+    """
+    rows = []
+    for campo, rotulo, modo, chave_risco in _PROBE_SIGNAL_ROWS:
+        valor = getattr(node, campo, None)
+        if not valor:
+            continue
+        if modo == "list":
+            texto = ", ".join(_esc(v) for v in valor)
+        elif modo == "count":
+            texto = str(valor)
+        else:  # "count_with_args:<campo_da_lista>"
+            campo_args = modo.split(":", 1)[1]
+            args = getattr(node, campo_args, None)
+            texto = str(valor)
+            if args:
+                texto += " - " + ", ".join(_esc(a) for a in args)
+        significado = _EXPLICACAO_RISCO_POR_CHAVE.get(chave_risco, "")
+        # [2026-08-18, pedido do Mario] O icone do MESMO badge que apareceu
+        # na arvore vai junto do rotulo aqui: "qual informacao e relacionada
+        # aquele probe/deteccao" fica visivel de cara, sem ter que decorar
+        # qual emoji e qual campo. A chave de risk.py em maiusculo bate
+        # exatamente com a chave de badges.TAG_MAP para os 13 sinais do
+        # F-201 (cred_change -> CRED_CHANGE, etc.).
+        icone = badges_reg.TAG_MAP.get(chave_risco.upper(), ("", "", "", ""))[0]
+        rows.append((icone, rotulo, texto, significado))
+
+    if not rows:
+        return ""
+
+    body = "".join(
+        f"<tr><td class='ctx-lbl'>{icone} {lbl}:</td><td class='ctx-val'>{val}"
+        f"<div class='probe-sig'>{_esc(sig)}</div></td></tr>"
+        for icone, lbl, val, sig in rows)
+    return ("<div class='det-blk'><span class='det-title'>Probe Signals "
+            "<span style='font-weight:normal; color:#777; font-size:0.85em'>"
+            "(dado bruto das sondas eBPF, nesta captura)</span></span>"
             f"<table class='ctx-tbl'>{body}</table></div>")
 
 
@@ -500,6 +610,13 @@ def _get_details_html(node, mounts, tree=None):
     is_sudo = "Yes" if "sudo" in node.cmd else "No"
     is_ssh = "Yes" if "sshd" in node.cmd else "No"
     html += f"<tr><td class='ctx-lbl'>Sudo/SSH:</td><td class='ctx-val'>Sudo:{is_sudo} / SSH:{is_ssh}</td></tr>"
+
+    # [F-201] sched_process_exit nao vira badge de anomalia (todo processo
+    # termina), mas o dado e coletado e por D-020 nao pode ficar invisivel.
+    exit_style = "color:var(--red); font-weight:bold" if getattr(node, "exited", False) and node.exit_code != 0 else ""
+    exit_val = (f"Exited (code {node.exit_code})" if getattr(node, "exited", False)
+                else "Running")
+    html += f"<tr><td class='ctx-lbl'>Exit Status:</td><td class='ctx-val' style='{exit_style}'>{_esc(exit_val)}</td></tr>"
 
     role_val = "Standard Process"
     role_style = ""
@@ -582,12 +699,15 @@ def _get_details_html(node, mounts, tree=None):
     # "como chegou aqui", que a linha do processo sozinha nao conta.
     html += _render_exe_provenance(node)
     html += _render_ancestry(node, tree)
+    html += _render_probe_signals(node)
 
     reasons = _get_anomaly_reasons(node)
     if reasons:
         html += "<div class='det-blk'><span class='det-title' style='color:var(--red)'>Security Forensics</span>"
         for r in reasons:
-            html += f"<div style='color:#ff6b6b; margin-left:10px; font-weight:bold;'>&bull; {_esc(r)}</div>"
+            icone = _icone_do_motivo(r)
+            prefixo = f"{icone} " if icone else ""
+            html += f"<div style='color:#ff6b6b; margin-left:10px; font-weight:bold;'>&bull; {prefixo}{_esc(r)}</div>"
         html += "</div>"
 
     html += "<div class='det-blk'><span class='det-title'>Loaded Libraries</span>"
@@ -599,7 +719,9 @@ def _get_details_html(node, mounts, tree=None):
             # Escapa o caminho ANTES de envolver na marcacao de destaque.
             safe_lib = _esc(lib)
             if is_suspicious_lib(lib):
-                safe_lib = f"<span style='color:var(--red);font-weight:bold'>{_esc(lib)} <span class='tag t-unsafe'>[UNSAFE]</span></span>"
+                icone_unsafe = badges_reg.TAG_MAP["UNSAFE"][0]
+                safe_lib = (f"<span style='color:var(--red);font-weight:bold'>{_esc(lib)} "
+                            f"<span class='tag t-unsafe'>{icone_unsafe} [UNSAFE]</span></span>")
             ls_html.append(f"<div>{safe_lib} {dstr}</div>")
 
         libs_content = '\n'.join(ls_html)
@@ -1305,6 +1427,8 @@ def generate_report(inventory, process_tree, output_file, version):
             CSS_BLOCK=CSS_BASE,
             JS_BLOCK=JS_BLOCK + "\n    // Auto-start check handled by main.py injection or manual call",
             LEGEND_HTML=LEGEND_HTML,
+            FILTER_BAR_HTML=FILTER_BAR_HTML,
+            BADGE_LEGEND_HTML=BADGE_LEGEND_HTML,
             OS_CONTENT=os_c,
             DISK_CONTENT=disk_c,
             NET_CONTENT=net_c,

@@ -85,7 +85,8 @@ def test_template_formats_with_all_placeholders():
     """
     campos = dict(
         VERSION="x", HOSTNAME="h", TIMESTAMP="t", CSS_BLOCK="", JS_BLOCK="",
-        LEGEND_HTML="", OS_CONTENT="", DISK_CONTENT="", NET_CONTENT="",
+        LEGEND_HTML="", FILTER_BAR_HTML="", BADGE_LEGEND_HTML="",
+        OS_CONTENT="", DISK_CONTENT="", NET_CONTENT="",
         FINDINGS_CONTENT="", FINDINGS_BADGE="", ATTACK_CONTENT="",
         ATTACK_BADGE="<span>3</span>", TABLE_ROWS="")
     saida = HTML_TEMPLATE.format(**campos)

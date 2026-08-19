@@ -17,6 +17,10 @@
 #   --fanotify   Enable Fanotify Inspection Simulation (EDR Simulation)
 #   --container  Enable Container Simulation (Podman/Docker or Unshare fallback)
 #   --gpu        Enable Fake GPU/Crypto-mining Simulation (Memory Signature)
+#   --probes     Enable the 13 new eBPF probe signals (F-201, 2026-08-17/18):
+#                cred_change, kmod_load, new_listener, accepted_conn,
+#                mem_access, memfd_create, exec_mem_grant, bpf_use,
+#                file_deleted, file_renamed, ns_change, kexec_load, dns_query
 #   --all        Enable ALL tests (Default if no option is provided)
 #   --duration   Duration in seconds before auto-stop (Default: 40)
 #   --help       Show this message
@@ -55,6 +59,7 @@ ENABLE_PROC=false
 ENABLE_FANO=false
 ENABLE_CONT=false
 ENABLE_GPU=false
+ENABLE_PROBES=false
 ALL_MODE=false
 
 # --------------------------------------------------------------------------------------
@@ -127,7 +132,19 @@ cleanup() {
     pkill -f "sudo_simulator"
     pkill -f "artifact_fw.py"
     pkill -f "artifact_fano.py"
-    
+    pkill -f "probe_cred_change.py"
+    pkill -f "probe_kmod_load.py"
+    pkill -f "probe_listener.py"
+    pkill -f "probe_mem_access.py"
+    pkill -f "probe_memfd_create.py"
+    pkill -f "probe_exec_mem_grant.py"
+    pkill -f "probe_bpf_use.py"
+    pkill -f "probe_file_ops.py"
+    pkill -f "probe_kexec_load.py"
+    # probe_ns_change nao e python: e o "unshare --fork --pid -- sleep 2"
+    # em loop; pkill -P $$ (item 1) ja mata o subshell que o gera, e cada
+    # "sleep 2" some sozinho pelo --fork --pid ao perder o pai unshare.
+
     # 3. Restore Network Rules
     if [ "$ENABLE_NET" = "true" ]; then
         IFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
@@ -191,6 +208,7 @@ while [[ "$#" -gt 0 ]]; do
         --fanotify) ENABLE_FANO=true ;;
         --container) ENABLE_CONT=true ;;
         --gpu) ENABLE_GPU=true ;;
+        --probes) ENABLE_PROBES=true ;;
         --all) ALL_MODE=true ;;
         --duration) shift; DURATION="$1" ;;
         --help) usage ;;
@@ -201,7 +219,7 @@ done
 
 if [ "$ALL_MODE" = "true" ]; then
     ENABLE_NET=true; ENABLE_FW=true; ENABLE_DISK=true; ENABLE_PROC=true
-    ENABLE_FANO=true; ENABLE_CONT=true; ENABLE_GPU=true
+    ENABLE_FANO=true; ENABLE_CONT=true; ENABLE_GPU=true; ENABLE_PROBES=true
 fi
 
 #--- Trava de gateway --------------------------------------------------
@@ -579,6 +597,282 @@ EOF
     echo "      * Miner PID: $! (Name: kryptominer)"
 else
     log_msg "TYPE" "[GPU] SKIPPED"
+fi
+
+# --------------------------------------------------------------------------------------
+# MODULE 7.5: PROBE SIGNALS (F-201, 2026-08-17/18)
+# --------------------------------------------------------------------------------------
+# Aciona os 13 sinais novos de risk.py que ainda nao tinham artefato dedicado
+# (F-201, Lote 1). dns_query ja e exercitado pelo MODULE 1 (dns_noise dentro
+# de artifact_net.py); nao repetido aqui.
+#
+# SEGURANCA: init_module, kexec_load e bpf() usam kprobe na ENTRADA da
+# funcao do kernel -- disparam ANTES de qualquer validacao/efeito. Chamar a
+# syscall com argumentos deliberadamente vazios/invalidos aciona a sonda e
+# falha de forma inofensiva antes de fazer qualquer coisa real:
+#   - init_module(NULL, 0, "")  -> EFAULT imediato, nenhum modulo carrega.
+#   - kexec_load(0, 0, NULL, 0) -> nr_segments=0 e o proprio teste de
+#     capacidade que kexec-tools usa para saber se a syscall existe; sem
+#     segmento nenhum, nao ha kernel novo para trocar.
+#   - bpf(9999, NULL, 0)        -> cmd invalido, -EINVAL imediato.
+# As demais (memfd_create, mprotect+EXEC, ptrace attach/detach, bind/accept,
+# setns/unshare, unlink/rename, sudo -u) sao operacoes REAIS e seguras: so
+# nao tem efeito nocivo porque nao fazem nada alem de exercitar a sonda
+# (memoria alocada e liberada, arquivo de teste, socket local, etc.).
+if [ "$ENABLE_PROBES" = "true" ]; then
+    log_msg "TYPE" "[PROBES] F-201: 13 sinais novos do anomaly score"
+
+    # [2026-08-18, achado do Mario] Ate aqui os 12 sinais rodavam em UM
+    # processo so (threads dentro do mesmo artifact_probes.py). Funciona,
+    # mas concentra tudo numa unica linha da arvore: um bug de atribuicao
+    # por processo (ex.: tag vazando para o PID errado) fica mascarado,
+    # porque o mesmo PID "deveria mesmo" ter todos os badges. Cada sonda
+    # agora e um SCRIPT E UM PROCESSO proprios, para cada sinal aparecer
+    # isolado na arvore -- do jeito que um analista precisa ver para
+    # confiar que o badge esta preso ao processo certo.
+    #
+    # probe_lib.py e importado por cada um (evita repetir 8x o mesmo
+    # boilerplate de ctypes/numeros de syscall); ainda assim cada
+    # probe_*.py roda como PROCESSO TOP-LEVEL proprio (python3 "$f" &), nao
+    # como thread dentro de um processo maior.
+    cat << 'EOF' > "${TEMP_DIR}/probe_lib.py"
+import ctypes
+import time
+
+libc = ctypes.CDLL(None, use_errno=True)
+
+# Numeros de syscall x86_64. Sem dependencia de versao de libc porque nem
+# toda glibc antiga expoe wrapper para as mais novas (memfd_create, bpf).
+SYS_INIT_MODULE = 175
+SYS_BPF = 321
+SYS_KEXEC_LOAD = 246
+SYS_MEMFD_CREATE = 319
+
+PTRACE_ATTACH = 16
+PTRACE_DETACH = 17
+
+
+def loop(segundos, funcao):
+    """Roda 'funcao' em loop nesta sonda, sem derrubar o processo se falhar."""
+    while True:
+        try:
+            funcao()
+        except Exception:
+            pass
+        time.sleep(segundos)
+EOF
+
+    # 1. cred_change: commit_creds, root trocando de uid via sudo.
+    cat << 'EOF' > "${TEMP_DIR}/probe_cred_change.py"
+import subprocess
+import sys
+sys.path.insert(0, "/tmp/chaos_artifacts")
+from probe_lib import loop
+
+
+def toca():
+    subprocess.Popen(["sudo", "-n", "-u", "nobody", "sleep", "2"],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+loop(3, toca)
+EOF
+
+    # 2. kmod_load: init_module(NULL, 0, "") -> EFAULT imediato, nenhum
+    #    modulo real carrega (kprobe na entrada da funcao ja disparou).
+    cat << 'EOF' > "${TEMP_DIR}/probe_kmod_load.py"
+import ctypes
+import sys
+sys.path.insert(0, "/tmp/chaos_artifacts")
+from probe_lib import libc, loop, SYS_INIT_MODULE
+
+
+def toca():
+    libc.syscall(SYS_INIT_MODULE, None, ctypes.c_ulong(0), b"")
+
+
+loop(4, toca)
+EOF
+
+    # 3. new_listener + accepted_conn: bind/listen e um cliente LOCAL se
+    #    conectando (mesmo fluxo, faz sentido no mesmo processo -- e uma
+    #    coisa so: "este host abriu e aceitou uma conexao").
+    cat << 'EOF' > "${TEMP_DIR}/probe_listener.py"
+import socket
+import sys
+import threading
+sys.path.insert(0, "/tmp/chaos_artifacts")
+from probe_lib import loop
+
+
+def toca():
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    porta = srv.getsockname()[1]
+    srv.listen(1)
+
+    def conecta():
+        try:
+            c = socket.create_connection(("127.0.0.1", porta), timeout=2)
+            c.close()
+        except Exception:
+            pass
+
+    threading.Thread(target=conecta, daemon=True).start()
+    try:
+        srv.settimeout(2)
+        conn, _ = srv.accept()
+        conn.close()
+    except Exception:
+        pass
+    srv.close()
+
+
+loop(3, toca)
+EOF
+
+    # 4. mem_access: ptrace attach/detach num filho PROPRIO deste script
+    #    (nunca em outro processo do host).
+    cat << 'EOF' > "${TEMP_DIR}/probe_mem_access.py"
+import subprocess
+import sys
+import time
+sys.path.insert(0, "/tmp/chaos_artifacts")
+from probe_lib import libc, loop, PTRACE_ATTACH, PTRACE_DETACH
+
+
+def toca():
+    filho = subprocess.Popen(["sleep", "5"])
+    time.sleep(0.2)
+    try:
+        libc.ptrace(PTRACE_ATTACH, filho.pid, None, None)
+        time.sleep(0.1)
+        libc.ptrace(PTRACE_DETACH, filho.pid, None, None)
+    except Exception:
+        pass
+    filho.wait()
+
+
+loop(4, toca)
+EOF
+
+    # 5. memfd_create: aloca e libera, sem execucao a partir dai.
+    cat << 'EOF' > "${TEMP_DIR}/probe_memfd_create.py"
+import os
+import sys
+sys.path.insert(0, "/tmp/chaos_artifacts")
+from probe_lib import libc, loop, SYS_MEMFD_CREATE
+
+
+def toca():
+    fd = libc.syscall(SYS_MEMFD_CREATE, b"chaos_probe_memfd", 0)
+    if fd >= 0:
+        os.close(fd)
+
+
+loop(2, toca)
+EOF
+
+    # 6. exec_mem_grant: mprotect concedendo PROT_EXEC a uma pagina anonima
+    #    recem-alocada. So a PERMISSAO muda; nada e escrito nem executado.
+    cat << 'EOF' > "${TEMP_DIR}/probe_exec_mem_grant.py"
+import ctypes
+import sys
+sys.path.insert(0, "/tmp/chaos_artifacts")
+from probe_lib import libc, loop
+
+
+def toca():
+    tamanho = 4096
+    PROT_READ, PROT_WRITE, PROT_EXEC = 0x1, 0x2, 0x4
+    MAP_PRIVATE, MAP_ANONYMOUS = 0x02, 0x20
+    libc.mmap.restype = ctypes.c_void_p
+    endereco = libc.mmap(None, tamanho, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+    if endereco and endereco != -1:
+        libc.mprotect(ctypes.c_void_p(endereco), tamanho,
+                      PROT_READ | PROT_WRITE | PROT_EXEC)
+        libc.munmap(ctypes.c_void_p(endereco), tamanho)
+
+
+loop(2, toca)
+EOF
+
+    # 7. bpf_use: bpf() com comando invalido -> -EINVAL imediato, nenhum
+    #    programa eBPF de fato carrega.
+    cat << 'EOF' > "${TEMP_DIR}/probe_bpf_use.py"
+import ctypes
+import sys
+sys.path.insert(0, "/tmp/chaos_artifacts")
+from probe_lib import libc, loop, SYS_BPF
+
+
+def toca():
+    libc.syscall(SYS_BPF, ctypes.c_int(9999), None, ctypes.c_ulong(0))
+
+
+loop(3, toca)
+EOF
+
+    # 8. file_deleted + file_renamed: mesmo arquivo, os dois lados de UMA
+    #    operacao de anti-forense tipica (renomeia, depois apaga).
+    cat << 'EOF' > "${TEMP_DIR}/probe_file_ops.py"
+import os
+import sys
+sys.path.insert(0, "/tmp/chaos_artifacts")
+from probe_lib import loop
+
+
+def toca():
+    base = "/tmp/chaos_artifacts/probe_file_%d" % os.getpid()
+    with open(base, "w") as f:
+        f.write("chaos")
+    os.rename(base, base + "_renamed")   # vfs_rename
+    os.unlink(base + "_renamed")         # vfs_unlink
+
+
+loop(2, toca)
+EOF
+
+    # 9. kexec_load: kexec_load(0, 0, NULL, 0), o proprio teste de
+    #    capacidade que kexec-tools usa. Sem segmento nenhum, nao ha
+    #    kernel novo para trocar.
+    cat << 'EOF' > "${TEMP_DIR}/probe_kexec_load.py"
+import ctypes
+import sys
+sys.path.insert(0, "/tmp/chaos_artifacts")
+from probe_lib import libc, loop, SYS_KEXEC_LOAD
+
+
+def toca():
+    libc.syscall(SYS_KEXEC_LOAD, ctypes.c_ulong(0), ctypes.c_ulong(0),
+                None, ctypes.c_ulong(0))
+
+
+loop(6, toca)
+EOF
+
+    for f in probe_cred_change probe_kmod_load probe_listener \
+             probe_mem_access probe_memfd_create probe_exec_mem_grant \
+             probe_bpf_use probe_file_ops probe_kexec_load; do
+        python3 "${TEMP_DIR}/${f}.py" &
+        echo "      * ${f} PID: $!"
+    done
+
+    # 10. ns_change: setns/unshare. Comando de linha proprio (nao precisa
+    #     de python), mesma tecnica do fallback de container (MODULE 7),
+    #     aqui como PROCESSO PROPRIO para nao depender de podman/docker
+    #     ausentes nem se misturar com o cenario de container.
+    (while true; do
+        unshare --fork --pid -- sleep 2 2>/dev/null
+        sleep 3
+    done) &
+    echo "      * probe_ns_change PID: $!"
+
+    echo "      * (dns_query ja coberto pelo MODULE 1 / dns_noise)"
+else
+    log_msg "TYPE" "[PROBES] SKIPPED"
 fi
 
 # --------------------------------------------------------------------------------------

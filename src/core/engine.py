@@ -240,13 +240,24 @@ class SysInspectorEngine:
                 node.open_files.add(filename)
 
         elif ev_type == 'N':  # Network Connect
+            # [FIX] Era "except: pass": foi ESTE bloco que engoliu por meses
+            # o AttributeError de node.connections ser set() em vez de lista
+            # (corrigido em process_tree.py). Um except mudo aqui de novo
+            # descartaria em silencio qualquer falha futura de formatacao,
+            # deixando a lista de conexoes vazia sem nenhum rastro -- a
+            # mesma classe de perda silenciosa, so que escondida atras da
+            # PROXIMA mudanca. Print (nao logging: o resto do arquivo usa
+            # print para diagnostico, ver _attach_opcional) mantem o rastro
+            # visivel sem propor um mecanismo novo so para este ponto.
             try:
                 conn_str = formata_conexao(
                     getattr(event, "ip_ver", 4), event.daddr,
                     getattr(event, "daddr6", b""), event.dport)
                 if conn_str not in node.connections:  # Avoid duplicates
                     node.connections.append(conn_str)  # v0.70 uses List for JSON compat
-            except: pass
+            except Exception as exc:
+                print("[!] eBPF: falha ao registrar conexao do PID %s: %s"
+                      % (pid, exc))
 
         elif ev_type == 'X':  # Fim de processo
             # Guardado no proprio no: o diff entre capturas passa a ter o

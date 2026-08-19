@@ -25,6 +25,8 @@ import subprocess
 import shutil
 from datetime import datetime, timedelta
 
+from src.core import badges as badges_reg
+
 # ------------------------------------------------------------------------------
 # CONSTANTS: BITMASK SCORING
 # ------------------------------------------------------------------------------
@@ -38,8 +40,42 @@ SCORE_NET_ISSUE = 64
 SCORE_ZOMBIE = 128
 SCORE_IMMUTABLE = 256
 
+# [F-201] Sinais das 18 sondas eBPF novas de 2026-08-17. Duas delas (conexao
+# IPv6 e fim de processo) nao entram aqui: sao dado de renderizacao, nao
+# indicio de nada por si so, e cada uma ja tem seu proprio lugar no laudo
+# (lista de conexoes existente, e status de saida do processo).
+SCORE_CRED_CHANGE = 512
+SCORE_KMOD_LOAD = 1024
+SCORE_NEW_LISTENER = 2048
+SCORE_ACCEPTED_CONN = 4096
+SCORE_MEM_ACCESS = 8192
+SCORE_MEMFD_CREATE = 16384
+SCORE_EXEC_MEM_GRANT = 32768
+SCORE_BPF_USE = 65536
+SCORE_FILE_DELETED = 131072
+SCORE_FILE_RENAMED = 262144
+SCORE_NS_CHANGE = 524288
+SCORE_KEXEC_LOAD = 1048576
+SCORE_DNS_QUERY = 2097152
+
 # Diretorios de onde um binario legitimo normalmente NAO e executado.
 UNSAFE_EXEC_PREFIXES = ("/tmp/", "/dev/shm/", "/var/tmp/", "/run/shm/")
+
+# [FIX] Quais badges "sobem" da subarvore para o processo pai (o ancestral
+# mostra o pior sinal de qualquer descendente, nao so o proprio). Existia
+# aqui uma TERCEIRA lista de tags escrita a mao (a primeira e o tag_map do
+# badge, a segunda era a barra de filtro, ja unificadas em src/core/badges.py
+# nesta mesma sessao) e ela nunca foi atualizada: DELETED e IMMUTABLE ja
+# ficavam de fora antes do F-201, e os 13 sinais novos do F-201 repetiam o
+# mesmo erro. O efeito e visivel na raiz da arvore (PID 1): o score maximo da
+# subarvore aparecia corretamente (nao depende desta lista), mas o BADGE que
+# explica aquele score sumia, porque "sobe o numero, nao sobe o icone que o
+# nomeia" e exatamente o tipo de perda silenciosa que a D-028 probe.
+# NET ERR, NEW, WARN e o icone solto de EDR-WAIT (🧊) nao sao chaves de
+# TAG_MAP (tem renderizacao propria em _render_badges), e por isso entram
+# aqui a parte.
+TAGS_QUE_SOBEM_NA_ARVORE = frozenset(badges_reg.TAG_MAP.keys()) | {
+    "NET ERR", "NEW", "WARN", "🧊"}
 
 
 def unsafe_path_in_cmdline(cmdline):
@@ -471,7 +507,16 @@ class ProcessNode:
         self.libs = []
         self.open_files = set()
         self.file_metadata = {}  # [NEW] Stores permissions/owner
-        self.connections = set()
+        # [FIX] Era set(), mas engine.py grava aqui com .append() (comentario
+        # "v0.70 uses List for JSON compat", src/core/engine.py:248) dentro de
+        # um try/except que engolia o AttributeError em silencio. Toda
+        # conexao de saida capturada pela sonda eBPF (tcp_v4_connect e
+        # tcp_v6_connect) nunca era de fato gravada; a lista ficava sempre
+        # vazia, sem nenhum aviso. snapshot_controller.py converte para set
+        # so ao RELER um snapshot salvo, por conveniencia propria do diff; o
+        # Node vivo do coletor sempre foi lista na pratica, so o valor
+        # inicial estava errado.
+        self.connections = []
         self.is_new = False
 
         # Sinais das sondas de ciclo de vida, credencial, modulo e escuta.
@@ -833,6 +878,70 @@ class ProcessTree:
 
         self.immutable_alert = bad_dirs if bad_dirs else []
 
+    @staticmethod
+    def _apply_probe_signals(n):
+        """
+        Traduz os campos das 18 sondas de 2026-08-17 (ja no Node, ver
+        ProcessNode.__init__) em tag + bit de anomaly_score (F-201).
+
+        Cada campo so vira sinal quando tem dado (D-020: campo vazio nao e
+        sinal, so registro de que a sonda olhou). tcp_v6_connect e
+        sched_process_exit ficam de fora de proposito: ja tem seu proprio
+        lugar no laudo (lista de conexoes e status de saida do processo) e
+        nao sao indicio de nada por si so.
+        """
+        if n.cred_changes and "CRED_CHANGE" not in n.context_tags:
+            n.context_tags.append("CRED_CHANGE")
+        if "CRED_CHANGE" in n.context_tags: n.anomaly_score |= SCORE_CRED_CHANGE
+
+        if n.kernel_module_loads > 0 and "KMOD_LOAD" not in n.context_tags:
+            n.context_tags.append("KMOD_LOAD")
+        if "KMOD_LOAD" in n.context_tags: n.anomaly_score |= SCORE_KMOD_LOAD
+
+        if n.listening and "NEW_LISTENER" not in n.context_tags:
+            n.context_tags.append("NEW_LISTENER")
+        if "NEW_LISTENER" in n.context_tags: n.anomaly_score |= SCORE_NEW_LISTENER
+
+        if n.accepted and "ACCEPTED_CONN" not in n.context_tags:
+            n.context_tags.append("ACCEPTED_CONN")
+        if "ACCEPTED_CONN" in n.context_tags: n.anomaly_score |= SCORE_ACCEPTED_CONN
+
+        if n.mem_access and "MEM_ACCESS" not in n.context_tags:
+            n.context_tags.append("MEM_ACCESS")
+        if "MEM_ACCESS" in n.context_tags: n.anomaly_score |= SCORE_MEM_ACCESS
+
+        if n.memfd_created > 0 and "MEMFD_CREATE" not in n.context_tags:
+            n.context_tags.append("MEMFD_CREATE")
+        if "MEMFD_CREATE" in n.context_tags: n.anomaly_score |= SCORE_MEMFD_CREATE
+
+        if n.exec_mem_grants > 0 and "EXEC_MEM_GRANT" not in n.context_tags:
+            n.context_tags.append("EXEC_MEM_GRANT")
+        if "EXEC_MEM_GRANT" in n.context_tags: n.anomaly_score |= SCORE_EXEC_MEM_GRANT
+
+        if n.bpf_calls > 0 and "BPF_USE" not in n.context_tags:
+            n.context_tags.append("BPF_USE")
+        if "BPF_USE" in n.context_tags: n.anomaly_score |= SCORE_BPF_USE
+
+        if n.files_deleted > 0 and "FILE_DELETED" not in n.context_tags:
+            n.context_tags.append("FILE_DELETED")
+        if "FILE_DELETED" in n.context_tags: n.anomaly_score |= SCORE_FILE_DELETED
+
+        if n.files_renamed > 0 and "FILE_RENAMED" not in n.context_tags:
+            n.context_tags.append("FILE_RENAMED")
+        if "FILE_RENAMED" in n.context_tags: n.anomaly_score |= SCORE_FILE_RENAMED
+
+        if n.ns_changes > 0 and "NS_CHANGE" not in n.context_tags:
+            n.context_tags.append("NS_CHANGE")
+        if "NS_CHANGE" in n.context_tags: n.anomaly_score |= SCORE_NS_CHANGE
+
+        if n.kexec_calls > 0 and "KEXEC_LOAD" not in n.context_tags:
+            n.context_tags.append("KEXEC_LOAD")
+        if "KEXEC_LOAD" in n.context_tags: n.anomaly_score |= SCORE_KEXEC_LOAD
+
+        if n.dns_queries and "DNS_QUERY" not in n.context_tags:
+            n.context_tags.append("DNS_QUERY")
+        if "DNS_QUERY" in n.context_tags: n.anomaly_score |= SCORE_DNS_QUERY
+
     def aggregate_stats(self):
         """Bubble up stats AND BADGES using Recursive DFS."""
 
@@ -865,6 +974,8 @@ class ProcessTree:
             if "NET_TOOL" in n.context_tags: n.anomaly_score += SCORE_NET_TOOL
             if "DELETED" in n.context_tags: n.anomaly_score += SCORE_DELETED
             if unsafe_path_in_cmdline(n.cmd): n.anomaly_score += SCORE_MALWARE
+
+            self._apply_probe_signals(n)
 
             if n.pid not in self.kernel_pids and (n.tcp_retrans > 0 or n.tcp_drops > 0):
                 n.tags_accumulated = set(n.context_tags)
@@ -960,9 +1071,8 @@ class ProcessTree:
                         if child.tree_has_alert:
                             node.tree_has_alert = True
 
-                        whitelist = ["SSH", "SUDO", "UNSAFE", "MINER", "EDR/AV", "CONTAINER", "GPU", "NET ERR", "NEW", "WARN", "ZOMBIE", "EDR-WAIT", "🧊"]
                         for tag in child.tags_accumulated:
-                            if tag in whitelist or "WARN" in tag:
+                            if tag in TAGS_QUE_SOBEM_NA_ARVORE or "WARN" in tag:
                                 node.tags_accumulated.add(tag)
             return node
 

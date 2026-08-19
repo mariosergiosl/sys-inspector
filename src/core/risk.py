@@ -81,6 +81,65 @@ SINAIS = (
     (128, "zombie", "processo defunto", SEV_INFO,
      "Terminou e aguarda o pai recolher o status. E rotina de sistema; so "
      "informa quando acumula ou quando o pai desapareceu."),
+
+    # [F-201] Sinais das 18 sondas eBPF de 2026-08-17. tcp_v6_connect e
+    # sched_process_exit ficam fora desta tabela de proposito: nao sao
+    # indicio de nada por si so e ja tem seu proprio lugar no laudo (lista de
+    # conexoes, status de saida do processo).
+    (1048576, "kexec_load", "carregou kernel via kexec", SEV_CRITICAL,
+     "Troca do kernel em execucao por outro, sem reboot completo. Uso "
+     "legitimo existe (kdump, atualizacao ao vivo), mas e raro fora de boot "
+     "e e o unico ponto que da a um atacante controle total do kernel sem "
+     "derrubar a maquina."),
+    (8192, "mem_access", "acessou memoria de outro processo", SEV_HIGH,
+     "ptrace ou process_vm_readv contra outro PID. Tecnica corrente de dump "
+     "de credencial em memoria e de injecao de codigo em processo alheio."),
+    (32768, "exec_mem_grant", "concedeu execucao a regiao de memoria", SEV_HIGH,
+     "mprotect trocou uma pagina de memoria para executavel. Assinatura "
+     "classica de shellcode desempacotado em runtime ou de JIT abusado."),
+    (65536, "bpf_use", "uso de eBPF por terceiro", SEV_HIGH,
+     "Chamada a bpf() por um processo que nao e o proprio coletor. E a mesma "
+     "capacidade usada por rootkits modernos de eBPF; raro em processo comum."),
+    (524288, "ns_change", "mudou de namespace", SEV_HIGH,
+     "setns ou unshare. E o movimento central de uma fuga de conteiner: sair "
+     "do isolamento para o namespace do host ou de outro conteiner."),
+    (1024, "kmod_load", "carregou modulo de kernel", SEV_HIGH,
+     "init_module ou finit_module fora do boot. Vetor classico de rootkit de "
+     "kernel; administracao legitima normalmente passa por modprobe no boot."),
+    (512, "cred_change", "mudanca de credencial (uid)", SEV_INFO,
+     "commit_creds trocou o uid do processo. Dispara em TODO sudo, su, "
+     "binario setuid e servico que larga privilegio ao subir; e o caso mais "
+     "comum do host, nao a excecao. O discriminante que separa rotina de "
+     "escalada e a AUSENCIA de mediador legitimo (sudo/su/PAM) na arvore de "
+     "ancestrais, e essa e a regra AM-001-L1, nao este bit. Em MEDIUM ele "
+     "entrava na contagem de coincidencia (NIVEL_MINIMO_PARA_ESCALAR) e "
+     "promovia a HIGH qualquer processo com sudo mais qualquer outro sinal "
+     "MEDIUM do host (ex.: ld.so.preload marcado imutavel), inundando a tela."),
+    (16384, "memfd_create", "criou memoria de arquivo anonima", SEV_LOW,
+     "memfd_create monta a base da execucao fileless, mas tambem e uso "
+     "corrente de software legitimo (systemd, navegadores, IPC via "
+     "shared-memory). So vira execucao de fato quando o processo roda a "
+     "partir dai; esse caso mais forte ja tem sinal proprio (binario "
+     "apagado/memfd em execucao)."),
+    (2048, "new_listener", "abriu porta de escuta", SEV_LOW,
+     "bind() passou o socket a escutar. Rotina de qualquer servico, e "
+     "tambem o primeiro passo de um shell reverso ou backdoor com porta "
+     "propria."),
+    (4096, "accepted_conn", "aceitou conexao de entrada", SEV_LOW,
+     "inet_csk_accept: alguem do lado de fora se conectou a este processo. "
+     "Rotina de servidor; util para saber quem entrou em processo que nao "
+     "deveria aceitar conexao nenhuma."),
+    (131072, "file_deleted", "apagou arquivo", SEV_LOW,
+     "vfs_unlink. Volume normal e alto (rm, gerenciador de pacote); o "
+     "julgamento fino sobre padrao anti-forense fica para a regra que cruza "
+     "com o restante do comportamento do processo."),
+    (262144, "file_renamed", "renomeou arquivo", SEV_LOW,
+     "vfs_rename. Tao comum quanto apagar (rotacao de log, mv); mesma "
+     "ressalva do sinal anterior."),
+    (2097152, "dns_query", "consulta DNS observada", SEV_INFO,
+     "Dominio resolvido pelo processo, capturado no proprio pacote. Puro "
+     "registro por enquanto; e o insumo da analise de periodicidade de "
+     "beaconing (regra futura, ainda nao implementada)."),
 )
 
 # Ordem de exibicao ja e a ordem da tupla: do que mais pesa para o que menos.

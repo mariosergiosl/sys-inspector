@@ -41,6 +41,20 @@ def test_bits_batem_com_o_coletor():
         "net_error": pt.SCORE_NET_ISSUE,
         "zombie": pt.SCORE_ZOMBIE,
         "immutable": pt.SCORE_IMMUTABLE,
+        # [F-201] Sinais das 18 sondas eBPF de 2026-08-17.
+        "cred_change": pt.SCORE_CRED_CHANGE,
+        "kmod_load": pt.SCORE_KMOD_LOAD,
+        "new_listener": pt.SCORE_NEW_LISTENER,
+        "accepted_conn": pt.SCORE_ACCEPTED_CONN,
+        "mem_access": pt.SCORE_MEM_ACCESS,
+        "memfd_create": pt.SCORE_MEMFD_CREATE,
+        "exec_mem_grant": pt.SCORE_EXEC_MEM_GRANT,
+        "bpf_use": pt.SCORE_BPF_USE,
+        "file_deleted": pt.SCORE_FILE_DELETED,
+        "file_renamed": pt.SCORE_FILE_RENAMED,
+        "ns_change": pt.SCORE_NS_CHANGE,
+        "kexec_load": pt.SCORE_KEXEC_LOAD,
+        "dns_query": pt.SCORE_DNS_QUERY,
     }
 
     aqui = dict((chave, bit) for bit, chave, _r, _s, _e in risk.SINAIS)
@@ -153,5 +167,91 @@ def test_bit_desconhecido_e_denunciado():
     descartado em silencio: sinal perdido sem rastro leva o analista a concluir
     que nao havia nada.
     """
-    assert risk.unknown_bits(1024) == 1024
+    # Bit acima de todos os conhecidos hoje (o maior e 2097152, dns_query).
+    assert risk.unknown_bits(4194304) == 4194304
     assert risk.unknown_bits(2 + 8) == 0
+
+
+# ------------------------------------------------------------------------------
+# F-201: SINAIS DAS 18 SONDAS DE 2026-08-17
+# ------------------------------------------------------------------------------
+def test_kexec_sozinho_e_critico():
+    """
+    kexec_load troca o kernel em execucao. E o unico sinal desta tabela que,
+    sozinho, ja justifica o nivel mais alto da escala.
+    """
+    assert risk.level(1048576) == SEV_CRITICAL
+    assert risk.needs_attention(1048576) is True
+
+
+def test_dns_query_sozinho_e_informativo():
+    """Consulta DNS e insumo (C-038, ainda nao implementado), nao suspeita."""
+    assert risk.level(2097152) == SEV_INFO
+    assert risk.needs_attention(2097152) is False
+
+
+def test_mem_access_e_ns_change_sao_altos_e_escalam_juntos():
+    """
+    ptrace/process_vm_readv em outro pid + fuga de namespace no mesmo
+    processo descreve mais que a soma das partes.
+    """
+    assert risk.level(8192) == SEV_HIGH
+    assert risk.level(524288) == SEV_HIGH
+    assert risk.level(8192 + 524288) == SEV_CRITICAL
+
+
+def test_delete_e_rename_de_arquivo_sao_baixos_sozinhos():
+    """
+    Alto volume normal (rm, mv, gerenciador de pacote); o julgamento fino
+    fica para a regra do Lote 3, nao para F-201.
+    """
+    assert risk.level(131072) == SEV_LOW
+    assert risk.level(262144) == SEV_LOW
+
+
+def test_cred_change_sozinho_e_apenas_informativo():
+    """
+    commit_creds dispara em todo sudo/su/binario setuid/servico que larga
+    privilegio ao subir -- e o caso mais comum do host, nao a excecao. O
+    discriminante que separa rotina de escalada e a AUSENCIA de mediador
+    legitimo na arvore de ancestrais (AM-001-L1), nao este bit.
+    """
+    assert risk.level(512) == SEV_INFO
+    assert risk.needs_attention(512) is False
+
+
+def test_sudo_com_ld_preload_imutavel_nao_escala_por_causa_do_cred_change():
+    """
+    Regressao (achado do Mario): com cred_change em MEDIUM, todo sudo (512)
+    combinado com QUALQUER outro sinal MEDIUM do host -- por exemplo
+    ld.so.preload marcado imutavel (256, "immutable") -- escalava sozinho
+    para HIGH pela regra de coincidencia, mesmo sem indicio nenhum de
+    escalada de privilegio de fato. cred_change em INFO tira o sudo de
+    dentro dessa contagem: o nivel deve continuar sendo o do sinal real
+    (immutable, MEDIUM), sem o degrau extra.
+    """
+    so_immutable = risk.level(256)
+    com_sudo = risk.level(256 + 512)
+    assert so_immutable == SEV_MEDIUM
+    assert com_sudo == SEV_MEDIUM
+    assert com_sudo == so_immutable
+
+
+def test_memfd_create_sozinho_e_baixo():
+    """
+    memfd_create e uso corrente de software legitimo (systemd, navegadores,
+    IPC via shared-memory); so a EXECUCAO a partir dai (sinal proprio,
+    ja existente) e que pesa.
+    """
+    assert risk.level(16384) == SEV_LOW
+
+
+def test_conexao_v6_e_fim_de_processo_nao_tem_sinal_proprio():
+    """
+    tcp_v6_connect e sched_process_exit sao dado renderizado em outro lugar
+    do laudo (lista de conexoes, status de saida), nunca bit de anomaly_score.
+    """
+    chaves = {chave for _bit, chave, _r, _s, _e in risk.SINAIS}
+    assert "tcp_v6_connect" not in chaves
+    assert "process_exit" not in chaves
+    assert "sched_process_exit" not in chaves

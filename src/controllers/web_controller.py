@@ -39,7 +39,9 @@ SAFE_ID_PATTERN = re.compile(r'^[A-Za-z0-9\-]{1,64}$')
 try:
     from src.core.crypto import load_private_key, decrypt_data
     # Reusing assets for visual consistency
-    from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, JS_BLOCK, LEGEND_HTML
+    from src.exporters.web_assets import (HTML_TEMPLATE, CSS_BASE, JS_BLOCK,
+                                          LEGEND_HTML, FILTER_BAR_HTML,
+                                          BADGE_LEGEND_HTML)
     from src.exporters.html_report import (
         render_os_block,
         render_net_block,
@@ -491,13 +493,19 @@ class WebController:
 
                 if not decrypted: return None, None, None, "Decryption Failed."
 
-                # Adapt for Report Renderer
-                inventory = decrypted.get('static', {})
+                # [FIX] Adapt for Report Renderer. Lia 'static'/'dynamic.process_tree.nodes',
+                # chaves que o payload decifrado nunca teve (ver
+                # save_snapshot/to_json): o formato real e todos os campos
+                # (os, hw, net, storage, findings, processes...) direto na
+                # raiz do dict. Isso fazia TODO bloco do laudo ao vivo (SO,
+                # rede, disco, findings, e a arvore inteira de processos)
+                # renderizar vazio em silencio, sem erro nenhum -- "No
+                # process data captured" mesmo com captura real no banco.
+                inventory = dict(decrypted)
                 inventory['generated'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(row['timestamp']))
 
-                dyn = decrypted.get('dynamic', {})
-                ptree_raw = dyn.get('process_tree', {})
-                nodes_dict = ptree_raw.get('nodes', ptree_raw) if isinstance(ptree_raw, dict) else {}
+                nodes_raw = decrypted.get('processes', {})
+                nodes_dict = nodes_raw if isinstance(nodes_raw, dict) else {}
 
                 return inventory, TreeAdapter(nodes_dict), row['timestamp'], None
 
@@ -602,6 +610,8 @@ class WebController:
                     CSS_BLOCK=CSS_BASE,
                     JS_BLOCK=context_js,  # Uses the context-aware JS
                     LEGEND_HTML=LEGEND_HTML,
+                    FILTER_BAR_HTML=FILTER_BAR_HTML,
+                    BADGE_LEGEND_HTML=BADGE_LEGEND_HTML,
                     OS_CONTENT=os_html,
                     DISK_CONTENT=disk_html,
                     NET_CONTENT=net_html,
