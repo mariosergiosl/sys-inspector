@@ -13,7 +13,12 @@ O **Sys-Inspector** é uma ferramenta avançada de observabilidade e forense mov
 
 Diferente das ferramentas tradicionais que consultam o `/proc` periodicamente, o Sys-Inspector se conecta diretamente ao Kernel do Linux para capturar eventos (execução de processos, I/O de arquivos, conexões de rede) em tempo real.
 
-## Funcionalidades (v1.0.0)
+## Funcionalidades (v1.1.0)
+
+* **Novo na v1.1.0 - Aquisição dirigida e encaminhamento:** Um arquivo ou região de memória suspeita é hasheada, recortada e, quando cabe no orçamento de bytes declarado, copiada - sempre registrando o ESCOPO do hash, para que um hash parcial nunca seja lido como identificação do objeto inteiro. Todo achado pode ainda dizer qual análise de bancada conclui o que ele não conclui, por quê e sobre qual objeto: a ferramenta coleta o suficiente para identificar e direcionar, nunca a massa que prova, e isso só é honesto quando ela diz quem termina o serviço.
+* **Novo na v1.1.0 - Caça a rootkit e fuga de contêiner:** Cruza as três listas de módulos do kernel com o taint, julga cada biblioteca do `/etc/ld.so.preload` pela procedência de pacote, e acompanha `mount` e `pivot_root` - o passo que transforma isolamento quebrado em acesso ao host. O SNI do TLS completa o "com quem" onde o DNS não alcança (cache, IP fixo, DoH).
+* **Novo na v1.1.0 - Um caminho de execução só:** Agente e servidor, nada além. Para uma máquina, instale os dois no mesmo host. HTTPS é o único transporte; o caminho em texto claro foi removido do código, e não desligado.
+* **Novo na v1.1.0 - Um laudo feito para a árvore:** O bloco de inventário recolhe para dar a tela à árvore de processos, as colunas se redimensionam arrastando a divisa no cabeçalho, e a árvore rola nos dois eixos com o cabeçalho fixo. Todo bloco de detalhe está sempre presente, em um de três estados: um valor, "olhou e não havia", ou "não coletado por esta captura".
 
 * **Novo na v1.0.0 - Contrato de resposta do achado:** Todo achado declara sua **confiança** (confirmado / provável / heurístico), para uma heurística nunca aparecer como fato, e sua **custódia** (o que foi preservado do artefato). O laudo se lê como uma investigação: faixa "como ler" (Findings -> Processes -> ATT&CK), legenda de severidade com a ação do operador, tooltips em cada campo da evidência e pivôs clicáveis nos dois sentidos entre um achado e sua técnica ATT&CK.
 * **Novo na v1.0.0 - Frota distribuída:** Agentes em modelo pull encaminham capturas cifradas a um servidor central (outbox store-and-forward, fila de ingestão priorizada, fila de comandos auditada, capacidades por agente, HTTPS). A Manager mostra o progresso de cada comando como um stepper ao vivo.
