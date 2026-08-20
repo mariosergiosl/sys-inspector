@@ -104,7 +104,9 @@ Recebe as capturas dos agentes e serve o dashboard da frota.
 
 ```bash
     sudo sys-inspector --mode server
-    # Acesse o dashboard em http://localhost:8080
+    # Acesse o dashboard em https://localhost:8080
+    # TLS vem ligado; um par autoassinado e gerado na primeira subida,
+    # entao o navegador avisa do emissor desconhecido.
 ```
 
 ### 2. Agente (coletor)

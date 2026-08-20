@@ -111,7 +111,9 @@ Receives captures from the agents and serves the Fleet dashboard.
 
 ```bash
     sudo sys-inspector --mode server
-    # Access the dashboard at http://localhost:8080
+    # Access the dashboard at https://localhost:8080
+    # TLS is on by default; a self-signed pair is generated on first start,
+    # so the browser will warn about the unknown issuer.
 ```
 
 ### 2. Agent (collector)

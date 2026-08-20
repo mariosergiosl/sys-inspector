@@ -69,10 +69,20 @@ class Outbox(object):
         self.token = daemon_cfg.get("auth_token", "")
         self.batch_size = int(daemon_cfg.get("batch_size", 10) or 10)
         self.timeout = int(daemon_cfg.get("timeout", 15) or 15)
-        # TLS ligado por padrao na porta 443; em laboratorio o operador pode
-        # apontar para uma porta HTTP explicitamente.
-        self.use_tls = bool(daemon_cfg.get("use_tls", self.server_port == 443))
+        # HTTPS e o UNICO transporte. Nao ha opcao de texto claro: ver D-033.
+        #
+        # A verificacao do certificado continua sendo uma escolha, porque ela
+        # depende de infraestrutura que nem todo ambiente tem (uma CA que assine
+        # o certificado do servidor). Desligar a verificacao protege contra
+        # escuta passiva e NAO contra um interceptador ativo, e essa diferenca
+        # muda o quanto o laudo daquele agente vale -- por isso ela aparece no
+        # log, sempre, em vez de ficar so no arquivo de configuracao.
         self.verify_tls = bool(daemon_cfg.get("verify_tls", True))
+        if self.server_ip and not self.verify_tls:
+            LOG.warning("[OUTBOX] TLS sem verificacao de certificado: protege "
+                        "contra escuta passiva, NAO contra um interceptador "
+                        "ativo no caminho ate %s:%s",
+                        self.server_ip, self.server_port)
 
         self._failures = 0
         self._next_attempt = 0.0
@@ -96,16 +106,14 @@ class Outbox(object):
         return bool(self.server_ip and self.token and self.token != "CHANGE_ME")
 
     def _base_url(self):
-        scheme = "https" if self.use_tls else "http"
-        return "%s://%s:%s" % (scheme, self.server_ip, self.server_port)
+        # Sem ramo: o esquema nao e uma escolha (D-033).
+        return "https://%s:%s" % (self.server_ip, self.server_port)
 
     def _ssl_context(self):
-        if not self.use_tls:
-            return None
         if self.verify_tls:
             return ssl.create_default_context()
-        # Certificado autoassinado em laboratorio: a verificacao e desligada
-        # apenas quando o operador pede explicitamente.
+        # Certificado autoassinado em laboratorio: a VERIFICACAO e desligada
+        # apenas quando o operador pede explicitamente. A cifra permanece.
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
