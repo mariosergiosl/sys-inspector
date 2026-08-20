@@ -218,8 +218,16 @@ def tema(item):
             # explicacao cita tudo: esse mesmo item menciona "durante o teste" e
             # ia parar em Qualidade. Por isso o corpo so decide quando a
             # primeira linha nao disse nada.
-            for fonte in ("%s %s" % (item["texto"], item["subsecao"]),
-                          item.get("corpo_todo") or ""):
+            # Tres passadas, da fonte mais especifica para a mais generica. O
+            # TITULO DA SUBSECAO fica por ULTIMO pelo mesmo motivo que o titulo
+            # da secao ficou de fora: e o nome de um recipiente, nao do item.
+            # A subsecao "0.8 ABA PROCESSES: correlacao EDR, documentacao e UX"
+            # mandava para Projeto (por "documentacao") um item que fala de
+            # colunas ajustaveis na aba Processes. Nome de gaveta classifica
+            # pelo acaso do titulo dela.
+            for fonte in (item["texto"],
+                          item.get("corpo_todo") or "",
+                          item["subsecao"]):
                 for nome, padrao in TEMA_PALAVRAS:
                     if re.search(padrao, fonte, re.I):
                         return nome
