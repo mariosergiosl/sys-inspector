@@ -21,6 +21,7 @@
 # ==============================================================================
 
 import os
+import re
 import time
 import logging
 from src.collectors.system_inventory import collect_full_inventory
@@ -83,15 +84,50 @@ def summarize_metrics(processes):
     return {"cpu": cpu_avg, "mem": mem_used, "pids": pids, "score": score}
 
 
+# Alvo de achado que aponta um processo: "pid:1234".
+_ALVO_PID = re.compile(r'^pid:(\d+)$')
+
+
+def _pid_declarado(finding):
+    """
+    O PID que o proprio achado ja nomeia, quando existe.
+
+    Duas fontes, nesta ordem: o campo `target` no formato "pid:NNNN", que e
+    como os coletores de runtime identificam o objeto, e `evidence["pid"]`.
+    Devolve None quando o achado nao e sobre um processo (um achado de kernel,
+    de arquivo ou de frota nao tem PID, e isso nao e ausencia de dado).
+    """
+    alvo = str(finding.get("target") or "")
+    m = _ALVO_PID.match(alvo)
+    if m:
+        return int(m.group(1))
+    pid = (finding.get("evidence") or {}).get("pid")
+    try:
+        return int(pid) if pid is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def correlate_findings_with_processes(findings, processes):
     """
-    Liga cada achado aos processos que estao executando o caminho que ele
-    denuncia.
+    Liga cada achado aos processos a que ele se refere, por DUAS vias.
 
-    Um achado de persistencia aponta para um ARQUIVO (a unit, a entrada de
-    cron), nao para um PID. O valor pericial aparece quando esse caminho esta
-    de fato rodando: a persistencia deixa de ser teorica e passa a ser
-    atividade em curso. Preenche 'related_pids' nos achados correlacionados.
+    1. Por PID declarado. Um achado de runtime (memoria gravavel-e-executavel,
+       binario substituido, biblioteca estranha) JA sabe o PID: ele esta no
+       titulo, no alvo e na evidencia. Este caminho existe desde 2026-08-20 e
+       corrige uma lacuna que vinha de antes: o achado com a identificacao mais
+       precisa possivel era justamente o unico que nunca ganhava o atalho para
+       a arvore, porque a correlacao so sabia casar CAMINHO.
+
+    2. Por caminho denunciado. Um achado de persistencia aponta para um
+       ARQUIVO (a unit, a entrada de cron), nao para um PID. O valor pericial
+       aparece quando esse caminho esta de fato rodando: a persistencia deixa
+       de ser teorica e passa a ser atividade em curso.
+
+    As duas vias respondem perguntas diferentes e por isso convivem. A ausencia
+    do atalho continua significando alguma coisa: no caso 2, que o artefato
+    plantado nao esta em execucao agora; no caso 1, que o processo ja terminou
+    entre a deteccao e a montagem do laudo.
 
     PARAMETER findings: lista de dicts (Finding.to_dict).
     PARAMETER processes: dict pid -> dados do processo (data['processes']).
@@ -99,25 +135,41 @@ def correlate_findings_with_processes(findings, processes):
     if not findings or not processes:
         return findings
 
+    # As chaves da captura chegam como texto no JSON e como int no objeto vivo.
+    # Normalizar uma vez evita o atalho sumir por causa do tipo da chave, que e
+    # o tipo de defeito que ninguem procura quando "o botao nao aparece".
+    por_pid = {}
+    for pid, proc in processes.items():
+        try:
+            por_pid[int(pid)] = proc
+        except (TypeError, ValueError):
+            continue
+
     for finding in findings:
-        # Caminho denunciado pelo achado: a referencia encontrada na evidencia
-        # (ex.: o binario que a unit executa) e, como apoio, o proprio alvo.
+        matches = []
+
+        # --- 1. PID que o achado ja nomeia -----------------------------------
+        declarado = _pid_declarado(finding)
+        if declarado is not None and declarado in por_pid:
+            matches.append(declarado)
+
+        # --- 2. Caminho denunciado, executado por alguem ---------------------
         evidence = finding.get("evidence") or {}
         candidates = []
         reference = evidence.get("reference")
         if reference:
             candidates.append(str(reference))
 
-        matches = []
-        for pid, proc in processes.items():
-            exe = str(proc.get("exe_path") or "")
-            cmd = str(proc.get("cmd") or "")
-            for path in candidates:
-                if not path or len(path) < 4:
-                    continue
-                if exe == path or path in cmd:
-                    matches.append(int(pid))
-                    break
+        if candidates:
+            for pid, proc in por_pid.items():
+                exe = str(proc.get("exe_path") or "")
+                cmd = str(proc.get("cmd") or "")
+                for path in candidates:
+                    if not path or len(path) < 4:
+                        continue
+                    if exe == path or path in cmd:
+                        matches.append(pid)
+                        break
 
         if matches:
             finding["related_pids"] = sorted(set(matches))
