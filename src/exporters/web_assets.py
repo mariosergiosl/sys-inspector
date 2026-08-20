@@ -159,7 +159,19 @@ CSS_BASE = r"""
    horizontal (a arvore de comando trunca com "..."), essa moldura era largura
    tirada do que se le. O topo e a base ficam em zero porque a barra grudada ja
    traz o proprio respiro. */
-body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:var(--fg); padding:0 8px; font-size:13px; margin:0; }
+/* A pagina ocupa a janela e NAO rola: quem rola e a arvore. Ver .tabela-rolagem. */
+html { height: 100%; }
+body {
+    font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg);
+    color:var(--fg); padding:0 8px; font-size:13px; margin:0;
+    height: 100%; box-sizing: border-box;
+    display: flex; flex-direction: column; overflow: hidden;
+}
+/* As abas que NAO sao a arvore (Findings, ATT&CK) rolam por dentro tambem, pelo
+   mesmo motivo: duas barras na mesma tela e sempre uma a mais. */
+.findings-container { overflow: auto; flex: 1 1 auto; min-height: 0; }
+.table-container { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
+.table-container.panel-hidden, .findings-container.panel-hidden { display: none; }
 
 /* [F-220] Controle de recolher o inventario. */
 .inv-toggle {
@@ -173,29 +185,63 @@ body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:
 /* [F-238] A arvore rola dentro da propria caixa, nos DOIS eixos. Sem isto a
    tabela era cortada e nao havia como alcancar o que passava da largura: o
    dado existia e ficava inacessivel, que e pior que nao ter o dado. */
+/* UMA barra de rolagem, e ela e da arvore.
+   A primeira versao deixava a pagina rolar TAMBEM, e o resultado eram duas
+   barras concorrendo, sendo que a da pagina ficava enorme sem ter conteudo
+   proporcional. A pagina passa a ocupar exatamente a altura da janela, a barra
+   grudada e as abas tem altura propria, e a arvore recebe o que sobrar. Quem
+   rola e so ela. */
 .tabela-rolagem {
-    overflow: auto; max-height: 72vh; border: 1px solid var(--border);
-    border-radius: 4px;
+    overflow: auto; flex: 1 1 auto; min-height: 120px;
+    border: 1px solid var(--border); border-radius: 4px;
 }
 /* Cabecalho fixo enquanto se rola: perder o nome da coluna depois de vinte
    linhas transforma numero em enigma.
    O cabecalho das colunas vive DENTRO desta caixa, e nao na barra grudada do
    topo. Fora dela, a rolagem horizontal moveria so o corpo e as colunas
    deixariam de bater com seus titulos, que e pior que nao rolar. */
-.tabela-rolagem thead th { position: sticky; top: 0; background: var(--drk); z-index: 5; }
-.tabela-rolagem .tbl-hdr {
+/* UMA fonte de geometria: o cabecalho vive DENTRO da tabela, entao ele nao tem
+   como discordar do corpo. Enquanto foram dois elementos (uma div flex por cima
+   de uma table), cada tentativa de alinhar os dois abria um desencontro novo:
+   colgroup contra as divs, depois `min-width:100%` esticando so o corpo, depois
+   `table-layout:fixed` encolhendo so a tabela. O <thead> resolve por
+   construcao, e nao por ajuste. */
+.tabela-rolagem thead th {
+    position: sticky; top: 0; background: var(--drk); z-index: 5;
+    text-align: center; text-transform: uppercase; font-size: 11px;
+    color: #aaa; font-weight: bold; padding: 8px 5px;
+    border-bottom: 2px solid #444;
+}
     position: sticky; top: 0; z-index: 6; background: var(--bg);
-    min-width: max-content;
+    width: max-content;
 }
 /* A tabela nunca encolhe abaixo da soma das colunas: e o que garante que o
    corpo e o cabecalho rolem juntos, em vez de o corpo se comprimir. */
-.tabela-rolagem table { min-width: max-content; }
+/* A largura da tabela e a soma das colunas; a caixa rola quando nao cabe.
+   `max-content` inflava a PAGINA em vez da caixa. */
+/* Cabecalho e corpo tem que ter EXATAMENTE a mesma largura, senao as
+   colunas desencontram. `min-width:100%` esticava a TABELA ate o
+   container enquanto o cabecalho ficava na soma das colunas: cada
+   coluna do corpo ganhava um pouco e o titulo ficava para tras.
+   Os dois passam a ser exatamente a soma das variaveis. */
+/* Preenche o container e cresce alem dele quando as colunas pedem mais; a
+   caixa e quem rola. Com o cabecalho dentro da tabela, esticar ou
+   encolher move os dois juntos, entao isto ja nao pode desalinhar. */
+.tabela-rolagem table { width: 100%; min-width: max-content; }
 
 /* [F-219] Alca de arraste na borda direita do cabecalho, mesmo mecanismo da
    tela Manager (JS_COLUNAS_AJUSTAVEIS). */
-th .col-grip { position:absolute; top:0; right:0; width:6px; height:100%;
+.col-grip { position:absolute; top:0; right:0; width:6px; bottom:0;
                cursor:col-resize; user-select:none; }
-th .col-grip:hover { background:var(--cyn); opacity:0.5; }
+/* A alca precisa APARECER. Sem nada na tela, so descobre que a coluna e
+   ajustavel quem passa o mouse por acaso no pixel certo. O tracinho marca a
+   divisa entre colunas e o cursor de arraste confirma o que ele faz. */
+.col-grip::after {
+    content: ''; position: absolute; right: 2px; top: 22%; bottom: 22%;
+    width: 1px; background: #4a4a4a;
+}
+.col-grip:hover::after { background: var(--cyn); width: 2px; }
+.col-grip:hover { background:var(--cyn); opacity:0.5; }
 
 
 /* [F-219] Largura das colunas da aba Processes numa FONTE SO.
@@ -204,7 +250,7 @@ th .col-grip:hover { background:var(--cyn); opacity:0.5; }
    divergencia silenciosa de sempre. Agora o arraste altera a variavel e as
    duas pontas seguem juntas por construcao. */
 :root {
-    --w-cmd: 20%;
+    --w-cmd: 540px;   /* px, e nao %: a tabela usa width:max-content */
     --w-pid: 60px;
     --w-dur: 90px;
     --w-user: 90px;
@@ -215,10 +261,14 @@ th .col-grip:hover { background:var(--cyn); opacity:0.5; }
     --w-dhist: 100px;
     --w-ntx: 90px;
     --w-nrx: 90px;
+    --w-alerts: 320px;
 }
 /* --- HEADER & LAYOUT --- */
+/* Ja nao precisa ser "sticky": a pagina inteira nao rola mais, entao o topo
+   fica onde esta por construcao. Sticky aqui, com a pagina sem rolagem,
+   so criava um contexto de empilhamento a toa. */
 .sticky-wrapper {
-    position: sticky; top: 0; z-index: 1000;
+    flex: 0 0 auto; z-index: 1000;
     background-color: var(--bg);
     padding: 10px 20px 0 20px;
     border-bottom: 1px solid var(--acc);
@@ -346,11 +396,34 @@ th .col-grip:hover { background:var(--cyn); opacity:0.5; }
 .tag {
     display:inline-flex; align-items:center; justify-content:center;
     padding:1px 4px; border-radius:3px;
-    font-weight:bold; margin-right:4px; cursor:help;
+    font-weight:bold; margin-right:1px; cursor:help;
     font-size:16px; /* Optimized for Emojis */
     border:1px solid transparent;
     vertical-align: middle;
 }
+
+/* A coluna ALERTS pode usar DUAS linhas: a altura da linha ja e ditada pela
+   coluna DISK, que ocupa tres. Antes os badges eram forcados numa linha so
+   (regra global `td { white-space:nowrap }`) e o excedente era cortado, com a
+   altura sobrando ao lado, sem uso. Fonte um pouco menor pelo mesmo motivo:
+   cabe mais sinal no mesmo espaco. */
+/* COMMAND TREE tambem quebra, ate tres linhas. A linha inteira ja tem essa
+   altura por causa da coluna DISK, e o comando truncado com "..." escondia
+   justamente o argumento que interessa numa analise (o caminho de onde o
+   binario foi lancado costuma estar no fim). Passando de tres linhas volta a
+   cortar, para uma linha de comando gigante nao empurrar a tabela toda. */
+td:first-child:not(.det-cell) {
+    /* SEM `display:-webkit-box`: isso tira a celula do fluxo de tabela, e foi o
+       que produziu o vao gigante entre o comando e a coluna PID (a celula
+       ocupava a largura declarada, o texto se espremia em ~150px). Quebra
+       normal de linha basta; a largura da coluna e quem limita. */
+    white-space: normal; overflow-wrap: anywhere; line-height: 1.4;
+}
+td.alert-cell, td:last-child {
+    white-space: normal; overflow: visible; text-overflow: clip;
+    line-height: 1.5;
+}
+td:last-child .tag { margin-right: 1px; margin-bottom: 2px; }
 .tag:hover { transform: scale(1.2); transition: 0.1s; background: rgba(255,255,255,0.1); }
 
 /* Detalhe da custodia: os LIMITES da aquisicao, logo abaixo do nivel. Fonte
@@ -403,7 +476,12 @@ th .col-grip:hover { background:var(--cyn); opacity:0.5; }
 
 /* Special Badges (Backgrounds can be minimal now, relying on Icon) */
 .t-warn { border-color:var(--red); background:rgba(255, 107, 107, 0.1); }
-.t-err  { background:var(--red); color:#000; }
+/* [2026-08-20] Estes dois carregam numero, entao sao os mais largos e os
+   que mais empurravam a altura da linha: o padding interno somado a
+   margem externa fazia duas linhas onde cabia uma. */
+.t-err  { background:var(--red); color:#000; padding:0 3px; margin-right:1px; }
+.t-warn { padding:0 3px; margin-right:1px; }
+.t-err span, .t-warn span { font-size:0.9em; }
 
 .btn-clear { cursor:pointer; padding:2px 6px; border-radius:3px; border:1px solid #555; font-size:10px; font-weight:bold; color:#aaa; background:#333; }
 /* [UI] Sort buttons styled as bare icons, symmetric with .filter-btn (no gray box) */
@@ -424,7 +502,10 @@ td { padding:6px 5px; border-bottom:1px solid #2a2a2a; vertical-align:middle; wh
 .exp { color:var(--acc); font-weight:bold; display:inline-block; width:16px; height:16px; line-height:14px; text-align:center; background:#333; border:1px solid #555; border-radius:3px; cursor:pointer; }
 .hidden { display:none; }
 tr.det-row { display:none; } tr.det-row.show { display:table-row; }
-.det-cell { background:#151515; border-left:3px solid var(--acc); padding:20px; white-space:normal; }
+/* A celula de detalhe usa colspan e atravessa a tabela inteira: ela nao
+   pode herdar as regras da PRIMEIRA COLUNA, senao a largura dela passa a
+   ser a da coluna Command Tree e o painel encolhe. */
+.det-cell { width:auto; background:#151515; border-left:3px solid var(--acc); padding:20px; white-space:normal; }
 .det-blk { margin-bottom:15px; border-bottom:1px solid #333; padding-bottom:10px; }
 .det-title { color:var(--acc); font-weight:bold; margin-bottom:8px; display:block; font-size:1.1em; border-bottom:1px solid #444; padding-bottom:2px; }
 .ctx-tbl { width:100%; border-spacing:0; }
@@ -1176,20 +1257,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     <div class="table-container panel-hidden" data-panel="processes">
         <div class="tabela-rolagem">
-        <div class="tbl-hdr panel-hidden" data-panel="processes" style="display:flex; border-bottom:2px solid #444; font-weight:bold; color:#aaa; text-transform:uppercase; padding:8px 5px; font-size:11px;">
-             <div style="width:var(--w-cmd); position:relative" data-col="--w-cmd">Command Tree<span class="col-grip"></span></div>
-             <div style="width:var(--w-pid); position:relative" data-col="--w-pid">PID<span class="col-grip"></span></div>
-             <div style="width:var(--w-dur); position:relative" data-col="--w-dur">Duration<span class="col-grip"></span></div>
-             <div style="width:var(--w-user); position:relative" data-col="--w-user">User<span class="col-grip"></span></div>
-             <div style="width:var(--w-nice); position:relative" data-col="--w-nice">Nice<span class="col-grip"></span></div>
-             <div style="width:var(--w-cpu); position:relative" data-col="--w-cpu">CPU%<span class="col-grip"></span></div>
-             <div style="width:var(--w-rss); position:relative" data-col="--w-rss">RSS<span class="col-grip"></span></div>
-             <div style="width:var(--w-dhot); position:relative" data-col="--w-dhot" title="Current Disk I/O (Bytes/sec) - Hot Activity">Disk &Delta;<br>I/O Hot<span class="col-grip"></span></div>
-             <div style="width:var(--w-dhist); position:relative" data-col="--w-dhist" title="Total Disk I/O during Session (Accumulated in Tree)">Disk &Sigma;<br>I/O Hist<span class="col-grip"></span></div>
-             <div style="width:var(--w-ntx); position:relative" data-col="--w-ntx" title="Network Transmit: Current Delta / Total Session">Net TX<br>&Delta; / &Sigma;<span class="col-grip"></span></div>
-             <div style="width:var(--w-nrx); position:relative" data-col="--w-nrx" title="Network Receive: Current Delta / Total Session">Net RX<br>&Delta; / &Sigma;<span class="col-grip"></span></div>
-             <div>Alerts</div>
-        </div>
         <table>
             <colgroup>
                 <col style="width:var(--w-cmd)">
@@ -1203,8 +1270,24 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 <col style="width:var(--w-dhist)">
                 <col style="width:var(--w-ntx)">
                 <col style="width:var(--w-nrx)">
-                <col>
+                <col style="width:var(--w-alerts)">
             </colgroup>
+            <thead>
+              <tr>
+                <th data-col="--w-cmd">Command Tree<span class="col-grip"></span></th>
+                <th data-col="--w-pid">PID<span class="col-grip"></span></th>
+                <th data-col="--w-dur">Duration<span class="col-grip"></span></th>
+                <th data-col="--w-user">User<span class="col-grip"></span></th>
+                <th data-col="--w-nice">Nice<span class="col-grip"></span></th>
+                <th data-col="--w-cpu">CPU%<span class="col-grip"></span></th>
+                <th data-col="--w-rss">RSS<span class="col-grip"></span></th>
+                <th title="Current Disk I/O (Bytes/sec) - Hot Activity" data-col="--w-dhot">Disk &Delta;<br>I/O Hot<span class="col-grip"></span></th>
+                <th title="Total Disk I/O during Session (Accumulated in Tree)" data-col="--w-dhist">Disk &Sigma;<br>I/O Hist<span class="col-grip"></span></th>
+                <th title="Network Transmit: Current Delta / Total Session" data-col="--w-ntx">Net TX<br>&Delta; / &Sigma;<span class="col-grip"></span></th>
+                <th title="Network Receive: Current Delta / Total Session" data-col="--w-nrx">Net RX<br>&Delta; / &Sigma;<span class="col-grip"></span></th>
+                <th data-col="--w-alerts">Alerts<span class="col-grip"></span></th>
+              </tr>
+            </thead>
             <tbody style="margin-top:10px">
                 {TABLE_ROWS}
             </tbody>
@@ -1238,7 +1321,11 @@ _JS_COLUNAS_CORE = r"""
     //    variaveis CSS. Ali o arraste altera a VARIAVEL, e as duas pontas se
     //    movem juntas. Escrever dois arrastes diferentes recriaria a
     //    divergencia que as variaveis acabaram de eliminar.
-    var variavel = alvo.getAttribute('data-col');
+    // O nome da variavel pode vir na propria alca (Manager, onde o <th> ja
+    // carrega outros atributos) ou no elemento que a contem (laudo, onde o
+    // cabecalho e uma div por coluna). Aceitar os dois evita obrigar as duas
+    // telas a escrever o HTML do mesmo jeito para usar o mesmo mecanismo.
+    var variavel = grip.getAttribute('data-col') || alvo.getAttribute('data-col');
     var iniX = 0, iniW = 0, arrastando = false;
     grip.addEventListener('mousedown', function(e){
       arrastando = true; iniX = e.pageX; iniW = alvo.offsetWidth;

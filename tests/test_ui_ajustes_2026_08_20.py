@@ -170,11 +170,23 @@ def test_f238_arvore_rola_nos_dois_eixos_com_cabecalho_junto():
     css = _fonte("src/exporters/web_assets.py")
     assert ".tabela-rolagem {" in css
     assert "overflow: auto" in css
+    # [2026-08-20, segunda rodada] O cabecalho deixou de ser uma div flex por
+    # cima da tabela e virou um <thead> DENTRO dela. Enquanto foram dois
+    # elementos, cada tentativa de alinhar abria um desencontro novo: o colgroup
+    # contra as divs, depois `min-width:100%` esticando so o corpo, depois
+    # `table-layout:fixed` encolhendo so a tabela. Com uma fonte de geometria so,
+    # cabecalho e corpo nao tem como discordar.
+    assert "tbl-hdr" not in css, (
+        "o cabecalho em divs voltou; ele desalinha do corpo por construcao")
+    # O arquivo tem outros <thead> (legenda de badges, tooltip de score), entao
+    # a busca comeca DEPOIS da caixa de rolagem, e nao no inicio do arquivo.
     i_caixa = css.index('class="tabela-rolagem"')
-    i_hdr = css.index('class="tbl-hdr panel-hidden"')
-    i_tab = css.index("<colgroup>")
-    assert i_caixa < i_hdr < i_tab, (
-        "o cabecalho da arvore saiu de dentro da caixa de rolagem (F-238)")
+    i_thead = css.index("<thead>", i_caixa)
+    i_tbody = css.index("{TABLE_ROWS}", i_caixa)
+    assert i_caixa < i_thead < i_tbody, (
+        "o <thead> saiu de dentro da caixa de rolagem, ou do corpo (F-238)")
+    assert css.count('data-col="--w-') == 12, (
+        "as colunas do cabecalho perderam a ligacao com as variaveis")
 
 
 def test_f219_larguras_do_laudo_tem_fonte_unica():
@@ -187,8 +199,14 @@ def test_f219_larguras_do_laudo_tem_fonte_unica():
     assert "--w-cmd:" in css, "as variaveis de largura sumiram"
     assert '<col width=' not in css, (
         "o colgroup voltou a ter largura propria, fora da variavel (F-219)")
-    assert css.count("var(--w-") >= 20, (
-        "cabecalho e colgroup deixaram de compartilhar as variaveis")
+    # Depois de o cabecalho virar <thead>, a largura e declarada em UM lugar
+    # (o colgroup) e o cabecalho apenas NOMEIA a variavel que a alca move, via
+    # data-col. Antes eram dois lugares escrevendo o mesmo numero, e era isso
+    # que desalinhava.
+    assert css.count("var(--w-") == 12, (
+        "o colgroup deixou de ser a fonte unica das larguras")
+    assert css.count('data-col="--w-') == 12, (
+        "o cabecalho perdeu a ligacao com as variaveis de largura")
 
 
 def test_f219_f223_um_mecanismo_de_arraste_para_as_duas_telas():
@@ -213,8 +231,17 @@ def test_f223_manager_tem_alcas_e_largura_fixa():
     nao gruda."""
     src = _fonte("src/controllers/server_controller.py")
     assert "table-layout: fixed" in src
-    assert src.count('<span class="col-grip"></span>') >= 8, (
+    assert src.count('class="col-grip"') >= 8, (
         "as alcas de redimensionamento sumiram do cabecalho (F-223)")
+    # Com `table-layout:fixed` quem manda e o colgroup ou a PRIMEIRA linha. Esta
+    # tabela tem linha de agrupamento com colspan, entao SEM colgroup o
+    # navegador derivava as larguras dela e ignorava as colunas: o arraste nao
+    # pegava e a coluna Action ficava espremida.
+    assert "--m-w-act:" in src, "as variaveis de largura da Manager sumiram"
+    assert 'style="width:var(--m-w-host)"' in src, (
+        "o colgroup da Manager sumiu, e sem ele as larguras nao valem")
+    assert 'data-col="--m-w-' in src, (
+        "as alcas deixaram de mover a variavel de largura")
 
 
 def test_f237_e_f239_sem_espaco_desperdicado_no_laudo():

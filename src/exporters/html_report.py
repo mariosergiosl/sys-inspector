@@ -429,6 +429,20 @@ def _fmt_epoch(value):
         return "-"
 
 
+def _bloco_vazio(titulo, motivo):
+    """
+    Bloco de detalhe SEM dado, mas presente (D-020).
+
+    A regra do projeto e que todo campo fica visivel sempre, em um de tres
+    estados. Um bloco que simplesmente nao e desenhado deixa o analista sem
+    saber se aquele processo nao TEM o dado ou se a ferramenta nao COLETOU,
+    e numa peca forense essas duas respostas sao muito diferentes.
+    """
+    return ("<div class='det-blk'><span class='det-title'>%s</span>"
+            "<div class='list-box' style='color:#666;font-style:italic'>"
+            "%s</div></div>" % (titulo, motivo))
+
+
 def _render_ancestry(node, tree):
     """
     Monta a cadeia de ancestrais do processo (do mais antigo ate ele).
@@ -454,8 +468,11 @@ def _render_ancestry(node, tree):
             break
         current = parent
 
+    # [D-020] Cadeia de um elemento so tambem e resposta: quer dizer que
+    # este processo nao tem ancestral capturado nesta janela.
     if len(chain) < 2:
-        return ""
+        return _bloco_vazio("Process Ancestry",
+                            "sem ancestral capturado nesta janela")
 
     chain.reverse()
     parts = []
@@ -478,8 +495,13 @@ def _render_exe_provenance(node):
     execucao e um dos indicadores mais fortes de anti-forense.
     """
     exe_path = getattr(node, "exe_path", "") or ""
+    # [D-020] Sem caminho de executavel o bloco continua aparecendo,
+    # dizendo POR QUE esta vazio: um processo de kernel nao tem binario
+    # em disco, e isso e uma resposta, nao ausencia de coleta.
     if not exe_path:
-        return ""
+        return _bloco_vazio(
+            "Executable Provenance",
+            "sem binario em disco (processo de kernel, ou caminho ilegivel)")
 
     # [2026-08-18, pedido do Mario] O icone do badge que essa condicao
     # dispara (DELETED, mesma tag para os dois casos -- ver
@@ -710,6 +732,11 @@ def _get_details_html(node, mounts, tree=None):
     html += _render_ancestry(node, tree)
     html += _render_probe_signals(node)
 
+    # [D-020] O bloco aparece SEMPRE. Estava dentro de `if reasons:`, entao
+    # sumia da tela quando o processo estava limpo, e o analista ficava sem
+    # saber se nao havia motivo de seguranca ou se a analise nao tinha rodado
+    # para aquele processo. Ausencia de achado e uma resposta, e resposta se
+    # escreve.
     reasons = _get_anomaly_reasons(node)
     if reasons:
         html += "<div class='det-blk'><span class='det-title' style='color:var(--red)'>Security Forensics</span>"
@@ -718,6 +745,10 @@ def _get_details_html(node, mounts, tree=None):
             prefixo = f"{icone} " if icone else ""
             html += f"<div style='color:#ff6b6b; margin-left:10px; font-weight:bold;'>&bull; {prefixo}{_esc(r)}</div>"
         html += "</div>"
+    else:
+        html += _bloco_vazio("Security Forensics",
+                             "nenhum motivo de seguranca disparou para este "
+                             "processo nesta captura")
 
     html += "<div class='det-blk'><span class='det-title'>Loaded Libraries</span>"
     if node.libs:

@@ -21,7 +21,7 @@ def test_process_table_and_controls_are_preserved():
     uma classe auxiliar (ex.: panel-hidden) e acrescentada ao elemento.
     """
     for marker in ('class="table-container', 'class="controls',
-                   'class="tbl-hdr', "{TABLE_ROWS}", 'id="search"'):
+                   '<thead>', "{TABLE_ROWS}", 'id="search"'):
         assert marker in HTML_TEMPLATE, marker
 
 
@@ -60,19 +60,39 @@ def test_process_elements_are_grouped_in_one_panel():
     Controles, cabecalho e tabela pertencem ao mesmo painel, para alternarem
     juntos e a arvore nunca aparecer pela metade.
     """
-    assert HTML_TEMPLATE.count('data-panel="processes"') == 3
+    # [2026-08-20] Eram TRES elementos (controles, cabecalho, tabela); agora sao
+    # DOIS, porque o cabecalho deixou de ser um irmao da tabela e virou o
+    # <thead> dela. A exigencia real do teste continua valendo e ate ficou mais
+    # forte: o cabecalho nao tem mais como aparecer sem o corpo, ou desalinhado
+    # dele, porque e o mesmo elemento.
+    assert HTML_TEMPLATE.count('data-panel="processes"') == 2
 
 
-def test_table_header_keeps_its_flex_layout():
+def test_table_header_is_inside_the_table():
     """
-    O cabecalho de colunas depende de display:flex inline. Se a alternancia de
-    aba zerar esse inline, ele volta para block e as colunas empilham na
-    vertical (regressao observada em 2026-08-06).
+    [2026-08-20] Premissa SUBSTITUIDA. Este teste protegia o `display:flex`
+    inline de um cabecalho feito de divs, empilhado por cima da tabela. Esse
+    desenho tinha um defeito estrutural: duas geometrias para as mesmas colunas.
+    Cada tentativa de alinhar as duas abria um desencontro novo (o colgroup
+    contra as divs, `min-width:100%` esticando so o corpo, `table-layout:fixed`
+    encolhendo so a tabela), e o Mario viu a bagunca na tela tres vezes.
+
+    O cabecalho virou <thead> DENTRO da tabela. Nao ha mais o que alinhar, e o
+    teste passa a proteger isso: uma fonte de geometria so.
+
+    Medido no navegador depois da mudanca: as coordenadas horizontais dos <th>
+    e das <td> ficaram identicas, coluna por coluna.
     """
-    idx = HTML_TEMPLATE.index('class="tbl-hdr')
-    trecho = HTML_TEMPLATE[idx:idx + 260]
-    assert "display:flex" in trecho
-    assert "display:none" not in trecho
+    idx_col = HTML_TEMPLATE.index("<colgroup>")
+    idx_head = HTML_TEMPLATE.index("<thead>")
+    idx_body = HTML_TEMPLATE.index("{TABLE_ROWS}")
+    assert idx_col < idx_head < idx_body, (
+        "o <thead> saiu de dentro da tabela, entre o colgroup e o corpo")
+    assert "tbl-hdr" not in HTML_TEMPLATE, (
+        "o cabecalho em divs voltou; ele desalinha do corpo por construcao")
+    assert HTML_TEMPLATE.count('data-col="--w-') == 12, (
+        "as 12 colunas do cabecalho precisam estar ligadas as variaveis de "
+        "largura, que sao a fonte unica compartilhada com o colgroup")
 
 
 def test_panels_toggle_by_class_not_inline_style():

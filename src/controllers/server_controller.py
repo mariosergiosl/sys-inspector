@@ -2345,10 +2345,30 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                faixas largas dos dois lados numa tela cuja informacao e horizontal.
                [F-223] table-layout:fixed e o que permite a largura de coluna ser
                respeitada; sem isso o navegador recalcula tudo e o arraste nao gruda. */
+            /* [F-223] Largura de cada coluna numa fonte so, como no laudo.
+               Com `table-layout:fixed` quem manda e o colgroup (ou a PRIMEIRA
+               linha). A linha de agrupamento que este cabecalho ganhou usa
+               colspan, entao sem colgroup o navegador derivava tudo dela e as
+               larguras individuais eram ignoradas: era por isso que o arraste
+               nao pegava e a coluna Action ficava espremida. */
+            :root {{
+                --m-w-host: 230px;
+                --m-w-ip: 150px;
+                --m-w-fqdn: 190px;
+                --m-w-sev: 150px;
+                --m-w-seen: 190px;
+                --m-w-next: 130px;
+                --m-w-up: 120px;
+                --m-w-stat: 150px;
+                --m-w-act: 420px;
+            }}
             table {{ width: 100%; margin: 12px 0 30px 0; border-collapse: separate;
                      border-spacing: 0 8px; table-layout: fixed; }}
             th {{ text-align: left; color: #777; text-transform: uppercase; font-size: 0.85em; padding: 0 15px 10px 15px; letter-spacing: 1px; position: relative; }}
-            td {{ padding: 12px 15px; overflow: hidden; text-overflow: ellipsis; }}
+            /* Sem `overflow:hidden`: era ele que cortava o texto de estado
+               da coluna Action pela metade. Com largura declarada, o
+               conteudo quebra em linha em vez de sumir. */
+            td {{ padding: 12px 15px; vertical-align: top; word-break: break-word; }}
             /* [F-222] Sem animacao de tamanho nem de posicao. `transform:scale`
                movia a linha inteira sob o cursor, deslocando o alvo do clique no
                instante em que se vai clicar. A mudanca de cor basta para dizer
@@ -2356,9 +2376,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             tr {{ transition: background 0.15s; }}
             tr:hover {{ background: #2a2d2e !important; }}
             /* [F-223] Alca de arraste na borda direita do cabecalho. */
-            th .col-grip {{ position:absolute; top:0; right:0; width:6px; height:100%;
+            .col-grip {{ position:absolute; top:0; right:0; width:6px; bottom:0;
                             cursor:col-resize; user-select:none; }}
-            th .col-grip:hover {{ background:var(--cyn); opacity:0.5; }}
+            .col-grip:hover {{ background:var(--cyn); opacity:0.5; }}
             /* [F-224] As quatro severidades num bloco so, em vez de quatro colunas
                largas para quatro numeros de um digito. */
             .sev-bloco {{ display:flex; gap:3px; align-items:center; }}
@@ -2396,6 +2416,17 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         </head><body>
         {cabecalho}
         <table>
+            <colgroup>
+                <col style="width:var(--m-w-host)">
+                <col style="width:var(--m-w-ip)">
+                <col style="width:var(--m-w-fqdn)">
+                <col style="width:var(--m-w-sev)">
+                <col style="width:var(--m-w-seen)">
+                <col style="width:var(--m-w-next)">
+                <col style="width:var(--m-w-up)">
+                <col style="width:var(--m-w-stat)">
+                <col style="width:var(--m-w-act)">
+            </colgroup>
             <thead>
             <tr class="grp-linha">
                 <th colspan="3" class="grp-vazio"></th>
@@ -2404,14 +2435,14 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 <th class="grp-vazio"></th>
             </tr>
             <tr>
-                <th title="Nome curto e UUID estavel da origem da captura">Hostname / UUID<span class="col-grip"></span></th>
-                <th title="Enderecos deste host. O primeiro e o usado na rota de saida ate o servidor">IP<span class="col-grip"></span></th>
-                <th title="Nomes de dominio deste host. O principal em destaque; os demais sao aliases e reverso de DNS">FQDN<span class="col-grip"></span></th>
-                <th title="Achados da ultima captura, por severidade: Critical, High, Medium, Low">Severidade<span class="col-grip"></span></th>
-                <th class="col-agente" title="Momento da ultima captura recebida, hora local e UTC">Last Seen<span class="col-grip"></span></th>
-                <th class="col-agente" title="AGENDADOR: proxima coleta esperada, a partir do ciclo do agente (capture_duration + interval). O agente coleta sozinho nessa cadencia; o icone de captura na acao pede uma coleta agora, fora do ciclo.">Next / cadencia<span class="col-grip"></span></th>
-                <th class="col-agente" title="Uptime do host (desde o boot) e do agente (desde que subiu)">Uptime<span class="col-grip"></span></th>
-                <th class="col-agente" title="Estado do AGENTE, nao do host: verde = falou com o servidor dentro do intervalo esperado; vermelho = passou de dois ciclos sem falar">Status do agente<span class="col-grip"></span></th>
+                <th title="Nome curto e UUID estavel da origem da captura">Hostname / UUID<span class="col-grip" data-col="--m-w-host"></span></th>
+                <th title="Enderecos deste host. O primeiro e o usado na rota de saida ate o servidor">IP<span class="col-grip" data-col="--m-w-ip"></span></th>
+                <th title="Nomes de dominio deste host. O principal em destaque; os demais sao aliases e reverso de DNS">FQDN<span class="col-grip" data-col="--m-w-fqdn"></span></th>
+                <th title="Achados da ultima captura, por severidade: Critical, High, Medium, Low">Severidade<span class="col-grip" data-col="--m-w-sev"></span></th>
+                <th class="col-agente" title="Momento da ultima captura recebida, hora local e UTC">Last Seen<span class="col-grip" data-col="--m-w-seen"></span></th>
+                <th class="col-agente" title="AGENDADOR: proxima coleta esperada, a partir do ciclo do agente (capture_duration + interval). O agente coleta sozinho nessa cadencia; o icone de captura na acao pede uma coleta agora, fora do ciclo.">Next / cadencia<span class="col-grip" data-col="--m-w-next"></span></th>
+                <th class="col-agente" title="Uptime do host (desde o boot) e do agente (desde que subiu)">Uptime<span class="col-grip" data-col="--m-w-up"></span></th>
+                <th class="col-agente" title="Estado do AGENTE, nao do host: verde = falou com o servidor dentro do intervalo esperado; vermelho = passou de dois ciclos sem falar">Status do agente<span class="col-grip" data-col="--m-w-stat"></span></th>
                 <th title="Abrir laudo, historico, pedir captura agora, cenario de teste (lab), reiniciar">Action</th>
             </tr></thead>
             <tbody>{rows}</tbody>
