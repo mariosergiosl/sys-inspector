@@ -155,8 +155,67 @@ LEGEND_HTML = ("""
 # ------------------------------------------------------------------------------
 CSS_BASE = r"""
 :root { --bg:#121212; --fg:#e0e0e0; --acc:#0078d4; --red:#ff6b6b; --grn:#51cf66; --yel:#fcc419; --pur:#b180ff; --gry:#777; --drk:#252526; --border:#333; --cyn:#4ec9b0; }
-body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:var(--fg); padding:20px; font-size:13px; margin:0; }
+/* [F-239] Antes 20px em volta do corpo inteiro. Numa tela cuja informacao e
+   horizontal (a arvore de comando trunca com "..."), essa moldura era largura
+   tirada do que se le. O topo e a base ficam em zero porque a barra grudada ja
+   traz o proprio respiro. */
+body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:var(--fg); padding:0 8px; font-size:13px; margin:0; }
 
+/* [F-220] Controle de recolher o inventario. */
+.inv-toggle {
+    display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+    color:var(--gry); font-size:11px; text-transform:uppercase;
+    letter-spacing:1px; padding:2px 6px; margin-bottom:6px; user-select:none;
+}
+.inv-toggle:hover { color:var(--cyn); }
+.inv.oculto { display:none; }
+
+/* [F-238] A arvore rola dentro da propria caixa, nos DOIS eixos. Sem isto a
+   tabela era cortada e nao havia como alcancar o que passava da largura: o
+   dado existia e ficava inacessivel, que e pior que nao ter o dado. */
+.tabela-rolagem {
+    overflow: auto; max-height: 72vh; border: 1px solid var(--border);
+    border-radius: 4px;
+}
+/* Cabecalho fixo enquanto se rola: perder o nome da coluna depois de vinte
+   linhas transforma numero em enigma.
+   O cabecalho das colunas vive DENTRO desta caixa, e nao na barra grudada do
+   topo. Fora dela, a rolagem horizontal moveria so o corpo e as colunas
+   deixariam de bater com seus titulos, que e pior que nao rolar. */
+.tabela-rolagem thead th { position: sticky; top: 0; background: var(--drk); z-index: 5; }
+.tabela-rolagem .tbl-hdr {
+    position: sticky; top: 0; z-index: 6; background: var(--bg);
+    min-width: max-content;
+}
+/* A tabela nunca encolhe abaixo da soma das colunas: e o que garante que o
+   corpo e o cabecalho rolem juntos, em vez de o corpo se comprimir. */
+.tabela-rolagem table { min-width: max-content; }
+
+/* [F-219] Alca de arraste na borda direita do cabecalho, mesmo mecanismo da
+   tela Manager (JS_COLUNAS_AJUSTAVEIS). */
+th .col-grip { position:absolute; top:0; right:0; width:6px; height:100%;
+               cursor:col-resize; user-select:none; }
+th .col-grip:hover { background:var(--cyn); opacity:0.5; }
+
+
+/* [F-219] Largura das colunas da aba Processes numa FONTE SO.
+   Antes o mesmo numero vivia em dois lugares (as divs do cabecalho e o
+   colgroup da tabela): mexer num sem o outro desalinhava a tela, e era a
+   divergencia silenciosa de sempre. Agora o arraste altera a variavel e as
+   duas pontas seguem juntas por construcao. */
+:root {
+    --w-cmd: 20%;
+    --w-pid: 60px;
+    --w-dur: 90px;
+    --w-user: 90px;
+    --w-nice: 50px;
+    --w-cpu: 60px;
+    --w-rss: 80px;
+    --w-dhot: 100px;
+    --w-dhist: 100px;
+    --w-ntx: 90px;
+    --w-nrx: 90px;
+}
 /* --- HEADER & LAYOUT --- */
 .sticky-wrapper {
     position: sticky; top: 0; z-index: 1000;
@@ -268,7 +327,11 @@ body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:
 .net-gw-dns { margin-top: 8px; border-top: 1px dashed #444; padding-top: 4px; font-size: 0.9em; color: #888; }
 
 /* --- BADGES & ICONS --- */
-.controls { display:flex; flex-direction: column; gap:10px; margin-bottom:15px; width: 100%; }
+/* [F-237] A faixa entre o campo de filtro e o cabecalho da arvore
+   somava 15px de margem mais 20px de padding do container: quase
+   uma linha de processo desperdicada, na tela em que altura e o
+   recurso escasso. */
+.controls { display:flex; flex-direction: column; gap:8px; margin-bottom:4px; width: 100%; }
 .legend { display:flex; gap:15px; background:#222; padding:8px 12px; border:1px solid #444; border-radius:3px; align-items:center; flex-wrap:wrap; width: 100%; box-sizing: border-box; }
 .leg-grp { display:flex; align-items:center; gap:10px; padding-right:15px; border-right:1px solid #444; }
 .leg-grp:last-child { border:none; }
@@ -351,7 +414,8 @@ body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:
 #search { width:100%; padding:8px; background:#252526; border:1px solid #555; color:white; border-radius:3px; font-family:monospace; box-sizing:border-box; }
 
 /* --- TABLE STYLES --- */
-.table-container { padding: 0 20px 20px 20px; }
+/* [F-239] Sem moldura lateral: a largura vai toda para a arvore. */
+.table-container { padding: 0 0 12px 0; }
 table { width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed; }
 th { text-align:left; background:#2d2d30; padding:10px 5px; border-bottom:2px solid #444; color:#aaa; text-transform:uppercase; font-size:11px; }
 td { padding:6px 5px; border-bottom:1px solid #2a2a2a; vertical-align:middle; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -564,6 +628,31 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
 # 3. JAVASCRIPT (State Preservation, AJAX, & Logic)
 # ------------------------------------------------------------------------------
 JS_BLOCK = r"""
+
+// [F-220] Recolhe o inventario (System, Storage, Network) e devolve a altura
+// para a arvore de processos. O estado fica no navegador: quem trabalha com a
+// arvore nao quer recolher o bloco a cada laudo que abre.
+function alternarInventario(){
+    var bloco = document.getElementById('bloco-inventario');
+    var seta = document.getElementById('inv-seta');
+    var rotulo = document.getElementById('inv-rotulo');
+    if (!bloco) return;
+    var oculto = bloco.classList.toggle('oculto');
+    if (seta) seta.innerHTML = oculto ? '&#9654;' : '&#9660;';
+    if (rotulo) rotulo.textContent = oculto ? 'Mostrar inventario'
+                                            : 'Ocultar inventario';
+    try { localStorage.setItem('si_inv_oculto', oculto ? '1' : '0'); } catch (e) {}
+}
+(function(){
+    function restaurar(){
+        var guardado = null;
+        try { guardado = localStorage.getItem('si_inv_oculto'); } catch (e) {}
+        if (guardado === '1') { alternarInventario(); }
+    }
+    if (document.readyState === 'loading'){
+        document.addEventListener('DOMContentLoaded', restaurar);
+    } else { restaurar(); }
+})();
     // --- STATE MANAGEMENT ---
     var state = {
         expandedPids: new Set(),
@@ -994,7 +1083,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <div class="meta">{TIMESTAMP}<br>{HOSTNAME}</div>
         </div>
 
-        <div class="inv">
+        <!-- [F-220] O bloco das tres caixas (System, Storage, Network) ocupa
+             metade da altura util e quase nunca muda durante uma analise. O
+             controle abaixo o recolhe e devolve a tela para a arvore de
+             processos, que e onde o analista trabalha. Reversivel, e o estado
+             fica gravado no navegador para nao ter que recolher a cada laudo. -->
+        <div class="inv-toggle" onclick="alternarInventario()"
+             title="Mostrar ou ocultar System, Storage e Network, para dar espaco a arvore">
+            <span id="inv-seta">&#9660;</span>
+            <span id="inv-rotulo">Ocultar inventario</span>
+        </div>
+
+        <div class="inv" id="bloco-inventario">
             <div class="card">
                 <h3>System</h3>
                 <div id="os-info">{OS_CONTENT}</div>
@@ -1064,20 +1164,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <input type="text" id="search" placeholder="Filter processes (PID, User, Disk, Alert)..." onkeyup="filterTable()">
         </div>
 
-        <div class="tbl-hdr panel-hidden" data-panel="processes" style="display:flex; border-bottom:2px solid #444; font-weight:bold; color:#aaa; text-transform:uppercase; padding:8px 5px; font-size:11px;">
-             <div style="width:20%">Command Tree</div>
-             <div style="width:60px">PID</div>
-             <div style="width:90px">Duration</div>
-             <div style="width:90px">User</div>
-             <div style="width:50px">Nice</div>
-             <div style="width:60px">CPU%</div>
-             <div style="width:80px">RSS</div>
-             <div style="width:100px" title="Current Disk I/O (Bytes/sec) - Hot Activity">Disk &Delta;<br>I/O Hot</div>
-             <div style="width:100px" title="Total Disk I/O during Session (Accumulated in Tree)">Disk &Sigma;<br>I/O Hist</div>
-             <div style="width:90px" title="Network Transmit: Current Delta / Total Session">Net TX<br>&Delta; / &Sigma;</div>
-             <div style="width:90px" title="Network Receive: Current Delta / Total Session">Net RX<br>&Delta; / &Sigma;</div>
-             <div>Alerts</div>
-        </div>
     </div>
 
     <div class="findings-container" data-panel="findings">
@@ -1089,26 +1175,112 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
 
     <div class="table-container panel-hidden" data-panel="processes">
+        <div class="tabela-rolagem">
+        <div class="tbl-hdr panel-hidden" data-panel="processes" style="display:flex; border-bottom:2px solid #444; font-weight:bold; color:#aaa; text-transform:uppercase; padding:8px 5px; font-size:11px;">
+             <div style="width:var(--w-cmd); position:relative" data-col="--w-cmd">Command Tree<span class="col-grip"></span></div>
+             <div style="width:var(--w-pid); position:relative" data-col="--w-pid">PID<span class="col-grip"></span></div>
+             <div style="width:var(--w-dur); position:relative" data-col="--w-dur">Duration<span class="col-grip"></span></div>
+             <div style="width:var(--w-user); position:relative" data-col="--w-user">User<span class="col-grip"></span></div>
+             <div style="width:var(--w-nice); position:relative" data-col="--w-nice">Nice<span class="col-grip"></span></div>
+             <div style="width:var(--w-cpu); position:relative" data-col="--w-cpu">CPU%<span class="col-grip"></span></div>
+             <div style="width:var(--w-rss); position:relative" data-col="--w-rss">RSS<span class="col-grip"></span></div>
+             <div style="width:var(--w-dhot); position:relative" data-col="--w-dhot" title="Current Disk I/O (Bytes/sec) - Hot Activity">Disk &Delta;<br>I/O Hot<span class="col-grip"></span></div>
+             <div style="width:var(--w-dhist); position:relative" data-col="--w-dhist" title="Total Disk I/O during Session (Accumulated in Tree)">Disk &Sigma;<br>I/O Hist<span class="col-grip"></span></div>
+             <div style="width:var(--w-ntx); position:relative" data-col="--w-ntx" title="Network Transmit: Current Delta / Total Session">Net TX<br>&Delta; / &Sigma;<span class="col-grip"></span></div>
+             <div style="width:var(--w-nrx); position:relative" data-col="--w-nrx" title="Network Receive: Current Delta / Total Session">Net RX<br>&Delta; / &Sigma;<span class="col-grip"></span></div>
+             <div>Alerts</div>
+        </div>
         <table>
             <colgroup>
-                <col width="20%">
-                <col width="60px">
-                <col width="90px">
-                <col width="90px">
-                <col width="50px">
-                <col width="60px">
-                <col width="80px">
-                <col width="100px">
-                <col width="100px">
-                <col width="90px">
-                <col width="90px">
+                <col style="width:var(--w-cmd)">
+                <col style="width:var(--w-pid)">
+                <col style="width:var(--w-dur)">
+                <col style="width:var(--w-user)">
+                <col style="width:var(--w-nice)">
+                <col style="width:var(--w-cpu)">
+                <col style="width:var(--w-rss)">
+                <col style="width:var(--w-dhot)">
+                <col style="width:var(--w-dhist)">
+                <col style="width:var(--w-ntx)">
+                <col style="width:var(--w-nrx)">
                 <col>
             </colgroup>
             <tbody style="margin-top:10px">
                 {TABLE_ROWS}
             </tbody>
         </table>
+        </div>
     </div>
 </body>
 </html>
 """
+
+
+# ------------------------------------------------------------------------------
+# COLUNAS AJUSTAVEIS (F-219 na aba Processes, F-223 na tela Manager)
+# ------------------------------------------------------------------------------
+# Escrito UMA vez e usado nas duas telas. Sao o mesmo pedido do Mario feito em
+# datas diferentes ("as colunas devem ter tamanho ajustavel"), e duas
+# implementacoes do mesmo comportamento e exatamente a divergencia silenciosa
+# que este projeto ja pagou caro: uma seria corrigida um dia e a outra nao.
+#
+# Requisitos do lado do HTML, nos dois casos:
+#   - a tabela precisa de `table-layout:fixed`, senao o navegador recalcula as
+#     larguras e o arraste nao gruda;
+#   - cada `th` redimensionavel carrega um `<span class="col-grip"></span>`.
+_JS_COLUNAS_CORE = r"""
+(function(){
+  function ligar(grip){
+    var alvo = grip.parentElement;
+    // Duas telas, dois jeitos de guardar a largura, um mecanismo so:
+    //  - Manager: tabela de verdade, a largura vai no proprio <th>;
+    //  - laudo: cabecalho em divs e corpo em <table>, com as larguras vindas de
+    //    variaveis CSS. Ali o arraste altera a VARIAVEL, e as duas pontas se
+    //    movem juntas. Escrever dois arrastes diferentes recriaria a
+    //    divergencia que as variaveis acabaram de eliminar.
+    var variavel = alvo.getAttribute('data-col');
+    var iniX = 0, iniW = 0, arrastando = false;
+    grip.addEventListener('mousedown', function(e){
+      arrastando = true; iniX = e.pageX; iniW = alvo.offsetWidth;
+      if (!variavel){
+        // Fixa a largura ATUAL de todas as colunas antes do primeiro arraste.
+        // Sem isso, mexer numa coluna faz as vizinhas se redistribuirem e a
+        // tabela inteira "pula" no primeiro pixel de movimento.
+        var linha = alvo.parentElement;
+        for (var i = 0; i < linha.children.length; i++){
+          var c = linha.children[i];
+          if (!c.style.width) { c.style.width = c.offsetWidth + 'px'; }
+        }
+      }
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', function(e){
+      if (!arrastando) return;
+      var largura = iniW + (e.pageX - iniX);
+      if (largura <= 40) return;
+      if (variavel){
+        document.documentElement.style.setProperty(variavel, largura + 'px');
+      } else {
+        alvo.style.width = largura + 'px';
+      }
+    });
+    document.addEventListener('mouseup', function(){
+      if (!arrastando) return;
+      arrastando = false;
+      document.body.style.userSelect = '';
+    });
+  }
+  function iniciar(){
+    var grips = document.getElementsByClassName('col-grip');
+    for (var i = 0; i < grips.length; i++){ ligar(grips[i]); }
+  }
+  if (document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', iniciar);
+  } else { iniciar(); }
+})();
+"""
+
+# A Manager injeta o bloco pronto, com as tags; o laudo injeta o NUCLEO
+# dentro do <script> que ja existe la. Uma fonte, dois involucros.
+JS_COLUNAS_AJUSTAVEIS = "<script>" + _JS_COLUNAS_CORE + "</script>"

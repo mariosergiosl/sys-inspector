@@ -32,6 +32,7 @@ import urllib.parse as urlparse
 
 # Internal Modules
 from src.exporters.html_report import generate_report
+from src.exporters.web_assets import JS_COLUNAS_AJUSTAVEIS
 from src.collectors.process_tree import ProcessTree, ProcessNode
 from src.core.crypto import load_private_key, decrypt_data
 from src.core.ingest import IngestQueue, process_batch
@@ -144,10 +145,13 @@ _CSS_IDENTIDADE = _PALETA + (
     ".subtitle{color:var(--gry);font-size:0.85em;text-transform:uppercase;"
     "letter-spacing:2px;margin-top:4px;font-weight:bold}"
     ".meta{text-align:right;color:#888;font-size:0.9em}"
-    ".navlink{color:var(--cyn);text-decoration:none;border:1px solid #444;"
+    # [F-221] Sem borda. Os botoes de navegacao seguem a mesma linguagem dos
+    # icones de acao da tabela: sem caixa, o realce vem da cor no hover. A
+    # borda desenhava cinco retangulos competindo com a tabela por atencao.
+    ".navlink{color:var(--cyn);text-decoration:none;border:1px solid transparent;"
     "border-radius:4px;padding:4px 10px;margin-left:8px;font-size:11px;"
     "white-space:nowrap}"
-    ".navlink:hover{border-color:var(--cyn);background:#222}"
+    ".navlink:hover{background:#222;color:#fff}"
     ".conteudo{padding:24px 30px}"
     # Barra de controles no mesmo desenho da aba Processes do laudo: o analista
     # alterna entre as telas o tempo todo, e um controle que muda de forma a
@@ -699,10 +703,14 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     # Barra de acoes do host: as mesmas acoes do gerente,
                     # ao alcance de quem ja esta lendo o laudo daquele agente.
                     def _acao(caminho, icone, titulo, extra=""):
+                        # [F-232] Sem borda: os icones seguem a mesma linguagem
+                        # da barra de filtros da aba Processes e da tabela da
+                        # Manager. A caixa em volta de cada emoji criava seis
+                        # retangulos concorrendo com o laudo por atencao.
                         return ("<a href=\"/cmd/%s/%s\" title=\"%s\" "
-                                "style=\"color:#4ec9b0; border:1px solid #444; "
-                                "border-radius:4px; padding:4px 8px; margin-left:6px; "
-                                "text-decoration:none; font-size:14px;%s\">%s</a>"
+                                "style=\"color:#4ec9b0; padding:4px 6px; "
+                                "margin-left:6px; opacity:0.75; "
+                                "text-decoration:none; font-size:17px;%s\">%s</a>"
                                 % (caminho, agent_uuid, titulo, extra, icone))
 
                     # IDADE DA CAPTURA, em destaque.
@@ -730,18 +738,23 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                            _human_age(idade_seg)))
 
                     back = (
+                        # [F-231] Barra mais baixa: 8px em cima e embaixo eram
+                        # altura tirada da arvore, que e onde se trabalha.
+                        # [F-232] "Fleet" virou "Manager": o botao volta para a
+                        # tela Manager, e e o nome do DESTINO que o operador
+                        # procura, nao um sinonimo do conceito.
                         "<div style=\"background:#1a1a1a; border-bottom:1px solid #333; "
-                        "padding:8px 20px; display:flex; align-items:center\">"
-                        "<a href=\"/\" style=\"color:#4ec9b0; border:1px solid #4ec9b0; "
-                        "border-radius:4px; padding:5px 14px; font-size:12px; "
+                        "padding:4px 16px; display:flex; align-items:center\">"
+                        "<a href=\"/\" title=\"Voltar para a tela Manager\" "
+                        "style=\"color:#4ec9b0; padding:4px 10px; font-size:12px; "
                         "font-family:sans-serif; text-decoration:none\">"
-                        "&larr; Fleet</a>"
+                        "&larr; Manager</a>"
                         + carimbo
                         + ("<a href=\"/history/%s\" title=\"Capturas anteriores "
                            "deste agente e comparacao entre duas\" "
-                           "style=\"color:#4ec9b0; border:1px solid #444; "
-                           "border-radius:4px; padding:4px 8px; margin-left:12px; "
-                           "text-decoration:none; font-size:14px\">&#128337;</a>"
+                           "style=\"color:#4ec9b0; padding:4px 6px; "
+                           "margin-left:12px; opacity:0.75; "
+                           "text-decoration:none; font-size:17px\">&#128337;</a>"
                            % agent_uuid)
                         + _acao("collect", "&#128248;",
                                 "Solicitar captura agora: entra na fila, o agente "
@@ -905,6 +918,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                         agent_uuid, "ONLINE", hostname=host.get("hostname"),
                         ip=host.get("ip_address"), os_info=host.get("os_info"),
                         fqdn=host.get("fqdn"),
+                        hostnames=host.get("hostnames"),
+                        ip_addresses=host.get("ip_addresses"),
                         cycle_seconds=host.get("cycle_seconds"),
                         host_uptime=host.get("host_uptime"),
                         agent_uptime=host.get("agent_uptime"),
@@ -2157,12 +2172,44 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # simplesmente nao tem dominio configurado, e ver isso e informacao).
             # So vira um traco quando de fato nao ha FQDN, e o traco distingue
             # "host sem dominio" de "nao coletado".
+            # [F-227] TODOS os nomes, principal em destaque. Os demais (alias de
+            # /etc/hosts, reverso de DNS, nome curto) vao abaixo, menores: e por
+            # eles que o mesmo host aparece com identidades diferentes em
+            # sistemas diferentes, e esconde-los esconde metade do que amarra a
+            # maquina ao laudo.
+            outros_nomes = [n for n in (a.get('hostnames') or [])
+                            if n and n != fqdn]
             if fqdn:
-                fqdn_col = ("<span style='color:#999;font-family:monospace;"
-                            "font-size:11px'>%s</span>" % _esc(fqdn))
+                fqdn_col = ("<span style='color:#ccc;font-family:monospace;"
+                            "font-size:12px' title='Nome principal'>%s</span>"
+                            % _esc(fqdn))
             else:
                 fqdn_col = ("<span title='host sem FQDN resolvivel (sem dominio "
                             "configurado)' style='color:#555'>&mdash;</span>")
+            if outros_nomes:
+                fqdn_col += ("<div style='color:#777;font-family:monospace;"
+                             "font-size:10px' title='Outros nomes pelos quais "
+                             "este host e conhecido (aliases e DNS reverso)'>"
+                             "%s</div>"
+                             % "<br>".join(_esc(n) for n in outros_nomes[:4]))
+                if len(outros_nomes) > 4:
+                    fqdn_col += ("<div style='color:#555;font-size:10px'>+%d "
+                                 "outro(s)</div>" % (len(outros_nomes) - 4))
+
+            # [F-227] Mesmo tratamento para os enderecos: o da rota de saida em
+            # destaque (e o que o servidor ve), os demais abaixo.
+            todos_ips = [x for x in (a.get('ip_addresses') or []) if x]
+            outros_ips = [x for x in todos_ips if x != ip]
+            ip_col = ("<span title='Endereco usado na rota ate o servidor'>%s"
+                      "</span>" % _esc(ip))
+            if outros_ips:
+                ip_col += ("<div style='color:#777;font-family:monospace;"
+                           "font-size:10px' title='Outros enderecos deste host'>"
+                           "%s</div>"
+                           % "<br>".join(_esc(x) for x in outros_ips[:4]))
+                if len(outros_ips) > 4:
+                    ip_col += ("<div style='color:#555;font-size:10px'>+%d "
+                               "outro(s)</div>" % (len(outros_ips) - 4))
             fqdn_html = ""
             seen_html = ""
 
@@ -2184,13 +2231,19 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             findings = a.get('findings') or {}
             sev_colors = {'Critical': '#ff4d4d', 'High': '#ff8c42',
                           'Medium': '#ffd166', 'Low': '#6bcB77'}
-            sev_cells = ""
+            # [F-224] UMA celula com as quatro severidades lado a lado, em vez de
+            # quatro colunas largas para quatro numeros de um digito. O zero
+            # continua VISIVEL, apenas apagado (D-020): um contador que some
+            # deixa o operador sem saber se e zero ou se parou de reportar.
+            sev_itens = ""
             for level, color in sev_colors.items():
                 qty = findings.get(level, 0)
-                style = (f"background:{color}; color:#1e1e1e; font-weight:bold"
+                style = (f"background:{color}; color:#1e1e1e"
                          if qty else "background:#2a2a2a; color:#555")
-                sev_cells += (f"<td><span style='{style}; padding:2px 8px; "
-                              f"border-radius:3px; font-size:11px'>{qty}</span></td>")
+                sev_itens += (f"<span class='sev-cel' style='{style}' "
+                              f"title='{level}: {qty} achado(s) na ultima "
+                              f"captura'>{qty}</span>")
+            sev_cells = f"<td><div class='sev-bloco'>{sev_itens}</div></td>"
 
             # A borda da linha acompanha a pior severidade encontrada.
             worst = next((c for lv, c in sev_colors.items() if findings.get(lv)), None)
@@ -2200,14 +2253,37 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # mais rapido que a palavra, e o rotulo continua no title para quem
             # precisa da certeza. A cor da borda da linha ja carrega a gravidade;
             # o ponto carrega a presenca.
+            # [F-226] O ponto sozinho nao dizia DE QUEM era o estado, nem desde
+            # quando. Um host pode estar de pe com o agente mudo, e essa e
+            # justamente a situacao que interessa. Agora o rotulo nomeia o
+            # sujeito (o agente) e a ultima conversa aparece na propria celula,
+            # sem depender de passar o mouse.
+            # _dur_humana devolve so a duracao ("25s"); _human_age acrescenta
+            # " ago" em ingles, e "falou ha 25s ago" mistura os dois idiomas e
+            # diz a mesma coisa duas vezes.
+            try:
+                desde = _dur_humana(idade)
+            except Exception:
+                desde = "?"
             if is_online:
-                status_cell = ("<span title='ONLINE: reportou dentro do "
-                               "intervalo esperado' style='color:#51cf66;"
-                               "font-size:20px'>&#9679;</span>")
+                status_cell = ("<div><span title='O AGENTE falou com o servidor "
+                               "dentro do intervalo esperado' style='color:#51cf66;"
+                               "font-size:18px'>&#9679;</span>"
+                               "<span style='color:#51cf66;font-size:10px;"
+                               "margin-left:5px'>agente ativo</span></div>"
+                               "<div style='color:#777;font-size:10px' "
+                               "title='Ultima vez que este AGENTE falou com o "
+                               "servidor'>falou ha %s</div>" % desde)
             else:
-                status_cell = ("<span title='OFFLINE: passou de dois ciclos sem "
-                               "reportar' style='color:#ff6b6b;font-size:20px'>"
-                               "&#9679;</span>")
+                status_cell = ("<div><span title='O AGENTE passou de dois ciclos "
+                               "sem falar com o servidor. O host pode estar de pe: "
+                               "isto e o estado do AGENTE' style='color:#ff6b6b;"
+                               "font-size:18px'>&#9679;</span>"
+                               "<span style='color:#ff6b6b;font-size:10px;"
+                               "margin-left:5px'>agente mudo</span></div>"
+                               "<div style='color:#777;font-size:10px' "
+                               "title='Ultima vez que este AGENTE falou com o "
+                               "servidor'>desde ha %s</div>" % desde)
             border_style = risk_border or ("border-left: 4px solid #51cf66;" if is_online else "border-left: 4px solid #ff6b6b;")
 
             rows += f"""
@@ -2217,13 +2293,13 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     <br><small style='color:#666; font-family:monospace'>{uuid}</small>
                     {fqdn_html}{seen_html}
                 </td>
-                <td style='color:#ccc'>{ip}</td>
+                <td style='color:#ccc'>{ip_col}</td>
                 <td>{fqdn_col}</td>
                 {sev_cells}
-                <td style='color:#aaa'>{seen}</td>
-                <td>{proximo_html}</td>
-                <td style='color:#aaa;font-size:12px'>{uptime_col}</td>
-                <td style='text-align:center'>{status_cell}</td>
+                <td class='col-agente' style='color:#aaa'>{seen}</td>
+                <td class='col-agente'>{proximo_html}</td>
+                <td class='col-agente' style='color:#aaa;font-size:12px'>{uptime_col}</td>
+                <td class='col-agente'>{status_cell}</td>
                 <td style='white-space:nowrap'>
                     <a href='/agent/{uuid}' class='btn-ico' title='Abrir o laudo forense deste agente'>&#128269;</a>
                     <a href='/history/{uuid}' class='btn-ico' title='Capturas anteriores deste agente e comparacao entre duas: mostra o que mudou de uma para a outra'>&#128337;</a>
@@ -2265,11 +2341,40 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         <meta http-equiv="refresh" content="30">
         <style>
             {_CSS_IDENTIDADE}
-            table {{ width: 90%; margin: 30px auto; border-collapse: separate; border-spacing: 0 10px; }}
-            th {{ text-align: left; color: #777; text-transform: uppercase; font-size: 0.85em; padding: 0 15px 10px 15px; letter-spacing: 1px; }}
-            td {{ padding: 15px; }}
-            tr {{ transition: transform 0.2s; }}
-            tr:hover {{ transform: scale(1.01); background: #2a2d2e !important; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }}
+            /* [F-230] A tabela ocupava 90% e ainda tinha 30px de margem: sobravam
+               faixas largas dos dois lados numa tela cuja informacao e horizontal.
+               [F-223] table-layout:fixed e o que permite a largura de coluna ser
+               respeitada; sem isso o navegador recalcula tudo e o arraste nao gruda. */
+            table {{ width: 100%; margin: 12px 0 30px 0; border-collapse: separate;
+                     border-spacing: 0 8px; table-layout: fixed; }}
+            th {{ text-align: left; color: #777; text-transform: uppercase; font-size: 0.85em; padding: 0 15px 10px 15px; letter-spacing: 1px; position: relative; }}
+            td {{ padding: 12px 15px; overflow: hidden; text-overflow: ellipsis; }}
+            /* [F-222] Sem animacao de tamanho nem de posicao. `transform:scale`
+               movia a linha inteira sob o cursor, deslocando o alvo do clique no
+               instante em que se vai clicar. A mudanca de cor basta para dizer
+               qual linha esta sob o mouse, e nao mexe em nada de lugar. */
+            tr {{ transition: background 0.15s; }}
+            tr:hover {{ background: #2a2d2e !important; }}
+            /* [F-223] Alca de arraste na borda direita do cabecalho. */
+            th .col-grip {{ position:absolute; top:0; right:0; width:6px; height:100%;
+                            cursor:col-resize; user-select:none; }}
+            th .col-grip:hover {{ background:var(--cyn); opacity:0.5; }}
+            /* [F-224] As quatro severidades num bloco so, em vez de quatro colunas
+               largas para quatro numeros de um digito. */
+            .sev-bloco {{ display:flex; gap:3px; align-items:center; }}
+            .sev-cel {{ min-width:26px; text-align:center; padding:2px 5px;
+                        border-radius:3px; font-size:11px; font-weight:bold; }}
+            /* [F-228] Last Seen, Next, Uptime e Status respondem a MESMA
+               pergunta (o agente esta vivo e em que ritmo). Lidas como quatro
+               colunas independentes elas parecem se contradizer; sob um rotulo
+               comum, lê-se um bloco so. */
+            .grp-linha th {{ padding: 0 15px 4px 15px; }}
+            .grp-vazio {{ border: none; }}
+            .grp-agente {{ text-align:center !important; color:#8ab4f8 !important;
+                           font-size:0.7em !important; letter-spacing:2px;
+                           border-bottom:1px solid #2f4667; }}
+            .col-agente {{ background:rgba(80,120,180,0.05); }}
+            td.col-agente {{ background:rgba(80,120,180,0.05); }}
             .btn-view {{ background: #333; color: #fff; text-decoration: none; padding: 6px 12px; font-size: 10px; border-radius: 3px; border: 1px solid #555; transition:0.2s; }}
             /* Icones de acao no MESMO padrao da barra de filtros da aba
                Processes (.filter-btn): emoji "pelado", sem caixa, opacidade
@@ -2291,23 +2396,28 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         </head><body>
         {cabecalho}
         <table>
-            <thead><tr>
-                <th title="Nome curto e UUID estavel da origem da captura">Hostname / UUID</th>
-                <th title="Endereco pela rota de saida ate o servidor">IP</th>
-                <th title="Nome de dominio: o mesmo host aparece com nomes diferentes em sistemas diferentes">FQDN</th>
-                <th title="Achados criticos na ultima captura">Crit</th>
-                <th title="Achados de severidade alta">High</th>
-                <th title="Achados de severidade media">Med</th>
-                <th title="Achados de severidade baixa">Low</th>
-                <th title="Momento da ultima captura recebida, hora local e UTC">Last Seen</th>
-                <th title="AGENDADOR: proxima coleta esperada, a partir do ciclo do agente (capture_duration + interval). O agente coleta sozinho nessa cadencia; o icone de captura na acao pede uma coleta agora, fora do ciclo.">Next / cadencia</th>
-                <th title="Uptime do host (desde o boot) e do agente (desde que subiu)">Uptime</th>
-                <th title="Verde = reportou dentro do intervalo esperado; vermelho = passou de dois ciclos sem reportar">Status</th>
+            <thead>
+            <tr class="grp-linha">
+                <th colspan="3" class="grp-vazio"></th>
+                <th class="grp-vazio"></th>
+                <th colspan="4" class="grp-agente">Agente: presenca e ritmo</th>
+                <th class="grp-vazio"></th>
+            </tr>
+            <tr>
+                <th title="Nome curto e UUID estavel da origem da captura">Hostname / UUID<span class="col-grip"></span></th>
+                <th title="Enderecos deste host. O primeiro e o usado na rota de saida ate o servidor">IP<span class="col-grip"></span></th>
+                <th title="Nomes de dominio deste host. O principal em destaque; os demais sao aliases e reverso de DNS">FQDN<span class="col-grip"></span></th>
+                <th title="Achados da ultima captura, por severidade: Critical, High, Medium, Low">Severidade<span class="col-grip"></span></th>
+                <th class="col-agente" title="Momento da ultima captura recebida, hora local e UTC">Last Seen<span class="col-grip"></span></th>
+                <th class="col-agente" title="AGENDADOR: proxima coleta esperada, a partir do ciclo do agente (capture_duration + interval). O agente coleta sozinho nessa cadencia; o icone de captura na acao pede uma coleta agora, fora do ciclo.">Next / cadencia<span class="col-grip"></span></th>
+                <th class="col-agente" title="Uptime do host (desde o boot) e do agente (desde que subiu)">Uptime<span class="col-grip"></span></th>
+                <th class="col-agente" title="Estado do AGENTE, nao do host: verde = falou com o servidor dentro do intervalo esperado; vermelho = passou de dois ciclos sem falar">Status do agente<span class="col-grip"></span></th>
                 <th title="Abrir laudo, historico, pedir captura agora, cenario de teste (lab), reiniciar">Action</th>
             </tr></thead>
             <tbody>{rows}</tbody>
         </table>
         {js_ticker}
+        {JS_COLUNAS_AJUSTAVEIS}
         </body></html>
         """
         self.wfile.write(html.encode('utf-8'))

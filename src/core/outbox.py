@@ -189,6 +189,34 @@ class Outbox(object):
             fqdn = socket.getfqdn()
         except Exception:
             fqdn = ""
+
+        # [F-227] TODOS os nomes e TODOS os enderecos, e nao apenas o principal.
+        # Um host aparece com nomes diferentes em sistemas diferentes (alias de
+        # /etc/hosts, reverso de DNS, nome curto), e numa peca forense e
+        # justamente isso que amarra a maquina ao laudo: mostrar so um nome
+        # esconde metade da identidade. O coletor JA reunia todos
+        # (collect_host_names); o que faltava era transportar.
+        nomes = []
+        enderecos = []
+        try:
+            from src.collectors.system_inventory import (collect_host_names,
+                                                         get_net_info)
+            _, nomes = collect_host_names()
+            nomes = list(nomes or [])
+            for iface in (get_net_info() or {}).get("interfaces", []) or []:
+                addr = iface.get("ip") or iface.get("address")
+                if addr and addr not in enderecos:
+                    enderecos.append(addr)
+        except Exception:
+            # Identidade estendida e um PLUS: sem ela a frota continua listando
+            # o host pelo nome e endereco principais, que nunca dependeram disto.
+            pass
+        # O endereco da rota de saida vem PRIMEIRO: e o que o servidor de fato
+        # ve, e o que o operador usa para alcancar o host.
+        if address and address in enderecos:
+            enderecos.remove(address)
+        if address:
+            enderecos.insert(0, address)
         # Capacidades: o que ESTE host consegue fazer, nas duas pontas. Sem
         # isso, "o agente X nao acusou o cenario Y" fica ambiguo entre falha da
         # deteccao e incapacidade do host, e foi essa ambiguidade que atrasou um
@@ -231,6 +259,7 @@ class Outbox(object):
 
         return {"hostname": hostname, "ip_address": address,
                 "os_info": os_info, "fqdn": fqdn, "cycle_seconds": ciclo,
+                "hostnames": nomes, "ip_addresses": enderecos,
                 "capabilities": capacidades,
                 "host_uptime": host_uptime, "agent_uptime": agent_uptime,
                 "clock_offset": clock.get("offset", 0.0),

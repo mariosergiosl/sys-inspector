@@ -17,6 +17,7 @@ import re
 import datetime
 import html as html_lib
 from src.exporters.web_assets import (HTML_TEMPLATE, CSS_BASE, JS_BLOCK,
+                                      _JS_COLUNAS_CORE,
                                       LEGEND_HTML, FILTER_BAR_HTML,
                                       BADGE_LEGEND_HTML)
 from src.core.findings import (SEV_INFO, SEVERITY_ORDER, confidence_label,
@@ -1511,10 +1512,22 @@ def generate_report(inventory, process_tree, output_file, version):
 
         html = HTML_TEMPLATE.format(
             VERSION=version,
-            HOSTNAME=inventory['os']['hostname'],
+            # [F-235] O canto do laudo mostrava so o nome curto. A tela
+            # Manager ja exibe o FQDN, e o laudo, que e a peca que sai
+            # daqui, nao pode identificar o host com menos precisao que o
+            # painel. Quando nao ha dominio configurado, o nome curto
+            # continua sendo a resposta certa.
+            HOSTNAME=(inventory['os'].get('fqdn')
+                      or inventory['os']['hostname']),
             TIMESTAMP=inventory['generated'],
             CSS_BLOCK=CSS_BASE,
-            JS_BLOCK=JS_BLOCK + "\n    // Auto-start check handled by main.py injection or manual call",
+            # [F-219] O nucleo do arraste de colunas entra AQUI, dentro do
+            # <script> que o template ja tem, em vez de virar um placeholder
+            # novo. Placeholder novo obriga todo teste que monta o template a
+            # mao a ser atualizado junto, e foi exatamente isso que dois testes
+            # acusaram na primeira tentativa.
+            JS_BLOCK=(JS_BLOCK + _JS_COLUNAS_CORE
+                      + "\n    // Auto-start check handled by main.py injection or manual call"),
             LEGEND_HTML=LEGEND_HTML,
             FILTER_BAR_HTML=FILTER_BAR_HTML,
             BADGE_LEGEND_HTML=BADGE_LEGEND_HTML,

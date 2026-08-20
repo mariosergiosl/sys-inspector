@@ -168,7 +168,14 @@ class DatabaseManager:
                                      ("host_uptime", "INTEGER"),
                                      ("agent_uptime", "INTEGER"),
                                      ("clock_offset", "REAL"),
-                                     ("clock_measured", "INTEGER")):
+                                     ("clock_measured", "INTEGER"),
+                                     # [F-227] Todos os nomes e todos os
+                                     # enderecos do host, em JSON. Um host
+                                     # aparece com nomes diferentes em sistemas
+                                     # diferentes, e numa peca forense e isso
+                                     # que o amarra ao laudo.
+                                     ("hostnames", "TEXT"),
+                                     ("ip_addresses", "TEXT")):
                     try:
                         conn.execute("ALTER TABLE agents ADD COLUMN %s %s"
                                      % (coluna, tipo))
@@ -295,7 +302,8 @@ class DatabaseManager:
     def update_agent_status(self, uuid, status, hostname=None, ip=None,
                             os_info=None, fqdn=None, cycle_seconds=None,
                             host_uptime=None, agent_uptime=None,
-                            clock_offset=None, clock_measured=None):
+                            clock_offset=None, clock_measured=None,
+                            hostnames=None, ip_addresses=None):
         try:
             with closing(self._get_conn()) as conn:
                 sql = "UPDATE agents SET status=?, last_seen=CURRENT_TIMESTAMP"
@@ -331,6 +339,15 @@ class DatabaseManager:
                 if clock_measured is not None:
                     sql += ", clock_measured=?"
                     params.append(1 if clock_measured else 0)
+                # [F-227] Listas guardadas como JSON. Lista VAZIA nao sobrescreve
+                # o que ja existe: um agente antigo, que ainda nao envia estes
+                # campos, apagaria a identidade estendida a cada check-in.
+                if hostnames:
+                    sql += ", hostnames=?"
+                    params.append(json.dumps(list(hostnames)))
+                if ip_addresses:
+                    sql += ", ip_addresses=?"
+                    params.append(json.dumps(list(ip_addresses)))
 
                 sql += " WHERE uuid=?"
                 params.append(uuid)
@@ -570,6 +587,7 @@ class DatabaseManager:
                            a.fqdn, a.cycle_seconds, a.status, a.last_seen,
                            a.host_uptime, a.agent_uptime,
                            a.clock_offset, a.clock_measured,
+                           a.hostnames, a.ip_addresses,
                            s.timestamp AS last_capture,
                            s.alert_score, s.is_alert, s.cpu_avg,
                            s.mem_used_mb, s.pids_count, s.findings_summary
@@ -589,6 +607,15 @@ class DatabaseManager:
                         item["findings"] = json.loads(raw) if raw else {}
                     except Exception:
                         item["findings"] = {}
+                    # [F-227] Listas de identidade. Guardadas em JSON; um valor
+                    # ilegivel vira lista vazia, e a tela cai no nome principal,
+                    # em vez de a frota inteira quebrar por um registro torto.
+                    for campo in ("hostnames", "ip_addresses"):
+                        bruto = item.get(campo)
+                        try:
+                            item[campo] = json.loads(bruto) if bruto else []
+                        except Exception:
+                            item[campo] = []
                     fleet.append(item)
                 return fleet
         except Exception as e:
