@@ -61,6 +61,8 @@ SAFE_ID_PATTERN = re.compile(r'^[A-Za-z0-9\-]{1,64}$')
 def id_valido(valor):
     """Se um identificador vindo da URL pode ser usado como chave de consulta."""
     return bool(valor) and bool(SAFE_ID_PATTERN.match(str(valor)))
+
+
 from src.version import __version__
 from src.core.correlation import correlate
 from src.core.commands import CommandQueue, ALLOWED, STUCK_LIMIT

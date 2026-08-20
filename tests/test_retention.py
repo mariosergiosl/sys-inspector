@@ -22,7 +22,7 @@ import time
 
 import pytest
 
-from src.core.retention import (RetentionPolicy, MODE_FORENSIC, MODE_SECURITY)
+from src.core.retention import (RetentionPolicy, MODE_FORENSIC)
 
 
 @pytest.fixture

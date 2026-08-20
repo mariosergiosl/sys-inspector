@@ -33,7 +33,12 @@ jobs:
 
       - name: Run Flake8
         run: |
-          flake8 src/ main.py --count --show-source --statistics
+          # O repositorio INTEIRO, e nao apenas src/. Ate 2026-08-20 o lint via
+          # so src/ e main.py, e tests/ tools/ scripts/ ficavam sem cobertura
+          # nenhuma: eram 27 violacoes acumuladas, entre elas oito 'import
+          # pytest' sem uso. tools/ nao e codigo de segunda classe, e onde vive
+          # o chaos_maker, que e a regua da deteccao.
+          flake8 . --count --show-source --statistics
 
       - name: Run Pylint
         run: |

@@ -17,8 +17,7 @@ import tempfile
 import pytest
 
 from src.core.database import DatabaseManager
-from src.core.ingest import (IngestQueue, process_batch, PRIORITY_DEFAULT,
-                             ST_PENDING)
+from src.core.ingest import (IngestQueue, process_batch, PRIORITY_DEFAULT)
 
 
 @pytest.fixture

@@ -14,7 +14,6 @@
 import os
 import tempfile
 
-import pytest
 
 from src.core.database import DatabaseManager
 from src.core.outbox import Outbox

@@ -12,10 +12,8 @@
 # AUTHOR: Mario Luz (Sys-Inspector Project)
 # ==============================================================================
 
-import os
 import socket
 
-import pytest
 
 from src.collectors.system_inventory import collect_host_names
 from src.exporters.html_report import render_os_block

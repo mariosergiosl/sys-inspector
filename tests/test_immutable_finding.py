@@ -15,7 +15,6 @@
 # AUTHOR: Mario Luz (Sys-Inspector Project)
 # ==============================================================================
 
-import pytest
 
 from src.collectors import persistence as pers
 from src.core.findings import SEV_HIGH, SRC_PERSISTENCE

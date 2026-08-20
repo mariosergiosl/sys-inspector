@@ -16,8 +16,6 @@
 # AUTHOR: Mario Luz (Sys-Inspector Project)
 # ==============================================================================
 
-import json
-import zlib
 
 import pytest
 
@@ -44,8 +42,8 @@ def _payload_realista(n=300):
     """
     return {"processes": dict(
         (str(i), {"pid": i, "ppid": 1, "cmd": "/usr/lib/systemd/systemd --user",
-             "exe_path": "/usr/lib/systemd/systemd", "username": "root",
-             "context_tags": ["UNSAFE"], "anomaly_score": 3})
+                  "exe_path": "/usr/lib/systemd/systemd", "username": "root",
+                  "context_tags": ["UNSAFE"], "anomaly_score": 3})
         for i in range(n))}
 
 

@@ -15,7 +15,7 @@ import time
 import tempfile
 
 from src.collectors import persistence as P
-from src.core.findings import SEV_INFO, SEV_LOW, SEV_MEDIUM, SEV_HIGH, SRC_PERSISTENCE
+from src.core.findings import SEV_INFO, SEV_MEDIUM, SEV_HIGH, SRC_PERSISTENCE
 
 
 # ------------------------------------------------------------------------------

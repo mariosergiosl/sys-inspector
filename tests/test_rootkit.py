@@ -28,7 +28,6 @@
 import io
 import os
 
-import pytest
 
 from src.collectors.rootkit import (collect_rootkit, modulos_em_proc,
                                     modulos_em_sysfs, modulos_em_kallsyms,

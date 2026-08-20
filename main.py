@@ -23,7 +23,6 @@ import signal
 import argparse
 import threading
 import logging
-import time
 import os
 import subprocess
 

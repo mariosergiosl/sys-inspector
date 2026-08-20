@@ -66,22 +66,29 @@ GAVETA_POR_SECAO = {
 # pelas outras. A tabela e uma VISTA, entao ela pode reagrupar por assunto sem
 # tocar na fonte. A coluna "Origem" preserva de onde o item veio, para que a
 # reclassificacao nunca esconda a procedencia.
+# [2026-08-20, Mario] QUATRO temas, e nao dezesseis. A taxonomia anterior
+# separava "Sustentacao operacional" de "Modo ocioso" de "Frota e distribuido",
+# e o proprio dono do projeto nao reconhecia essas caixas: "eu vejo interface,
+# coletores, agente e servidor". Classificacao que o leitor nao reconhece nao
+# organiza, espalha: o mesmo assunto cai em duas caixas conforme a palavra usada,
+# e ai some ou duplica. O que a tabela precisa responder e o que ha para fazer e
+# o que depende do que.
 TEMA_POR_SECAO = {
-    "1.": "Captura e instrumentacao (eBPF)",
-    "2.": "Deteccao forense",
-    "2-B": "Regras do laudo e do achado",
-    "3.": "Analise temporal e correlacao",
-    "4.": "Compliance, vulnerabilidade e inventario",
-    "5.": "Frota e distribuido",
-    "6.": "Seguranca da propria ferramenta",
-    "7.": "Sustentacao operacional",
-    "8.": "Interface, laudo e UX",
-    "9.": "Integracao e saida",
-    "10.": "Qualidade e verificacao",
-    "11.": "Empacotamento e distribuicao",
-    "12.": "Empacotamento e distribuicao",
-    "13.": "Modo ocioso, escalada e retencao",
-    "14.": "Deteccao modular",
+    "1.": "Coletores",
+    "2.": "Coletores",
+    "2-B": "Interface",
+    "3.": "Coletores",
+    "4.": "Coletores",
+    "5.": "Servidor",
+    "6.": "Servidor",
+    "7.": "Agente",
+    "8.": "Interface",
+    "9.": "Servidor",
+    "10.": "Projeto",
+    "11.": "Projeto",
+    "12.": "Projeto",
+    "13.": "Agente",
+    "14.": "Coletores",
 }
 
 # Secoes que sao GAVETA DE PROCEDENCIA, nao tema: os itens delas sao
@@ -90,21 +97,11 @@ SECOES_PROCEDENCIA = ("0.", "15.")
 
 # Ordem de exibicao dos temas. Primeiro o que se olha mais.
 ORDEM_TEMA = [
-    "Interface, laudo e UX",
-    "Deteccao forense",
-    "Regras do laudo e do achado",
-    "Captura e instrumentacao (eBPF)",
-    "Frota e distribuido",
-    "Seguranca da propria ferramenta",
-    "Sustentacao operacional",
-    "Analise temporal e correlacao",
-    "Modo ocioso, escalada e retencao",
-    "Deteccao modular",
-    "Compliance, vulnerabilidade e inventario",
-    "Documentacao",
-    "Qualidade e verificacao",
-    "Empacotamento e distribuicao",
-    "Integracao e saida",
+    "Interface",
+    "Coletores",
+    "Agente",
+    "Servidor",
+    "Projeto",
     "Sem tema definido",
 ]
 
@@ -113,29 +110,25 @@ ORDEM_TEMA = [
 # especifico vem antes. Erro de classificacao aqui e visivel (o item aparece no
 # tema errado) e nao silencioso (o item some), que e a troca certa.
 TEMA_PALAVRAS = [
-    ("Empacotamento e distribuicao",
-     r"\brpm\b|pypi|\bobs\b|pacote|empacota|\.spec|release|versionamento|changelog"),
-    ("Qualidade e verificacao",
-     r"\bteste|pytest|flake8|pylint|\blint\b|\bci\b|cobertura|regress"),
-    ("Documentacao",
-     r"document|readme|roadmap|manual|diagrama|\buml\b|captura de tela|\.md\b|"
-     r"backlog|tabela de acompanhamento|gerador da tabela"),
-    ("Seguranca da propria ferramenta",
-     r"autentica|\bauth\b|\btls\b|https|certificad|\btoken\b|allowlist|senha|"
-     r"\bca\b|criptograf|custodia|assinatur"),
-    ("Interface, laudo e UX",
+    ("Projeto",
+     r"\brpm\b|pypi|\bobs\b|pacote|empacota|\.spec|release|versionamento|"
+     r"changelog|\bteste|pytest|flake8|pylint|\blint\b|\bci\b|cobertura|"
+     r"regress|document|readme|roadmap|manual|diagrama|\buml\b|"
+     r"captura de tela|\.md\b|backlog|tabela de acompanhamento"),
+    ("Interface",
      r"\btela|coluna|bot[ao]|\baba\b|arvore|[aá]rvore|badge|filtro|laudo|manager|"
      r"\bux\b|interface|icone|[íi]cone|legenda|tooltip|layout|dashboard|render|"
      r"emoji|navega|calend|exibi|clic|grafic|gr[áa]fic"),
-    ("Captura e instrumentacao (eBPF)",
+    ("Coletores",
      r"sonda|probe|ebpf|kprobe|tracepoint|co-re|libbpf|\bbcc\b|coleta|captur|"
-     r"kernel|rootkit|syscall"),
-    ("Frota e distribuido",
-     r"agente|servidor|frota|fila|comando|outbox|heartbeat|check.?in"),
-    ("Sustentacao operacional",
-     r"daemon|reten[cç]|limpeza|\blog\b|alerta|telegram|chaos|caos"),
-    ("Analise temporal e correlacao",
-     r"timeline|linha do tempo|correlac|correla[cç]|temporal"),
+     r"kernel|rootkit|syscall|finding|achado|deteccao|detec[cç]|correlac|"
+     r"correla[cç]|timeline|linha do tempo"),
+    ("Servidor",
+     r"servidor|ingest|dashboard|autentica|\bauth\b|\btls\b|https|certificad|"
+     r"\btoken\b|allowlist|senha|\bca\b|frota"),
+    ("Agente",
+     r"agente|daemon|outbox|heartbeat|check.?in|reten[cç]|limpeza|\blog\b|"
+     r"alerta|telegram|chaos|caos|fila|comando|ocioso"),
 ]
 
 # Bloco em negrito sem ID: o gerador era CEGO a isto ate 2026-08-20, e por isso

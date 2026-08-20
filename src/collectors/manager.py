@@ -22,11 +22,9 @@
 
 import os
 import re
-import time
 import logging
-from src.collectors.system_inventory import collect_full_inventory
 from src.collectors.persistence import collect_persistence
-from src.core.findings import sort_findings, dedupe_findings, summarize_by_severity
+from src.core.findings import sort_findings, dedupe_findings
 
 
 def summarize_metrics(processes):

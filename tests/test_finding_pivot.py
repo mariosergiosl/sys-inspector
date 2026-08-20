@@ -22,7 +22,6 @@
 # AUTHOR: Mario Luz (Sys-Inspector Project)
 # ==============================================================================
 
-import pytest
 
 from src.collectors.manager import correlate_findings_with_processes
 
