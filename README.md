@@ -102,25 +102,37 @@ Once installed, the command is available globally:
 
 Sys-Inspector is orchestrated via the `main.py` entry point (or globally as `sys-inspector`). It supports multiple execution modes.
 
-### 1. Local Live Mode (Recommended)
+The tool has a single path: an **agent** that collects and a **server** that
+receives and renders. For a single machine, install both on the same host.
 
-Starts the background collector daemon and the Fleet Web Dashboard simultaneously.
+### 1. Server (dashboard)
+
+Receives captures from the agents and serves the Fleet dashboard.
 
 ```bash
-    sudo sys-inspector --mode local-live
+    sudo sys-inspector --mode server
     # Access the dashboard at http://localhost:8080
 ```
 
-### 2. Snapshot Mode (Static Report)
+### 2. Agent (collector)
 
-Captures activity for a specific duration and generates a standalone HTML report.
+Collects, encrypts, stores and forwards to the server configured in
+`daemon.server_ip`.
 
 ```bash
-    sudo sys-inspector --mode snapshot --interval 20
-    # Output Example: report/sys-inspector_hostname_20260316_100000.html
+    sudo sys-inspector --mode daemon
 ```
 
-### 3. Custom Logo
+### 3. One-off run (no server)
+
+A single capture cycle, kept locally. This is the shortest way to try the tool:
+no keys to exchange, no token, no second process.
+
+```bash
+    sudo sys-inspector --mode daemon --once
+```
+
+### 4. Custom Logo
 
 To include your company logo in the report header, simply place a PNG file at the following path:
 
