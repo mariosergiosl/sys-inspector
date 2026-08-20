@@ -17,9 +17,12 @@
 # ==============================================================================
 
 import os
+import re
 import ssl
 import json
 import time
+import base64
+import hmac
 import threading
 import logging
 import datetime
@@ -38,6 +41,26 @@ from src.core.capabilities import missing_for_scenarios
 from src.core.events import EventStore, events_from_capture
 from src.core import risk
 from src.core.attack import describe, technique_url
+
+# ------------------------------------------------------------------------------
+# ALLOWLIST DE IDENTIFICADOR (C-140)
+# ------------------------------------------------------------------------------
+# Todo identificador que chega pela URL passa por aqui antes de virar consulta.
+#
+# Recuperado do web_controller removido em 2026-08-19 (commit 16d9d9d), onde
+# vivia com os testes de travessia de caminho e injecao. Ao remover aquele
+# controlador, a ferramenta ficou com o painel que NAO tinha a guarda: as rotas
+# do servidor pegavam o uuid com `self.path.split('/')[-1]` e usavam direto.
+#
+# E allowlist, e nao lista de proibidos, de proposito: um uuid legitimo cabe
+# inteiro em letras, digitos e hifen, entao qualquer coisa fora disso e recusada
+# sem precisar prever a proxima forma de escapar.
+SAFE_ID_PATTERN = re.compile(r'^[A-Za-z0-9\-]{1,64}$')
+
+
+def id_valido(valor):
+    """Se um identificador vindo da URL pode ser usado como chave de consulta."""
+    return bool(valor) and bool(SAFE_ID_PATTERN.match(str(valor)))
 from src.version import __version__
 from src.core.correlation import correlate
 from src.core.commands import CommandQueue, ALLOWED, STUCK_LIMIT
@@ -501,6 +524,14 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         controller = self.server.controller
 
+        # [C-139] O painel inteiro exige credencial quando a auth esta ligada.
+        # A guarda fica AQUI, antes do roteamento, e nao em cada rota: uma rota
+        # nova nasce protegida por omissao, em vez de nascer aberta ate alguem
+        # lembrar. Foi o desenho do controlador removido, e vale mante-lo.
+        if not self._painel_autorizado(controller):
+            self._pede_credencial()
+            return
+
         if self.path == '/':
             # --- DASHBOARD ---
             self._serve_dashboard(controller.db, controller.commands)
@@ -532,6 +563,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # /cmdclear/<uuid>: cancela TUDO que aguarda naquele agente. Nao
             # toca no que ja foi entregue; e o botao de recuperacao da fila.
             uuid_alvo = self.path.split('?')[0].strip('/').split('/')[-1]
+            if not id_valido(uuid_alvo):
+                self._recusa_id(uuid_alvo)
+                return
             try:
                 n = controller.commands.clear_pending(uuid_alvo,
                                                       requested_by="dashboard")
@@ -555,7 +589,18 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
         elif self.path.startswith('/priority/'):
             # /priority/<uuid>/<valor>: reposiciona um agente na fila.
+            # A validacao vem ANTES do teste de aridade, e nao dentro dele.
+            #
+            # Medido em 2026-08-20: com a guarda dentro do `len == 3`, um valor
+            # contendo barra (`/priority/<script>x</script>/5`) virava QUATRO
+            # segmentos e escapava da validacao inteira. Nao era explorável,
+            # porque nada e usado quando a aridade nao bate, mas deixava a
+            # protecao dependente do formato da URL: o proximo ramo que alguem
+            # acrescentar aqui nasceria sem validacao nenhuma.
             partes = self.path.strip('/').split('/')
+            if len(partes) >= 2 and not id_valido(partes[1]):
+                self._recusa_id(partes[1])
+                return
             if len(partes) == 3:
                 try:
                     controller.queue.set_priority(partes[1], int(partes[2]))
@@ -569,7 +614,11 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             return
 
         elif self.path.startswith('/history/'):
-            self._serve_history(controller, self.path.split('/')[-1])
+            alvo_hist = self.path.split('?')[0].split('/')[-1]
+            if not id_valido(alvo_hist):
+                self._recusa_id(alvo_hist)
+                return
+            self._serve_history(controller, alvo_hist)
 
         elif self.path.startswith('/diff/'):
             self._serve_diff(controller)
@@ -577,6 +626,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         elif self.path.startswith('/cmd/'):
             # /cmd/<acao>/<uuid>: o analista enfileira; nada e executado aqui.
             partes = self.path.strip('/').split('/')
+            if len(partes) == 3 and not id_valido(partes[2]):
+                self._recusa_id(partes[2])
+                return
             if len(partes) == 3 and partes[1] in ALLOWED:
                 try:
                     controller.commands.enqueue(partes[2], partes[1],
@@ -594,6 +646,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # --- VIEW AGENT SNAPSHOT ---
             caminho, _, consulta = self.path.partition("?")
             agent_uuid = caminho.split('/')[-1]
+            if not id_valido(agent_uuid):
+                self._recusa_id(agent_uuid)
+                return
             args = urlparse.parse_qs(consulta or "")
             # Captura ESPECIFICA pedida (?capture=<id>), ou a mais recente.
             #
@@ -727,6 +782,76 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         self._set_headers(status=status, content_type="application/json")
         self.wfile.write(json.dumps(payload).encode('utf-8'))
 
+    def _painel_autorizado(self, controller):
+        """
+        Basic Auth do painel (C-139), recuperado do web_controller removido.
+
+        Duas diferencas em relacao ao original, e as duas sao deliberadas:
+
+        - O original era um hook do Flask (`request.authorization`). Aqui o
+          servidor e BaseHTTPRequestHandler, entao o cabecalho e decodificado a
+          mao. Nao foi copia: foi reimplementacao do mesmo contrato.
+        - A comparacao do NOME de usuario usa hmac.compare_digest, e nao "==".
+          A comparacao curta vaza, pelo tempo, quantos caracteres iniciais
+          batem. Para a SENHA isso ja era tratado por check_password_hash; o
+          nome ficava de fora.
+
+        Devolve True quando pode seguir. Auth desligada devolve True (mantem o
+        comportamento aberto de quem nao configurou nada), e auth ligada SEM
+        hash devolve False: falha fechada, porque o operador pediu protecao.
+        """
+        if not controller.auth_enabled:
+            return True
+        if not controller.auth_hash:
+            return False
+
+        cabecalho = self.headers.get('Authorization', '') or ''
+        if not cabecalho.startswith('Basic '):
+            return False
+        try:
+            cru = base64.b64decode(cabecalho[6:].strip()).decode('utf-8', 'replace')
+        except Exception:
+            return False
+        usuario, _, senha = cru.partition(':')
+
+        if not hmac.compare_digest(str(usuario), str(controller.auth_user)):
+            return False
+        try:
+            from werkzeug.security import check_password_hash
+        except ImportError:
+            # Sem a biblioteca nao ha como conferir a senha. Recusar e a unica
+            # resposta honesta: seguir aberto entregaria a frota inteira.
+            controller.logger.error(
+                "[AUTH] werkzeug ausente: nao ha como conferir a senha, e o "
+                "painel esta RECUSANDO acesso.")
+            return False
+        return bool(check_password_hash(controller.auth_hash, senha))
+
+    def _pede_credencial(self):
+        """Resposta 401 com o desafio Basic."""
+        self.send_response(401)
+        self.send_header('WWW-Authenticate', 'Basic realm="Sys-Inspector"')
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Authentication required.")
+
+    def _recusa_id(self, valor):
+        """
+        Recusa um identificador que nao passou na allowlist (C-140).
+
+        Devolve 400 e NAO ecoa o valor recebido: repetir na resposta uma
+        entrada que ja se sabe hostil e como um XSS refletido nasce.
+        """
+        controller = self.server.controller
+        controller.logger.warning(
+            "[SEC] Identificador recusado em %s (%d caracteres)",
+            self.path.split('/')[1] if '/' in self.path[1:] else self.path,
+            len(str(valor or "")))
+        self.send_response(400)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Invalid identifier.")
+
     def _authorized(self, controller):
         """
         Confere o token compartilhado enviado pelo agente.
@@ -817,6 +942,15 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == '/upload':
+            # [SEC, 2026-08-20] Rota LEGADA (v0.60), e ate aqui a unica de
+            # ingestao que nao conferia token: qualquer um que alcancasse a
+            # porta podia injetar uma captura na base da frota, isto e,
+            # PLANTAR evidencia. Numa ferramenta forense isso e pior que ler
+            # sem autorizacao. Passa a exigir o mesmo Bearer das rotas novas.
+            # A remocao da rota esta registrada como item proprio.
+            if not self._authorized(controller):
+                self._reply({"status": "unauthorized"}, status=401)
+                return
             try:
                 content_len = int(self.headers.get('Content-Length', 0))
                 post_body = self.rfile.read(content_len)
@@ -2207,6 +2341,27 @@ class ServerController:
         if self.notifier.enabled:
             self.logger.info("[NOTIFY] Alerts enabled from severity %s",
                              self.notifier.min_severity)
+        # [C-139] Autenticacao do PAINEL, recuperada do web_controller removido
+        # em 2026-08-19. Ela protege o acesso humano; as rotas de ingestao
+        # continuam usando o token Bearer do agente, que e outra conversa.
+        auth_cfg = (rede.get('auth') or {})
+        self.auth_enabled = bool(auth_cfg.get('enabled', False))
+        self.auth_user = auth_cfg.get('username', 'admin')
+        self.auth_hash = auth_cfg.get('password_hash', '') or ''
+        if self.auth_enabled and not self.auth_hash:
+            # FALHA FECHADA. Sem hash nao ha como conferir senha alguma; seguir
+            # aberto seria pior que recusar, porque o operador PEDIU protecao e
+            # acreditaria estar protegido.
+            self.logger.error(
+                "[AUTH] network.auth.enabled esta ligado e nao ha "
+                "password_hash: o painel vai RECUSAR todo acesso. Gere o hash "
+                "com tools/gen_password.py.")
+        elif not self.auth_enabled:
+            self.logger.warning(
+                "[AUTH] Painel SEM autenticacao: quem alcancar a porta le a "
+                "coleta inteira da frota. Ligue network.auth para exigir "
+                "credencial.")
+
         self.ingest_token = (config.get('server', {}) or {}).get('auth_token', '') or ''
         if not self.ingest_token:
             self.logger.warning(
@@ -2274,13 +2429,26 @@ class ServerController:
         server = ThreadingHTTPServer(('0.0.0.0', port), ServerHTTPHandler)
         server.controller = self
 
-        # TLS opcional, desligado por padrao para nao quebrar instalacoes que
-        # ja apontam agentes para HTTP.
-        scheme = "http"
-        if bool(self.config.get('network', {}).get('tls_enabled', False)):
-            if self._wrap_tls(server):
-                scheme = "https"
-        self.scheme = scheme
+        # HTTPS e o UNICO transporte deste servidor (D-033). Nao existe ramo
+        # de texto claro: nem por configuracao, nem como degradacao quando o
+        # TLS falha.
+        #
+        # A degradacao silenciosa era o pior dos dois desfechos possiveis. O
+        # operador pede cifra, o servidor nao consegue ativar, cai para HTTP e
+        # segue servindo: a partir dai todos acreditam que a evidencia viaja
+        # protegida, e ela nao viaja. Um servidor que NAO SOBE e um problema
+        # visivel em trinta segundos; um que serve em claro acreditando-se
+        # cifrado pode durar meses.
+        if not self._wrap_tls(server):
+            self.logger.critical(
+                "[HTTPS] Nao foi possivel ativar TLS na porta %s. O servidor "
+                "NAO vai subir: esta ferramenta nao serve evidencia forense em "
+                "texto claro. Confira network.ssl_cert e network.ssl_key, ou "
+                "deixe os dois ausentes para que um par autoassinado seja "
+                "gerado automaticamente.", port)
+            server.server_close()
+            raise RuntimeError("TLS indisponivel: o servidor nao sobe em claro")
+        self.scheme = "https"
 
         t_server = threading.Thread(target=server.serve_forever)
         t_server.daemon = True
@@ -2351,8 +2519,8 @@ class ServerController:
         t_queue.daemon = True
         t_queue.start()
 
-        self.logger.info(f"[HTTP] Server Manager listening on port {port} ({scheme})")
-        self.logger.info(f"[INFO] Dashboard available at {scheme}://<server-ip>:{port}")
+        self.logger.info(f"[HTTPS] Server Manager listening on port {port}")
+        self.logger.info(f"[INFO] Dashboard available at https://<server-ip>:{port}")
 
         try:
             while not self.shutdown_event.is_set():

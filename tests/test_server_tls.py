@@ -28,13 +28,37 @@ def codigo():
     return io.open(FONTE, encoding="utf-8").read()
 
 
-def test_tls_is_opt_in(codigo):
+def test_nao_existe_caminho_de_texto_claro(codigo):
     """
-    TLS fica desligado por padrao: instalacoes existentes ja apontam agentes
-    para HTTP e nao podem parar de reportar por uma atualizacao.
+    [2026-08-20, D-033] INVERSAO DELIBERADA. Este teste dizia o contrario:
+    "TLS fica desligado por padrao, porque instalacoes existentes ja apontam
+    agentes para HTTP e nao podem parar de reportar por uma atualizacao".
+
+    O argumento era real e o custo dele era maior: o painel servia evidencia
+    forense em texto claro, e o agente entregava a captura junto do cabecalho
+    Authorization com o token de ingestao da frota. Compatibilidade nao paga
+    esse preco numa ferramenta forense.
+
+    A opcao nao foi invertida, foi REMOVIDA: sem ramo de texto claro no codigo,
+    nao ha configuracao errada possivel nem degradacao silenciosa depois.
     """
-    assert "tls_enabled" in codigo
-    assert "get('tls_enabled', False)" in codigo
+    assert "tls_enabled" not in codigo, (
+        "a opcao de desligar o TLS voltou ao servidor")
+    assert 'scheme = "http"' not in codigo
+    assert "https" in codigo
+
+
+def test_tls_indisponivel_derruba_o_servidor_em_vez_de_servir_em_claro(codigo):
+    """
+    O pior desfecho possivel nao e falhar, e falhar PARECENDO que deu certo.
+
+    Se o TLS nao pode ser ativado e o servidor cai para texto claro, todo mundo
+    passa a acreditar que a evidencia viaja protegida quando ela nao viaja. Um
+    servidor que nao sobe e um problema visivel em trinta segundos; um que serve
+    em claro acreditando-se cifrado pode durar meses.
+    """
+    assert "raise RuntimeError" in codigo
+    assert "nao sobe em claro" in codigo
 
 
 def test_socket_is_wrapped_server_side(codigo):
