@@ -102,6 +102,15 @@ usage() {
     exit 0
 }
 
+# NAME: version
+# DESCRIPTION: Prints the script version, read from the file header so that a
+#              single place declares it.
+# PARAMETER: None
+version() {
+    grep -m1 "^# VERSION:" "$0" | sed 's/^# VERSION:[[:space:]]*/chaos_maker.sh /'
+    exit 0
+}
+
 # NAME: check_root
 # DESCRIPTION: Verifies if the script is running with root privileges.
 # PARAMETER: None
@@ -288,9 +297,13 @@ cleanup() {
 # --------------------------------------------------------------------------------------
 
 trap cleanup SIGINT SIGTERM
-check_root
 
 # Argument Parsing
+#
+# check_root vem DEPOIS deste laco, e nao antes. Estando antes, --help e
+# --version exigiam sudo e saiam com codigo 1, o que quebra a regra de que todo
+# script responde a essas duas sem privilegio, e impedia a verificacao mais
+# barata de que a regua roda: chamar --help num host qualquer.
 if [[ $# -eq 0 ]]; then
     ALL_MODE=true
 fi
@@ -310,10 +323,15 @@ while [[ "$#" -gt 0 ]]; do
         --all) ALL_MODE=true ;;
         --duration) shift; DURATION="$1" ;;
         --help) usage ;;
+        --version) version ;;
         *) log_msg "ERR" "Unknown parameter passed: $1"; exit 1 ;;
     esac
     shift
 done
+
+# So aqui: as opcoes informativas acima ja sairam, e o que resta plantar
+# artefato no host, o que de fato exige privilegio.
+check_root
 
 if [ "$ALL_MODE" = "true" ]; then
     ENABLE_NET=true; ENABLE_FW=true; ENABLE_DISK=true; ENABLE_PROC=true

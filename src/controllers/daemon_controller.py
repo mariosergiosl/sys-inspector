@@ -383,19 +383,56 @@ class DaemonController:
 
         # stdout num arquivo (nao DEVNULL) para poder esperar o marcador de
         # pronto sem bloquear o processo do chaos, que segue escrevendo la.
-        subprocess.Popen(["/bin/bash", script, "--all", "--duration", duracao],
-                         stdout=log_fh, stderr=subprocess.STDOUT,
-                         start_new_session=True, env=ambiente)
+        processo = subprocess.Popen(
+            ["/bin/bash", script, "--all", "--duration", duracao],
+            stdout=log_fh, stderr=subprocess.STDOUT,
+            start_new_session=True, env=ambiente)
         try:
             log_fh.close()
         except OSError:
             pass
 
-        pronto = self._esperar_chaos_pronto(log_path, self.CHAOS_SETUP_TIMEOUT)
-        estado = "pronto para captura" if pronto else \
-            "setup nao confirmado em %ss (capturando mesmo assim)" \
-            % self.CHAOS_SETUP_TIMEOUT
-        return "chaos rodando por %ss; %s (log %s)" % (duracao, estado, log_path)
+        pronto = self._esperar_chaos_pronto(log_path, self.CHAOS_SETUP_TIMEOUT,
+                                            processo)
+        if pronto:
+            return "chaos rodando por %ss; pronto para captura (log %s)" % (
+                duracao, log_path)
+
+        # O cenario NAO subiu. Ate 2026-08-20 este caminho respondia
+        # "capturando mesmo assim", e essa frase custou caro: o chaos_maker
+        # estava com CRLF e morria no primeiro `{`, sem rodar UMA linha. O
+        # comando dizia sucesso parcial, a captura vinha vazia, e a leitura
+        # obvia era "a ferramenta nao detecta" quando a verdade era "a cena
+        # nunca existiu". Capturar o nada e pior que nao capturar: produz uma
+        # captura de aparencia normal que nega deteccao que funciona.
+        rabo = self._final_do_log(log_path)
+        if processo.poll() is not None:
+            raise RuntimeError(
+                "chaos_maker terminou com codigo %s antes de montar o cenario; "
+                "nada foi plantado e a captura nao vale. Log %s: %s"
+                % (processo.returncode, log_path, rabo))
+        raise RuntimeError(
+            "chaos_maker nao confirmou o cenario em %ss e segue rodando; "
+            "a captura nao vale porque a cena pode estar pela metade. "
+            "Log %s: %s" % (self.CHAOS_SETUP_TIMEOUT, log_path, rabo))
+
+    @staticmethod
+    def _final_do_log(log_path, limite=400):
+        """
+        Ultimas linhas do log da rodada, para o erro DIZER o que aconteceu.
+
+        Sem isto o operador recebe "o cenario nao subiu" e precisa entrar no
+        host para descobrir por que. Com o final do log, a mensagem na tela ja
+        traz o erro de sintaxe, o pacote que faltou ou a permissao negada.
+        """
+        try:
+            with open(log_path, "r", errors="replace") as fh:
+                texto = fh.read().strip()
+        except OSError as exc:
+            return "log ilegivel (%s)" % exc
+        if not texto:
+            return "log vazio (o script nao chegou a escrever nada)"
+        return texto[-limite:].replace("\n", " | ")
 
     # Quantos logs de rodada guardar. Servem para o operador entender depois o
     # que aconteceu; guardar todos encheria /tmp num host que roda cenario com
@@ -416,14 +453,21 @@ class DaemonController:
         except Exception as exc:
             self.logger.debug("[CMD] Could not rotate chaos logs: %s", exc)
 
-    def _esperar_chaos_pronto(self, log_path, timeout):
+    def _esperar_chaos_pronto(self, log_path, timeout, processo=None):
         """
         Espera o chaos_maker imprimir o marcador de pronto, com teto de tempo.
 
         Le o arquivo de log em vez de consumir o stdout do processo, para nao
-        arriscar um SIGPIPE que interromperia o cenario. Retorna True se o
-        marcador apareceu, False no timeout (a captura ainda ocorre, para o
-        comando nunca ficar sem desfecho).
+        arriscar um SIGPIPE que interromperia o cenario.
+
+        PARAMETER processo: o Popen do chaos, quando disponivel. Serve para
+                  DESISTIR CEDO: um script que morre no primeiro segundo (erro
+                  de sintaxe, dependencia ausente, permissao) nunca vai imprimir
+                  o marcador, e esperar o timeout inteiro por ele apenas atrasa
+                  a ma noticia. Ainda assim o log e relido depois que o processo
+                  morre, porque um cenario pode montar tudo, imprimir o marcador
+                  e so entao terminar: sem essa releitura, uma rodada boa e curta
+                  seria declarada falha.
         """
         import time
 
@@ -431,14 +475,20 @@ class DaemonController:
         while time.time() < fim:
             if self.shutdown_event.is_set():
                 return False
-            try:
-                with open(log_path, "r", errors="replace") as fh:
-                    if self.CHAOS_READY_MARK in fh.read():
-                        return True
-            except OSError:
-                pass
+            if self._log_tem_marcador(log_path):
+                return True
+            if processo is not None and processo.poll() is not None:
+                return self._log_tem_marcador(log_path)
             time.sleep(0.5)
-        return False
+        return self._log_tem_marcador(log_path)
+
+    def _log_tem_marcador(self, log_path):
+        """Se o marcador de cenario pronto ja apareceu no log da rodada."""
+        try:
+            with open(log_path, "r", errors="replace") as fh:
+                return self.CHAOS_READY_MARK in fh.read()
+        except OSError:
+            return False
 
     def collect_and_store(self, engine, cycle_id):
         """
