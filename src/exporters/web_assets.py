@@ -566,7 +566,6 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
 JS_BLOCK = r"""
     // --- STATE MANAGEMENT ---
     var state = {
-        isLive: false,
         expandedPids: new Set(),
         detailsOpenPids: new Set(),
         currentFilter: "",
@@ -665,44 +664,6 @@ JS_BLOCK = r"""
         // [UI] Highlight the active filter badge (single active filter at a time)
         document.querySelectorAll(".filter-btn").forEach(function(b){ b.classList.remove("active"); });
         if (el) el.classList.add("active");
-    }
-
-    // --- LIVE MODE LOGIC ---
-    function updateTableContent(newHtml) {
-        var tbody = document.querySelector(".table-container tbody");
-        if(tbody) {
-            tbody.innerHTML = newHtml;
-            restoreTreeState();
-        }
-        var banner = document.getElementById('live-banner-ts');
-        if(banner) banner.innerText = new Date().toLocaleTimeString();
-    }
-
-    async function startLiveMode() {
-        if(state.isLive) return;
-        state.isLive = true;
-        console.log("Starting Live Updates...");
-
-        // Create Banner safely if not exists
-        if(!document.getElementById('live-banner')) {
-            var div = document.createElement('div');
-            div.id = 'live-banner';
-            div.style.cssText = 'background:#004400; color:#fff; padding:5px; text-align:center; font-weight:bold; border-bottom:1px solid #0f0; position:sticky; top:0; z-index:2000;';
-            div.innerHTML = '🟢 LIVE MODE ACTIVE | Auto-Update (5s) | Last: <span id="live-banner-ts">Just now</span>';
-            document.body.prepend(div);
-        }
-
-        setInterval(async () => {
-            try {
-                const response = await fetch('/live_update');
-                if (response.ok) {
-                    const newRows = await response.text();
-                    updateTableContent(newRows);
-                }
-            } catch (e) {
-                console.error("Live Update Failed:", e);
-            }
-        }, 5000);
     }
 
     // --- UTILS ---

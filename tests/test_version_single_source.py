@@ -32,26 +32,18 @@ def test_single_source_matches_spec():
     assert ("Version:        %s" % __version__) in spec
 
 
-def test_live_web_ui_reads_version_from_source():
-    """O modo Live nao pode hardcodar a versao (era '0.90 (Live)')."""
-    s = _src("src/controllers/web_controller.py")
+# [2026-08-19, C-134] Existiam aqui tres testes cobrindo a versao no
+# web_controller, no live_controller e no snapshot_controller. Os tres arquivos
+# foram removidos junto com os modos snapshot, live e local-live, e por isso os
+# testes sairam: eles cobriam codigo que deixou de existir, nao uma regra que
+# deixou de valer. A mesma regra continua coberta para o servidor e para a
+# custodia, logo abaixo.
+
+
+def test_server_report_reads_version_from_source():
+    """O laudo do servidor, que e o que sobrou, nao pode hardcodar versao."""
+    s = _src("src/controllers/server_controller.py")
     assert "from src.version import __version__" in s
-    assert '"0.90 (Live)"' not in s
-    assert "__version__" in s
-
-
-def test_live_report_reads_version_from_source():
-    """O laudo do modo live nao pode ficar preso em '0.61.00'."""
-    s = _src("src/controllers/live_controller.py")
-    assert "from src.version import __version__" in s
-    assert '"0.61.00"' not in s
-
-
-def test_snapshot_report_reads_version_from_source():
-    """O laudo do snapshot nao pode hardcodar '0.90 (Snapshot)'."""
-    s = _src("src/controllers/snapshot_controller.py")
-    assert "from src.version import __version__" in s
-    assert '"0.90 (Snapshot)"' not in s
 
 
 def test_custody_stamps_version_from_source():

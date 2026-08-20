@@ -1,12 +1,18 @@
 # -*- coding: utf-8 -*-
 # ==============================================================================
 # FILE: main.py
-# USAGE: python3 main.py --mode [snapshot|live|daemon|server|local-live] [OPTIONS]
+# USAGE: python3 main.py --mode [daemon|server] [OPTIONS]
 #        If no options provided, settings are loaded from conf/config.yaml
 #
-# DESCRIPTION: Master Entry Point for Sys-Inspector v0.90.
-#              Orchestrates Snapshot, Daemon, Server, and Local-Live modes.
-#              Includes auto-setup for critical dependencies.
+# DESCRIPTION: Master Entry Point for Sys-Inspector.
+#              Orchestrates the two modes that remain: daemon (the agent that
+#              collects) and server (the one that receives and renders).
+#
+#              [2026-08-19, C-134] Os modos snapshot, live e local-live foram
+#              REMOVIDOS. Eram tres implementacoes paralelas do mesmo ato de
+#              coletar, e elas divergiram em silencio (ver C-132). O caso de uso
+#              local passa a ser agente e servidor na MESMA maquina, e o uso
+#              pontual continua cabendo em uma linha, com --once.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
 # VERSION: v0.91.0
@@ -126,11 +132,8 @@ def main():
         ModuleNotFoundError cru que nao diz ao operador o que instalar.
         """
         controllers = {
-            'snapshot': ('src.controllers.snapshot_controller', 'SnapshotController'),
-            'live': ('src.controllers.live_controller', 'LiveController'),
             'daemon': ('src.controllers.daemon_controller', 'DaemonController'),
             'server': ('src.controllers.server_controller', 'ServerController'),
-            'web': ('src.controllers.web_controller', 'WebController'),
         }
         module_path, class_name = controllers[mode_name]
         try:
@@ -152,7 +155,7 @@ def main():
     parser = argparse.ArgumentParser(description="Sys-Inspector v0.80 Agent")
 
     # NOTE: default=None ensures we don't override config.yaml if flag is missing
-    parser.add_argument("--mode", choices=['snapshot', 'live', 'daemon', 'server', 'local-live'],
+    parser.add_argument("--mode", choices=['daemon', 'server'],
                         default=None, help="Execution mode (Overrules config.yaml)")
 
     parser.add_argument("--config", default="conf/config.yaml",
@@ -283,63 +286,11 @@ def main():
     try:
         mode = config['general']['mode']
 
-        if mode == 'snapshot':
-            # v0.70 Snapshot Logic (Secure Store-and-Forward)
-            duration = args.interval if args.interval else config['snapshot'].get('duration', 30)
-            logging.info(f"[START] Starting Snapshot Mode ({duration}s)...")
-
-            ctrl = load_controller('snapshot')(config, db)
-            ctrl.run(duration=duration)
-
-        elif mode == 'live':
-            # v0.60 Legacy Live Mode (Terminal UI)
-            logging.warning("[COMPAT] Starting Legacy Live Mode.")
-            ctrl = load_controller('live')(config, db, SHUTDOWN_EVENT)
-            ctrl.run()
-
-        elif mode == 'daemon':
-            # v0.80 Daemon Mode (Universal Collector)
+        if mode == 'daemon':
+            # O agente. Coleta, cifra, guarda e entrega ao servidor.
             logging.info("[START] Starting Daemon Mode (Background Collector)...")
             ctrl = load_controller('daemon')(config, db, SHUTDOWN_EVENT)
             ctrl.run()  # This enters the efficient infinite loop
-
-        elif mode == 'local-live':
-            # v0.80 Local-Live Mode (Daemon + Web Interface)
-            logging.info("[START] Starting Local-Live Mode (Daemon + Web)...")
-
-            # 1. Start Daemon in a separate thread (Producer)
-            daemon_ctrl = load_controller('daemon')(config, db, SHUTDOWN_EVENT)
-            daemon_thread = threading.Thread(target=daemon_ctrl.run, name="DaemonThread")
-            daemon_thread.daemon = True  # Ensure it dies if main thread dies hard
-            daemon_thread.start()
-
-            # 2. Start Web Interface (Consumer) - Thread Daemonized
-            try:
-                web_ctrl = load_controller('web')(config, db)
-                web_thread = threading.Thread(target=web_ctrl.run, name="WebThread")
-                web_thread.daemon = True
-                web_thread.start()
-                logging.info("[WEB] Web Interface running in background.")
-            except Exception as e:
-                logging.error(f"[WEB] Failed to start Web UI: {e}")
-                SHUTDOWN_EVENT.set()
-
-            logging.info("[INFO] Use Ctrl+C to stop both Daemon and Web.")
-
-            # 3. Main Loop (Just waits for Ctrl+C)
-            while not SHUTDOWN_EVENT.is_set():
-                time.sleep(0.5)
-
-            # 4. Graceful Shutdown Sequence
-            logging.info("[STOP] Stopping services...")
-
-            # Wait for daemon to finish current cycle (max 5s wait)
-            if daemon_thread.is_alive():
-                daemon_thread.join(timeout=5)
-
-            logging.info("[STOP] Daemon stopped. Killing Web Server...")
-            # We don't join web_thread because Flask is blocking.
-            # Instead, we fall through to 'finally' and force exit.
 
         elif mode == 'server':
             # v0.60 Legacy Server Mode (being refactored)
@@ -349,7 +300,7 @@ def main():
 
         else:
             logging.error(f"Unknown mode: {mode}")
-            print("Usage: python3 main.py --mode [snapshot|live|daemon|server|local-live]")
+            print("Usage: python3 main.py --mode [daemon|server]")
             sys.exit(1)
 
     except Exception as e:

@@ -24,14 +24,14 @@ import pytest
 from src.exporters.web_assets import HTML_TEMPLATE, JS_BLOCK
 
 SERVER = os.path.join("src", "controllers", "server_controller.py")
-LIVE = os.path.join("src", "controllers", "live_controller.py")
+# [2026-08-19, C-134] live_controller.py saiu junto com os modos removidos. A
+# guarda continua valendo para o servidor, que e quem renderiza o laudo agora.
 
 
 @pytest.fixture(scope="module")
 def fontes():
     return {
         "server": io.open(SERVER, encoding="utf-8").read(),
-        "live": io.open(LIVE, encoding="utf-8").read(),
     }
 
 

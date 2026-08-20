@@ -5,11 +5,15 @@
 #              and Collection Intervals.
 #
 # USAGE:
-#   - For SNAPSHOT mode: Set 'mode: snapshot'
-#   - For LIVE mode:     Set 'mode: live' and configure 'network.bind_port'
-#   - For DAEMON mode:   Set 'mode: daemon' (Universal Collector v0.80)
-#   - For SERVER mode:   Set 'mode: server' and configure 'network.bind_port'
-#   - For LOCAL-LIVE:    Set 'mode: local-live' (Daemon + WebUI)
+#   - AGENT:  set 'mode: daemon' and point daemon.server_ip at the server
+#   - SERVER: set 'mode: server' and configure 'network.bind_port'
+#
+#   For a single machine, install BOTH: the agent collects and the server
+#   receives, on the same host.
+#
+#   [2026-08-19, C-134] The snapshot, live and local-live modes were REMOVED.
+#   They were three parallel implementations of the same collection routine and
+#   they silently drifted apart.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
 # VERSION: 0.80.00 (Updated from 0.70.01)
@@ -19,10 +23,10 @@
 # 1. GENERAL SETTINGS
 # ------------------------------------------------------------------------------
 general:
-  # Execution Mode. Options: [snapshot, live, daemon, server, local-live]
-  # Default: snapshot (Runs once, saves DB, generates HTML, exits)
-  # CHANGED v0.80: Set to 'daemon' for continuous local collection testing
-  mode: "local-live"
+  # Execution Mode. Options: [daemon, server]
+  #   daemon: the agent. Collects, encrypts, stores and forwards.
+  #   server: receives from the agents and renders the report.
+  mode: "daemon"
 
   # Logging Verbosity. Options: [DEBUG, INFO, WARN, ERROR]
   log_level: "INFO"
