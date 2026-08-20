@@ -48,6 +48,7 @@
 # ==============================================================================
 
 import os
+import stat
 import time
 import base64
 import hashlib
@@ -81,6 +82,54 @@ PADRAO = {
 NAO_LIGADA = "aquisicao desligada na configuracao deste agente"
 SEM_ORCAMENTO = "orcamento de aquisicao da captura esgotado"
 ILEGIVEL = "objeto nao pode ser lido pelo agente"
+# Motivo PROPRIO, e nao ILEGIVEL: "o alvo nao e um arquivo comum" e uma resposta
+# diferente de "nao consegui ler". A primeira diz que nao havia amostra a
+# preservar; a segunda diz que havia e a leitura falhou. O laudo precisa
+# distinguir as duas (D-020).
+NAO_E_ARQUIVO_COMUM = "o alvo existe mas nao e um arquivo comum"
+
+# O_NONBLOCK nao existe no Windows. Ausente, vale zero e a guarda de tipo
+# continua valendo -- ela e a defesa principal; o sinalizador e a segunda.
+_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+
+
+class ObjetoNaoRegular(OSError):
+    """O alvo existe, foi aberto, e nao e um arquivo comum."""
+
+
+def _abre_regular(caminho):
+    """
+    Abre um arquivo COMUM para leitura, sem risco de pendurar o agente.
+
+    Duas guardas, necessarias por motivos diferentes:
+
+    - S_ISREG: FIFO, socket e dispositivo nao sao amostra de coisa alguma, e
+      abrir um FIFO sem escritor BLOQUEIA INDEFINIDAMENTE. O caminho chega aqui,
+      em todos os chamadores, de conteudo escrito pelo ATACANTE: o coletor de
+      rootkit le /etc/ld.so.preload (cujo conteudo hostil e a premissa do
+      proprio achado) e a forense de memoria le caminhos de /proc/PID/maps.
+      Sem esta guarda, um `mkfifo /tmp/x` mais uma linha no ld.so.preload
+      desligam o agente: ele trava no meio da captura, para de coletar e para de
+      entregar. E o agente que emudece da D-015, causado pelo proprio detector,
+      que e o pior desfecho possivel -- a ferramenta vira o vetor.
+
+    - O_NONBLOCK: fecha a corrida entre conferir e abrir. Entre o stat e o open
+      o atacante pode trocar o arquivo comum por um FIFO; com o sinalizador a
+      abertura retorna na hora em vez de pendurar.
+
+    A conferencia de tipo e refeita no DESCRITOR ja aberto (fstat), e nao apenas
+    no caminho, porque e o descritor que sera lido -- conferir o caminho e ler
+    outra coisa e exatamente a brecha que a corrida acima explora.
+    """
+    fd = os.open(caminho, os.O_RDONLY | _O_NONBLOCK)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ObjetoNaoRegular(caminho)
+    except Exception:
+        os.close(fd)
+        raise
+    return os.fdopen(fd, "rb"), st
 
 
 def _config_de(config):
@@ -197,13 +246,28 @@ class Acquirer(object):
             return self._sem_aquisicao(ILEGIVEL, {"error": str(exc),
                                                   "path": caminho})
 
+        # Guarda de TIPO antes de qualquer abertura. Ver _abre_regular: o
+        # caminho vem de conteudo escrito pelo atacante, e um FIFO aqui pendura
+        # o agente para sempre. Recusar cedo evita ate o custo de abrir.
+        if not stat.S_ISREG(st.st_mode):
+            return self._sem_aquisicao(NAO_E_ARQUIVO_COMUM,
+                                       {"path": caminho,
+                                        "mode": oct(st.st_mode & 0o170000)})
+
         disponivel = self._orcamento_disponivel()
         if disponivel <= 0:
             return self._sem_aquisicao(SEM_ORCAMENTO, {"path": caminho})
 
         try:
-            with open(caminho, "rb") as fh:
+            fh, st = _abre_regular(caminho)
+            try:
                 sha, escopo, recorte, lidos = self._digere(fh.read, st.st_size)
+            finally:
+                fh.close()
+        except ObjetoNaoRegular:
+            # O alvo trocou de tipo entre o stat e a abertura: a corrida existe,
+            # e o descritor ja aberto foi quem disse a verdade.
+            return self._sem_aquisicao(NAO_E_ARQUIVO_COMUM, {"path": caminho})
         except (IOError, OSError) as exc:
             return self._sem_aquisicao(ILEGIVEL, {"error": str(exc),
                                                   "path": caminho})
@@ -235,17 +299,24 @@ class Acquirer(object):
                 self.cfg["dir"], "%s-%s" % (sha[:16],
                                             os.path.basename(caminho) or "obj"))
             try:
-                with open(caminho, "rb") as origem:
+                # A copia reabre o alvo, entao repete a guarda: entre a leitura
+                # do hash e esta linha o atacante teve outra janela para trocar
+                # o arquivo por um FIFO.
+                origem, _st_copia = _abre_regular(caminho)
+                try:
                     with open(destino, "wb") as saida:
                         saida.write(origem.read(int(self.cfg["copy_max_bytes"])))
+                finally:
+                    origem.close()
                 os.chmod(destino, 0o400)
                 custodia["level"] = CUSTODY_FULL
                 custodia["copy_path"] = destino
                 self.gasto += st.st_size
             except (IOError, OSError) as exc:
-                # A copia falhar NAO invalida a aquisicao: o hash e o recorte ja
-                # estao em maos. Mas nao pode passar em silencio, senao o laudo
-                # promete uma copia que nao existe.
+                # ObjetoNaoRegular herda de OSError e cai aqui de proposito: a
+                # copia falhar NAO invalida a aquisicao, porque o hash e o
+                # recorte ja estao em maos. Mas nao pode passar em silencio,
+                # senao o laudo promete uma copia que nao existe.
                 LOG.error("[ACQ] Copia de %s falhou: %s", caminho, exc)
                 custodia["copy_error"] = str(exc)
 

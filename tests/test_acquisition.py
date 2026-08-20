@@ -25,11 +25,12 @@
 import hashlib
 import io
 import os
+import threading
 
 import pytest
 
 from src.core.acquisition import (Acquirer, PADRAO, NAO_LIGADA, SEM_ORCAMENTO,
-                                  ILEGIVEL)
+                                  ILEGIVEL, NAO_E_ARQUIVO_COMUM)
 from src.core.findings import CUSTODY_NONE, CUSTODY_HASH, CUSTODY_FULL
 
 
@@ -281,3 +282,158 @@ def test_regiao_ilegivel_devolve_o_motivo_em_vez_de_excecao():
     r = a.acquire_memory_region(os.getpid(), "7ffffffff000", "7ffffffff100")
     assert r["acquired"] is False
     assert r["reason"] == ILEGIVEL
+
+
+# ------------------------------------------------------------------------------
+# GUARDA DE TIPO: O FIFO QUE DESLIGA O AGENTE
+# ------------------------------------------------------------------------------
+# Achado em revisao, 2026-08-19. Nao e um caso de borda: o caminho que chega a
+# acquire_file vem, em TODOS os chamadores, de conteudo escrito pelo atacante --
+# /etc/ld.so.preload no coletor de rootkit, e /proc/PID/maps na forense de
+# memoria. Um `mkfifo /tmp/x` mais uma linha no ld.so.preload penduravam o
+# agente para sempre no meio da captura: ele parava de coletar e de entregar,
+# sem morrer. E o agente que emudece da D-015, causado pelo proprio detector.
+# ------------------------------------------------------------------------------
+LINUX = hasattr(os, "mkfifo")
+
+
+def _com_prazo(segundos, funcao, *args, **kwargs):
+    """
+    Roda `funcao` numa thread e cobra que ela TERMINE dentro do prazo.
+
+    Existe porque o defeito que estes testes guardam nao levanta excecao nem
+    devolve valor errado: ele simplesmente NAO VOLTA. Sem prazo, um teste que
+    trava e indistinguivel de um teste lento, e a suite inteira pendura em vez
+    de acusar.
+    """
+    resultado = {}
+
+    def alvo():
+        try:
+            resultado["valor"] = funcao(*args, **kwargs)
+        except Exception as exc:            # pragma: no cover - so em falha
+            resultado["erro"] = exc
+
+    t = threading.Thread(target=alvo)
+    t.daemon = True                          # nao segura o interpretador
+    t.start()
+    t.join(segundos)
+    assert not t.is_alive(), (
+        "acquire_file NAO retornou em %ss: o agente ficaria pendurado aqui, "
+        "que e exatamente o defeito que este teste guarda" % segundos)
+    if "erro" in resultado:
+        raise resultado["erro"]
+    return resultado["valor"]
+
+
+@pytest.mark.skipif(not LINUX, reason="os.mkfifo nao existe no Windows")
+def test_fifo_no_lugar_do_artefato_nao_pendura_o_agente(tmpdir):
+    """
+    O teste central do defeito. Um FIFO SEM ESCRITOR faz open() bloquear
+    indefinidamente; aqui se cobra que a aquisicao volte, e volte dizendo o
+    motivo certo.
+    """
+    fifo = os.path.join(str(tmpdir), "armadilha.so")
+    os.mkfifo(fifo)
+    a = Acquirer(_cfg(dir=os.path.join(str(tmpdir), "acq")))
+
+    r = _com_prazo(10, a.acquire_file, fifo)
+
+    assert r["acquired"] is False
+    assert r["reason"] == NAO_E_ARQUIVO_COMUM
+    assert r["level"] == CUSTODY_NONE
+
+
+@pytest.mark.skipif(not LINUX, reason="os.mkfifo nao existe no Windows")
+def test_o_motivo_do_fifo_nao_se_confunde_com_falha_de_leitura(tmpdir):
+    """
+    D-020 aplicada ao campo `reason`: "nao e arquivo comum" diz que NAO HAVIA
+    amostra a preservar; "nao consegui ler" diz que havia e a leitura falhou.
+    Reaproveitar ILEGIVEL faria o laudo confundir as duas.
+    """
+    fifo = os.path.join(str(tmpdir), "f.so")
+    os.mkfifo(fifo)
+    a = Acquirer(_cfg(dir=os.path.join(str(tmpdir), "acq")))
+
+    r = _com_prazo(10, a.acquire_file, fifo)
+    inexistente = a.acquire_file(os.path.join(str(tmpdir), "nunca-existiu"))
+
+    assert r["reason"] != inexistente["reason"]
+    assert inexistente["reason"] == ILEGIVEL
+
+
+def test_diretorio_no_lugar_do_artefato_e_recusado(tmpdir):
+    """Diretorio existe e nao e amostra. Vale nas duas plataformas."""
+    a = Acquirer(_cfg(dir=os.path.join(str(tmpdir), "acq")))
+    r = a.acquire_file(str(tmpdir))
+    assert r["acquired"] is False
+    assert r["reason"] == NAO_E_ARQUIVO_COMUM
+
+
+@pytest.mark.skipif(not os.path.exists("/dev/null"),
+                    reason="exige /dev/null (Linux)")
+def test_dispositivo_no_lugar_do_artefato_e_recusado():
+    """
+    /dev/null e legivel e devolveria hash de conteudo vazio, que entraria no
+    laudo como se fosse a amostra. Recusar e mais honesto do que preservar
+    nada e chamar de custodia.
+    """
+    a = Acquirer(_cfg(dir="/tmp/sys-inspector-test-acq"))
+    r = a.acquire_file("/dev/null")
+    assert r["acquired"] is False
+    assert r["reason"] == NAO_E_ARQUIVO_COMUM
+
+
+@pytest.mark.skipif(not LINUX, reason="os.mkfifo nao existe no Windows")
+def test_fifo_pelo_caminho_do_coletor_de_rootkit(tmpdir):
+    """
+    Prova a cadeia INTEIRA, e nao so a funcao isolada: o coletor de rootkit le
+    /etc/ld.so.preload, e o conteudo desse arquivo e escrito pelo atacante. Com
+    a arvore sintetica apontando para um FIFO, collect_rootkit tem que terminar.
+    """
+    from src.collectors.rootkit import collect_rootkit
+
+    fifo = os.path.join(str(tmpdir), "rootkit.so")
+    os.mkfifo(fifo)
+    raiz = str(tmpdir.mkdir("host"))
+    for sub in ("proc", "etc"):
+        os.makedirs(os.path.join(raiz, sub))
+    with io.open(os.path.join(raiz, "proc", "stat"), "w") as fh:
+        fh.write(u"btime 1700000000\n")
+    with io.open(os.path.join(raiz, "proc", "modules"), "w") as fh:
+        fh.write(u"")
+    with io.open(os.path.join(raiz, "etc", "ld.so.preload"), "w") as fh:
+        fh.write(u"%s\n" % fifo)
+
+    a = Acquirer(_cfg(dir=os.path.join(str(tmpdir), "acq")))
+    achados = _com_prazo(15, collect_rootkit, raiz, 1700000100, a)
+
+    assert any(f.technique == "T1574.006" for f in achados), (
+        "o achado do preload tem que continuar aparecendo: a guarda protege o "
+        "agente, nao esconde a deteccao")
+
+
+# ------------------------------------------------------------------------------
+# REGRESSAO: ARQUIVO COMUM NAO PODE TER MUDADO NADA
+# ------------------------------------------------------------------------------
+def test_arquivo_comum_continua_adquirindo_exatamente_igual(tmpdir):
+    """
+    A guarda nao pode ter custado nada ao caso normal: mesmo hash, mesmo
+    escopo, mesmo recorte, mesma copia.
+    """
+    conteudo = b"\x7fELF" + os.urandom(3000)
+    alvo = _arquivo(tmpdir, "amostra.bin", conteudo)
+    a = Acquirer(_cfg(dir=os.path.join(str(tmpdir), "acq"), excerpt_bytes=256,
+                      copy_max_bytes=8192))
+
+    r = a.acquire_file(alvo)
+
+    assert r["acquired"] is True
+    assert r["level"] == CUSTODY_FULL
+    assert r["sha256"] == hashlib.sha256(conteudo).hexdigest()
+    assert r["hash_scope"] == "full"
+    assert r["excerpt_bytes"] == 256
+    assert r["truncated"] is True
+    assert r["size"] == len(conteudo)
+    with io.open(r["copy_path"], "rb") as fh:
+        assert fh.read() == conteudo
