@@ -161,6 +161,14 @@ def main():
     parser.add_argument("--config", default="conf/config.yaml",
                         help="Path to configuration file")
 
+    # [C-134] Preserva o primeiro uso em UMA LINHA, que era o que o modo
+    # snapshot oferecia. Nao e um modo novo: e o mesmo agente, parando apos um
+    # ciclo. Sem server_ip e sem token, o Outbox ja fica desligado sozinho e a
+    # captura fica guardada localmente.
+    parser.add_argument("--once", action="store_true",
+                        help="Run a single collection cycle and exit "
+                             "(daemon mode only)")
+
     parser.add_argument("--interval", type=int, default=None,
                         help="Collection duration/interval override (seconds)")
 
@@ -288,11 +296,17 @@ def main():
 
         if mode == 'daemon':
             # O agente. Coleta, cifra, guarda e entrega ao servidor.
-            logging.info("[START] Starting Daemon Mode (Background Collector)...")
-            ctrl = load_controller('daemon')(config, db, SHUTDOWN_EVENT)
-            ctrl.run()  # This enters the efficient infinite loop
+            if args.once:
+                logging.info("[START] Starting Daemon Mode (single cycle)...")
+            else:
+                logging.info("[START] Starting Daemon Mode (Background Collector)...")
+            ctrl = load_controller('daemon')(config, db, SHUTDOWN_EVENT,
+                                             run_once=args.once)
+            ctrl.run()  # Loops until shutdown, or returns after one cycle
 
         elif mode == 'server':
+            if args.once:
+                logging.warning("[ARGS] --once so vale no modo daemon; ignorado.")
             # v0.60 Legacy Server Mode (being refactored)
             logging.warning("[BETA] Server Mode logic is being refactored for v0.80.")
             ctrl = load_controller('server')(config, db, SHUTDOWN_EVENT)

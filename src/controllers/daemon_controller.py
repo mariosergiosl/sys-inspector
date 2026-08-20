@@ -36,7 +36,7 @@ from src.core.executed import ExecutionLedger
 
 
 class DaemonController:
-    def __init__(self, config, db_manager, shutdown_event):
+    def __init__(self, config, db_manager, shutdown_event, run_once=False):
         """
         Initialize the Daemon Controller.
 
@@ -44,7 +44,16 @@ class DaemonController:
             config (dict): Configuration dictionary.
             db_manager (DatabaseManager): Initialized DB handler.
             shutdown_event (threading.Event): Signal for graceful shutdown.
+            run_once (bool): roda UM ciclo e sai, em vez do laco continuo.
+
+        [2026-08-19, C-134] run_once preserva o primeiro uso em uma linha, que
+        era o que o modo snapshot oferecia antes de ser removido. Nao e um modo
+        novo: e o MESMO caminho de coleta do agente, parando depois de um ciclo.
+        O caminho ja funcionava sozinho, sem servidor, porque Outbox.enabled ja
+        devolve False quando nao ha server_ip nem token -- entao a captura fica
+        guardada localmente e nada e enviado.
         """
+        self.run_once = bool(run_once)
         self.config = config
         self.db = db_manager
         self.shutdown_event = shutdown_event
@@ -152,7 +161,10 @@ class DaemonController:
         Initializes the Engine ONCE and toggles collection cyclically.
         """
         self.logger.info(f"[DAEMON] Starting Universal Collector (v0.80). Agent ID: {self.agent_uuid}")
-        self.logger.info(f"[DAEMON] Cycle Config: Capture={self.capture_duration}s | Sleep={self.interval}s")
+        if self.run_once:
+            self.logger.info(f"[DAEMON] Ciclo UNICO: Capture={self.capture_duration}s")
+        else:
+            self.logger.info(f"[DAEMON] Cycle Config: Capture={self.capture_duration}s | Sleep={self.interval}s")
 
         # 1. Initialize Engine ONCE to avoid recompilation overhead
         try:
@@ -190,7 +202,15 @@ class DaemonController:
             except Exception as e:
                 self.logger.error(f"[SYNC] Unexpected sync error: {e}")
 
-            # 4. Sleep Interval (Idle Time)
+            # 4. Ciclo unico: sai antes de dormir. A saida vem DEPOIS da
+            # entrega acima, e nao no fim da captura, para que uma execucao
+            # pontual com servidor configurado ainda entregue o que coletou em
+            # vez de deixar a captura presa no banco local.
+            if self.run_once:
+                self.logger.info("[DAEMON] Ciclo unico concluido (--once).")
+                break
+
+            # 5. Sleep Interval (Idle Time)
             if not self.shutdown_event.is_set():
                 self.logger.info(f"[WAIT] Sleeping for {self.interval}s...")
                 self.shutdown_event.wait(self.interval)

@@ -9,7 +9,9 @@
 #   - SERVER: set 'mode: server' and configure 'network.bind_port'
 #
 #   For a single machine, install BOTH: the agent collects and the server
-#   receives, on the same host.
+#   receives, on the same host. For a one-off run with no server at all, use
+#   'sys-inspector --mode daemon --once': one capture cycle, then exit, with
+#   the capture kept locally.
 #
 #   [2026-08-19, C-134] The snapshot, live and local-live modes were REMOVED.
 #   They were three parallel implementations of the same collection routine and
