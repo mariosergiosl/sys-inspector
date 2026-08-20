@@ -160,7 +160,11 @@ CSS_BASE = r"""
    tirada do que se le. O topo e a base ficam em zero porque a barra grudada ja
    traz o proprio respiro. */
 /* A pagina ocupa a janela e NAO rola: quem rola e a arvore. Ver .tabela-rolagem. */
-html { height: 100%; }
+/* `overflow:hidden` no html TAMBEM, e nao so no body: sem isso a janela
+   continua rolavel por script mesmo sem barra de rolagem, e um
+   `window.scrollTo` levava a viewport para 1844px de area vazia. A tela
+   ficava EM BRANCO e parecia que a pagina tinha quebrado. */
+html { height: 100%; overflow: hidden; }
 body {
     font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg);
     color:var(--fg); padding:0 8px; font-size:13px; margin:0;
@@ -1041,10 +1045,24 @@ function alternarInventario(){
 
         // 5. Rola descontando o cabecalho fixo; sem isso a linha para embaixo
         //    dele e parece que o pivo nao chegou a lugar nenhum.
-        var sticky = document.querySelector('.sticky-wrapper');
-        var offset = sticky ? sticky.getBoundingClientRect().height + 20 : 20;
-        var y = row.getBoundingClientRect().top + window.pageYOffset - offset;
-        window.scrollTo({top: y > 0 ? y : 0, behavior: 'smooth'});
+        // Quem rola e a CAIXA da arvore, nao a janela: desde que a pagina passou
+        // a ocupar exatamente a altura do viewport, `window.scrollTo` nao move
+        // nada visivel -- e, pior, movia a viewport para dentro de area vazia,
+        // deixando a tela EM BRANCO (medido: scrollY 1844). `scrollIntoView`
+        // acha sozinho o ancestral rolavel, e `block:'center'` ja resolve o
+        // cabecalho grudado.
+        // Rola a CAIXA diretamente, com a conta feita a mao. `scrollIntoView`
+        // resolve o alvo, mas rola tambem os ancestrais -- inclusive a janela,
+        // que `overflow:hidden` esconde mas nao impede de mover por script.
+        // Medido: a janela deslocava 166px e levava o cabecalho para fora da
+        // vista. Mexendo so no scrollTop da caixa, nada mais se move.
+        var caixa = row.closest('.tabela-rolagem');
+        if (caixa) {
+            caixa.scrollTop = Math.max(0, row.offsetTop
+                                          - (caixa.clientHeight / 2));
+        } else {
+            row.scrollIntoView({block: 'center'});
+        }
 
         // 6. Destaca o alvo e os demais processos correlacionados.
         document.querySelectorAll('.pivot-target').forEach(function (e) {
