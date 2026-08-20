@@ -583,10 +583,24 @@ def _render_probe_signals(node):
     """
     rows = []
     for campo, rotulo, modo, chave_risco in _PROBE_SIGNAL_ROWS:
+        # [D-020, corrigido em 2026-08-20] O Mario: "temos uma regra de nunca
+        # esconder um campo sem valor". Antes a linha era PULADA quando o sinal
+        # nao tinha disparado, e o silencio era tratado como resposta. Nao e: da
+        # tela nao havia como distinguir "a sonda olhou e nao achou" de "esta
+        # captura nao produziu o campo", e a segunda invalida qualquer conclusao
+        # tirada da ausencia. Todo campo declarado aparece agora, em um dos tres
+        # estados da D-020.
+        tem_chave = hasattr(node, campo)
         valor = getattr(node, campo, None)
-        if not valor:
-            continue
-        if modo == "list":
+        if not tem_chave:
+            texto = ("<span style='color:%s' title=\"%s\">%s</span>"
+                     % (ESTADO_AUSENTE[1], _esc(ESTADO_AUSENTE[2]),
+                        ESTADO_AUSENTE[0]))
+        elif not valor:
+            texto = ("<span style='color:%s' title=\"%s\">%s</span>"
+                     % (ESTADO_VAZIO[1], _esc(ESTADO_VAZIO[2]),
+                        ESTADO_VAZIO[0]))
+        elif modo == "list":
             texto = ", ".join(_esc(v) for v in valor)
         elif modo == "count":
             texto = str(valor)
@@ -606,8 +620,15 @@ def _render_probe_signals(node):
         icone = badges_reg.TAG_MAP.get(chave_risco.upper(), ("", "", "", ""))[0]
         rows.append((icone, rotulo, texto, significado))
 
+    # [D-020] Quarta violacao encontrada olhando a tela com o Mario: o
+    # bloco de sinais das sondas sumia inteiro quando nenhuma sonda
+    # tinha disparado para aquele processo. Era o caso da MAIORIA dos
+    # processos, e quem lia o laudo nao sabia se aquele processo nao
+    # acionou sonda nenhuma ou se as sondas nao rodaram para ele.
     if not rows:
-        return ""
+        return _bloco_vazio(
+            "Probe Signals",
+            "nenhuma sonda eBPF disparou para este processo nesta captura")
 
     body = "".join(
         f"<tr><td class='ctx-lbl'>{icone} {lbl}:</td><td class='ctx-val'>{val}"

@@ -355,7 +355,7 @@ def test_o_bloco_probe_signals_mostra_os_campos_do_lote_2_com_o_icone():
         assert badges_reg.TAG_MAP[tag][0] in html, tag
 
 
-def test_campo_vazio_do_lote_2_nao_desenha_linha_nenhuma():
+def test_campo_vazio_do_lote_2_aparece_como_vazio_e_nao_some():
     """
     D-020 na pratica: silencio no bloco significa "a sonda olhou e nao havia",
     e nao "nao foi coletado". Uma linha "TLS SNI: 0" diria a mesma coisa que
@@ -365,7 +365,26 @@ def test_campo_vazio_do_lote_2_nao_desenha_linha_nenhuma():
     from src.exporters.html_report import _render_probe_signals
 
     node = ProcessNode(4242, 1, "processo-quieto", 0)
-    assert _render_probe_signals(node) == ""
+    html = _render_probe_signals(node)
+
+    # [2026-08-20] O raciocinio original continua VALENDO para as LINHAS: nao se
+    # desenha "TLS SNI: 0" para cada campo que nao disparou, porque isso
+    # confunde "a sonda olhou e nao havia" com "nao existe sonda de SNI".
+    # O que mudou foi o BLOCO: ele sumia inteiro, e o Mario apontou que assim
+    # nao da para saber se o processo nao acionou sonda nenhuma ou se as sondas
+    # nao rodaram para ele. O bloco fica, dizendo isso; as linhas nao voltam.
+    assert "Probe Signals" in html, "o bloco sumiu de novo (D-020)"
+    # [2026-08-20, correcao do Mario] Eu tinha escrito o oposto aqui, repetindo o
+    # raciocinio antigo de que a linha vazia confunde. O Mario cortou: "temos uma
+    # regra de nunca esconder um campo sem valor". A D-020 vale para o CAMPO, e
+    # nao so para o bloco, e ela ja resolve a confusao com TRES estados: valor,
+    # "olhou e nao havia" (travessao), e "nao coletado" (captura antiga). Pular a
+    # linha nao era o estado do meio, era a ausencia dos dois.
+    assert "&mdash;" in html, (
+        "campo sem valor voltou a ser OMITIDO em vez de mostrado vazio")
+    for rotulo in ("TLS SNI", "Mount", "Pivot Root"):
+        assert rotulo in html, (
+            "o campo %r sumiu da tela quando nao tinha valor (D-020)" % rotulo)
 
 
 def test_os_sinais_do_lote_2_sobem_na_arvore_como_os_demais():

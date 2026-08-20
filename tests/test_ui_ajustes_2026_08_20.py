@@ -253,3 +253,58 @@ def test_f237_e_f239_sem_espaco_desperdicado_no_laudo():
         "a moldura lateral da tabela voltou (F-239)")
     assert re.search(r"^body \{[^}]*padding:0 8px", css, re.M), (
         "o corpo do laudo voltou a ter moldura de 20px (F-239)")
+
+
+# ------------------------------------------------------------------------------
+# REGISTRO DE BADGES: um sinal, um desenho
+# ------------------------------------------------------------------------------
+
+def test_nenhum_icone_de_badge_se_repete():
+    """
+    [2026-08-20] O Mario reportou o filtro KEXEC_LOAD como quebrado. Nao estava:
+    `UNSAFE` e `KEXEC_LOAD` usavam O MESMO icone radioativo, e ele via o simbolo
+    numa linha que nao tinha kexec nenhum. Clicar no filtro devolvia vazio, e da
+    tela nao havia como distinguir "sem resultado" de "quebrado".
+
+    Dois sinais com o mesmo desenho sao um sinal so aos olhos de quem le, e um
+    laudo forense nao pode ter dois fatos diferentes com a mesma aparencia. Este
+    teste faz o proximo icone repetido quebrar o CI, em vez de virar uma hora
+    perdida em investigacao.
+    """
+    from src.core import badges as reg
+
+    por_icone = {}
+    for tag, dados in reg.TAG_MAP.items():
+        por_icone.setdefault(dados[0], []).append(tag)
+    repetidos = {i: t for i, t in por_icone.items() if len(t) > 1}
+    assert not repetidos, (
+        "icone(s) usados por mais de um sinal: %s"
+        % "; ".join("%s -> %s" % (i, ", ".join(t))
+                    for i, t in repetidos.items()))
+
+
+def test_todo_badge_do_registro_tem_icone():
+    """Sinal sem desenho nao aparece na arvore, e some sem avisar."""
+    from src.core import badges as reg
+
+    sem = [t for t, d in reg.TAG_MAP.items() if not d[0].strip()]
+    assert not sem, "sinais sem icone: %s" % ", ".join(sem)
+
+
+def test_d020_blocos_de_detalhe_nunca_somem():
+    """
+    Os quatro blocos do painel de detalhe aparecem SEMPRE, dizendo por que estao
+    vazios quando nao ha dado. Foram quatro violacoes encontradas olhando a tela
+    com o Mario, uma de cada vez, o que mostra que a regra so vale se algo a
+    verificar.
+    """
+    fonte = _fonte("src/exporters/html_report.py")
+    assert "def _bloco_vazio(" in fonte, "o helper de bloco vazio sumiu"
+    # Nenhum dos quatro pode voltar a devolver string vazia.
+    for bloco in ("Process Ancestry", "Executable Provenance",
+                  "Security Forensics", "Probe Signals"):
+        # A chamada pode estar numa linha so ou quebrada em varias, entao a
+        # busca ignora o espaco entre o parentese e o nome do bloco.
+        padrao = r'_bloco_vazio\(\s*"%s"' % re.escape(bloco)
+        assert re.search(padrao, fonte), (
+            "o bloco %r voltou a sumir quando nao ha dado (D-020)" % bloco)

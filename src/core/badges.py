@@ -115,7 +115,11 @@ TAG_MAP = {
                      _sig("file_renamed")),
     "NS_CHANGE": ("🚪", "t-nschange", "Mudou de namespace (setns/unshare)",
                   _sig("ns_change")),
-    "KEXEC_LOAD": ("☢️", "t-kexec", "Carregou kernel via kexec_load", _sig("kexec_load")),
+    # [2026-08-20] Icone PROPRIO. Antes dividia o radioativo com UNSAFE, e o
+    # Mario reportou o filtro KEXEC_LOAD como quebrado ao ver o mesmo simbolo
+    # numa linha que nao tinha kexec nenhum. Dois sinais com o mesmo desenho
+    # sao um sinal so aos olhos de quem le a tela.
+    "KEXEC_LOAD": ("🐧", "t-kexec", "Carregou kernel via kexec_load", _sig("kexec_load")),
     "DNS_QUERY": ("🌐", "t-dns", "Consulta DNS observada", _sig("dns_query")),
     # [Lote 2] Sondas de 2026-08-19. SNI e o par do DNS (o mesmo "com quem",
     # por outro caminho); MOUNT_OP e PIVOT_ROOT sao o par de NS_CHANGE (a
