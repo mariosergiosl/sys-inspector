@@ -336,53 +336,26 @@ def carimbar(itens, linhas, caminho):
 
 
 def gerar(itens, soltos, saida, origem):
-    """Escreve a tabela de acompanhamento."""
+    """
+    Escreve a tabela de acompanhamento: UMA fila, na ordem de execucao.
+
+    [2026-08-20, Mario] A versao anterior tinha legenda longa, panorama, barras
+    de progresso por tema, uma lista "ordem logica" quebrada por tema, outra de
+    travados, e depois uma tabela por tema. O mesmo item aparecia em tres
+    lugares, e achar um exigia saber em qual secao ele tinha caido. O pedido foi
+    direto: uma tabela grande, na ordem do proximo a executar, dizendo do que
+    depende e o que libera. E so isso que uma fila precisa responder.
+    """
     hoje = datetime.date.today().isoformat()
-    # A vista agrupa por TEMA, nao pela secao do backlog. Ver TEMA_POR_SECAO.
     for i in itens:
         i["tema"] = tema(i)
-    por_secao = {}
-    for i in itens:
-        por_secao.setdefault(i["tema"], []).append(i)
-    ordem_secao = [t for t in ORDEM_TEMA if t in por_secao]
-    ordem_secao += [t for t in por_secao if t not in ORDEM_TEMA]
 
     total = dict((e, 0) for e in ESTADOS)
     for i in itens:
         total[i["estado"]] += 1
-    aberto = total["--"] + total["PARC"]
 
-    out = []
-    out.append("# Tabela de acompanhamento\n\n")
-    out.append("> **GERADO AUTOMATICAMENTE em %s. Nao editar a mao.**\n" % hoje)
-    out.append("> Fonte: `%s`\n" % origem)
-    out.append("> Regenerar: `python3 tools/gerar_tabela_backlog.py`\n>\n")
-    out.append("> O backlog detalhado e a FONTE; esta tabela e apenas uma vista\n")
-    out.append("> dele. Editar aqui cria duas versoes do mesmo fato, que e a\n")
-    out.append("> divergencia silenciosa que este projeto ja pagou caro.\n\n")
-
-    out.append(LEGENDA)
-    out.append("## Panorama\n\n")
-    out.append("| Estado | Quantos |\n|---|---:|\n")
-    for e in ESTADOS:
-        if total[e]:
-            out.append("| %s | %d |\n" % (ROTULO[e], total[e]))
-    out.append("| **total** | **%d** |\n\n" % len(itens))
-    out.append("**Em aberto (aberto + parcial): %d**\n\n" % aberto)
-
-    out.append("## Progresso por tema\n\n")
-    out.append("| Tema | Feito | Aberto | Progresso |\n|---|---:|---:|---|\n")
-    for secao in ordem_secao:
-        lst = por_secao[secao]
-        ok = len([i for i in lst if i["estado"] == "OK"])
-        ab = len([i for i in lst if i["estado"] in ("--", "PARC")])
-        rel = len([i for i in lst if i["estado"] != "FORA"])
-        pct = int(100.0 * ok / rel) if rel else 100
-        barra = "#" * (pct // 10) + "." * (10 - pct // 10)
-        out.append("| %s | %d | %d | `%s` %d%% |\n"
-                   % (limpa(secao)[:58], ok, ab, barra, pct))
-    # Indice reverso: quem cada item destrava. Um item com muitos dependentes e
-    # gargalo, e gargalo pequeno merece prioridade sobre item grande e isolado.
+    # Quem cada item destrava. Um item com muitos dependentes e gargalo, e
+    # gargalo pequeno merece prioridade sobre item grande e isolado.
     destrava = {}
     por_id = dict((i["id"], i) for i in itens if i["id"])
     for i in itens:
@@ -390,89 +363,99 @@ def gerar(itens, soltos, saida, origem):
             destrava.setdefault(d, []).append(i["id"])
 
     abertos = [i for i in itens if i["estado"] in ("--", "PARC")]
-    prontos = []
-    travados = []
+    prontos, travados = [], []
     for i in abertos:
         pendentes = [d for d in i["dep"]
                      if d in por_id and por_id[d]["estado"] in ("--", "PARC")]
-        if pendentes:
-            travados.append((i, pendentes))
-        else:
-            prontos.append(i)
+        i["espera"] = pendentes
+        (travados if pendentes else prontos).append(i)
 
-    out.append("## Ordem logica: o que ja da para comecar\n\n")
-    out.append("Itens abertos sem dependencia pendente, **agrupados por tema**,\n")
-    out.append("porque agrupar por superficie tocada e o que elimina retrabalho\n")
-    out.append("(D-023). Dentro de cada tema, primeiro os que mais destravam.\n\n")
-    out.append("> **Cuidado ao ler:** ausencia aqui significa **dependencia nao\n")
-    out.append("> declarada**, nao dependencia inexistente. So o que foi escrito\n")
-    out.append("> como `(dep: ...)` no backlog e conhecido. Um tema inteiro que\n")
-    out.append("> apareca livre provavelmente tem cadeia interna por declarar.\n\n")
+    # Ordem da fila: primeiro o que ja da para comecar, e dentro disso o que
+    # mais destrava. Depois o que espera alguem, que so entra na fila quando a
+    # dependencia sair.
+    prontos.sort(key=lambda i: (-len(destrava.get(i["id"], [])),
+                                ORDEM_TEMA.index(i["tema"])
+                                if i["tema"] in ORDEM_TEMA else 99,
+                                i["linha"]))
+    travados.sort(key=lambda i: (len(i["espera"]), i["linha"]))
 
-    prontos_por_tema = {}
+    out = []
+    out.append("# Tabela de acompanhamento\n\n")
+    out.append("> **GERADO AUTOMATICAMENTE em %s. Nao editar a mao.**\n" % hoje)
+    out.append("> Fonte: `%s`\n" % origem)
+    out.append("> Regenerar: `python3 tools/gerar_tabela_backlog.py`\n>\n")
+    out.append("> O backlog detalhado e a FONTE; esta tabela e uma vista dele.\n")
+    out.append("> Editar aqui cria duas versoes do mesmo fato.\n\n")
+
+    out.append("**Aberto: %d** (%d prontos para comecar, %d esperando outro "
+               "item)  |  **Concluido: %d**  |  **Total: %d**\n\n"
+               % (len(abertos), len(prontos), len(travados),
+                  total["OK"], len(itens)))
+
+    out.append("Letra do ID: `F` ferramenta, `C` capacidade, `AM` ameaca "
+               "(D-023). Tema: onde o trabalho acontece.\n\n")
+
+    # ------------------------------------------------------------------
+    # A FILA
+    # ------------------------------------------------------------------
+    out.append("## A fila: proximo a executar primeiro\n\n")
+    out.append("Ordenado por quanto cada item DESTRAVA. Os que esperam outro\n")
+    out.append("item vem no fim, e so entram na fila quando a espera sair.\n\n")
+    out.append("> **Cuidado ao ler:** \"depende de\" vazio significa dependencia\n")
+    out.append("> **nao declarada**, e nao dependencia inexistente. So o que foi\n")
+    out.append("> escrito como `(dep: ...)` no backlog e conhecido.\n\n")
+    out.append("| # | ID | Tema | Item | Depende de | Libera |\n"
+               "|---:|---|---|---|---|---|\n")
+    pos = 0
     for i in prontos:
-        prontos_por_tema.setdefault(i["tema"], []).append(i)
-
-    for secao in ordem_secao:
-        lst = prontos_por_tema.get(secao)
-        if not lst:
-            continue
-        lst.sort(key=lambda i: -len(destrava.get(i["id"], [])))
-        out.append("**%s** (%d)\n\n" % (limpa(secao), len(lst)))
-        out.append("| ID | Item | Destrava |\n|---|---|---|\n")
-        for i in lst:
-            alvo = destrava.get(i["id"], [])
-            out.append("| `%s` | %s | %s |\n"
-                       % (i["id"], limpa(i["texto"])[:96],
-                          ", ".join("`%s`" % a for a in alvo) or "-"))
-        out.append("\n")
-
-    if travados:
-        out.append("## Travados: esperando outro item\n\n")
-        out.append("| ID | Item | Espera |\n|---|---|---|\n")
-        for i, pend in travados:
-            out.append("| `%s` | %s | %s |\n"
-                       % (i["id"], limpa(i["texto"])[:86],
-                          ", ".join("`%s`" % d for d in pend)))
-        out.append("\n")
-
-    out.append("\n---\n\n")
-
-    for secao in ordem_secao:
-        out.append("## %s\n\n" % limpa(secao))
-        out.append("| ID | Estado | Item | Origem | Depende de | Destrava |\n"
-                   "|---|---|---|---|---|---|\n")
-        ordenado = sorted(por_secao[secao],
-                          key=lambda i: (ESTADOS.index(i["estado"]), i["linha"]))
-        for i in ordenado:
-            alvo = destrava.get(i["id"], [])
-            out.append("| `%s` | %s | %s | %s | %s | %s |\n"
-                       % (i["id"] or "-", ROTULO[i["estado"]],
-                          limpa(i["texto"])[:128],
-                          rotulo_secao(i["secao"]),
-                          ", ".join("`%s`" % d for d in i["dep"]) or "-",
-                          ", ".join("`%s`" % a for a in alvo) or "-"))
-        out.append("\n")
+        pos += 1
+        alvo = destrava.get(i["id"], [])
+        out.append("| %d | `%s` | %s | %s | - | %s |\n"
+                   % (pos, i["id"] or "-", i["tema"], limpa(i["texto"])[:110],
+                      ", ".join("`%s`" % a for a in alvo) or "-"))
+    for i in travados:
+        pos += 1
+        alvo = destrava.get(i["id"], [])
+        out.append("| %d | `%s` | %s | %s | %s | %s |\n"
+                   % (pos, i["id"] or "-", i["tema"], limpa(i["texto"])[:110],
+                      ", ".join("`%s`" % d for d in i["espera"]),
+                      ", ".join("`%s`" % a for a in alvo) or "-"))
+    out.append("\n")
 
     # ------------------------------------------------------------------
     # NAO CLASSIFICADO: o que o gerador via mas nao sabia contar
     # ------------------------------------------------------------------
     if soltos:
-        out.append("## Nao classificado: blocos sem ID\n\n")
-        out.append("Conteudo escrito no backlog em bloco de negrito, **sem o\n")
-        out.append("formato de item**, e por isso fora de toda a contagem acima.\n")
-        out.append("Ate 2026-08-20 estes blocos eram simplesmente ignorados, e\n")
-        out.append("decisao registrada podia nunca aparecer nesta tabela.\n\n")
-        out.append("> **Como resolver um destes:** reescrever no backlog como\n")
-        out.append("> `- **[--]** texto` e rodar `--stamp`, que atribui o ID. A\n")
-        out.append("> partir dai o item entra no panorama, na ordem logica e nas\n")
-        out.append("> dependencias, como qualquer outro.\n\n")
+        out.append("## Fora da fila: blocos sem ID\n\n")
+        out.append("Escrito no backlog em bloco de negrito, **sem o formato de\n")
+        out.append("item**, e por isso fora da fila acima. Ate 2026-08-20 estes\n")
+        out.append("blocos eram ignorados, e decisao registrada podia nunca\n")
+        out.append("aparecer aqui.\n\n")
+        out.append("> **Para trazer um para a fila:** reescrever no backlog como\n")
+        out.append("> `- **[--]** texto` e rodar `--stamp`, que atribui o ID.\n\n")
         out.append("**Total: %d blocos.**\n\n" % len(soltos))
         out.append("| Linha | Bloco | Secao de origem |\n|---:|---|---|\n")
         for b in sorted(soltos, key=lambda x: x["linha"]):
             out.append("| %d | %s | %s |\n"
                        % (b["linha"], limpa(b["texto"])[:96],
                           rotulo_secao(b["secao"])))
+        out.append("\n")
+
+    # ------------------------------------------------------------------
+    # CONCLUIDOS: fora do caminho, mas nao apagados
+    # ------------------------------------------------------------------
+    feitos = [i for i in itens if i["estado"] not in ("--", "PARC")]
+    if feitos:
+        out.append("## Fechados\n\n")
+        out.append("Fora da fila de propriedade: quem dirige o projeto olha o\n")
+        out.append("que falta. Ficam aqui porque apagar o registro do que foi\n")
+        out.append("feito e como perder o historico.\n\n")
+        out.append("| ID | Tema | Estado | Item |\n|---|---|---|---|\n")
+        for i in sorted(feitos, key=lambda i: (ESTADOS.index(i["estado"]),
+                                               i["linha"])):
+            out.append("| `%s` | %s | %s | %s |\n"
+                       % (i["id"] or "-", i["tema"], ROTULO[i["estado"]],
+                          limpa(i["texto"])[:110]))
         out.append("\n")
 
     with io.open(saida, "w", encoding="utf-8") as fh:
