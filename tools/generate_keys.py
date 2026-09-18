@@ -23,9 +23,10 @@ except ImportError as e:
     print("       Run this script from the project root: python3 tools/generate_keys.py")
     sys.exit(1)
 
+
 def main():
     print("--- Sys-Inspector Key Generator ---")
-    
+
     # Ensure 'conf' directory exists
     conf_dir = os.path.join(project_root, "conf")
     if not os.path.exists(conf_dir):
@@ -49,6 +50,7 @@ def main():
         print(f"   Public:  {pub_path}  (Distribute to Agents)")
     except Exception as e:
         print(f"\n[ERROR] Failed to generate keys: {e}")
+
 
 if __name__ == "__main__":
     main()

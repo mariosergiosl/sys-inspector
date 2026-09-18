@@ -1,24 +1,30 @@
 # -*- coding: utf-8 -*-
 # ==============================================================================
 # FILE: src/collectors/manager.py
-# DESCRIPTION: Central Orchestrator for Data Collection (v0.70).
-#              Unifies the collection logic so Snapshot, Live, and Agent modes
-#              use the exact same workflow to gather data.
+# DESCRIPTION: Pecas compartilhadas da coleta: resumo de metricas, composicao de
+#              achados e a ligacao entre achado estatico e processo em execucao.
 #
-# USAGE:
-#   mgr = CollectionManager(config)
-#   data = mgr.collect_snapshot(duration=30)
+# [2026-08-19] A classe CollectionManager saiu daqui junto com os modos
+#              snapshot, live e local-live (C-134). Ela era a TERCEIRA
+#              implementacao do ato de coletar, ao lado de
+#              LiveController._collection_loop e DaemonController
+#              .collect_and_store, e as tres divergiram: o C-132 foi o sintoma
+#              -- collect_findings() recebia a arvore de processos no daemon e
+#              NAO recebia nos outros dois, que por isso pulavam a forense de
+#              memoria em silencio. Com um caminho so, esse defeito deixa de
+#              existir em vez de precisar de conserto.
+#
+#              O que sobrou neste arquivo sao FUNCOES, nao um orquestrador:
+#              cada uma faz uma coisa e o daemon as compoe.
 #
 # AUTHOR: Mario Luz (Sys-Inspector Project)
 # ==============================================================================
 
 import os
-import time
+import re
 import logging
-from src.core.engine import SysInspectorEngine
-from src.collectors.system_inventory import collect_full_inventory
 from src.collectors.persistence import collect_persistence
-from src.core.findings import sort_findings, dedupe_findings, summarize_by_severity
+from src.core.findings import sort_findings, dedupe_findings
 
 
 def summarize_metrics(processes):
@@ -76,15 +82,50 @@ def summarize_metrics(processes):
     return {"cpu": cpu_avg, "mem": mem_used, "pids": pids, "score": score}
 
 
+# Alvo de achado que aponta um processo: "pid:1234".
+_ALVO_PID = re.compile(r'^pid:(\d+)$')
+
+
+def _pid_declarado(finding):
+    """
+    O PID que o proprio achado ja nomeia, quando existe.
+
+    Duas fontes, nesta ordem: o campo `target` no formato "pid:NNNN", que e
+    como os coletores de runtime identificam o objeto, e `evidence["pid"]`.
+    Devolve None quando o achado nao e sobre um processo (um achado de kernel,
+    de arquivo ou de frota nao tem PID, e isso nao e ausencia de dado).
+    """
+    alvo = str(finding.get("target") or "")
+    m = _ALVO_PID.match(alvo)
+    if m:
+        return int(m.group(1))
+    pid = (finding.get("evidence") or {}).get("pid")
+    try:
+        return int(pid) if pid is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def correlate_findings_with_processes(findings, processes):
     """
-    Liga cada achado aos processos que estao executando o caminho que ele
-    denuncia.
+    Liga cada achado aos processos a que ele se refere, por DUAS vias.
 
-    Um achado de persistencia aponta para um ARQUIVO (a unit, a entrada de
-    cron), nao para um PID. O valor pericial aparece quando esse caminho esta
-    de fato rodando: a persistencia deixa de ser teorica e passa a ser
-    atividade em curso. Preenche 'related_pids' nos achados correlacionados.
+    1. Por PID declarado. Um achado de runtime (memoria gravavel-e-executavel,
+       binario substituido, biblioteca estranha) JA sabe o PID: ele esta no
+       titulo, no alvo e na evidencia. Este caminho existe desde 2026-08-20 e
+       corrige uma lacuna que vinha de antes: o achado com a identificacao mais
+       precisa possivel era justamente o unico que nunca ganhava o atalho para
+       a arvore, porque a correlacao so sabia casar CAMINHO.
+
+    2. Por caminho denunciado. Um achado de persistencia aponta para um
+       ARQUIVO (a unit, a entrada de cron), nao para um PID. O valor pericial
+       aparece quando esse caminho esta de fato rodando: a persistencia deixa
+       de ser teorica e passa a ser atividade em curso.
+
+    As duas vias respondem perguntas diferentes e por isso convivem. A ausencia
+    do atalho continua significando alguma coisa: no caso 2, que o artefato
+    plantado nao esta em execucao agora; no caso 1, que o processo ja terminou
+    entre a deteccao e a montagem do laudo.
 
     PARAMETER findings: lista de dicts (Finding.to_dict).
     PARAMETER processes: dict pid -> dados do processo (data['processes']).
@@ -92,25 +133,41 @@ def correlate_findings_with_processes(findings, processes):
     if not findings or not processes:
         return findings
 
+    # As chaves da captura chegam como texto no JSON e como int no objeto vivo.
+    # Normalizar uma vez evita o atalho sumir por causa do tipo da chave, que e
+    # o tipo de defeito que ninguem procura quando "o botao nao aparece".
+    por_pid = {}
+    for pid, proc in processes.items():
+        try:
+            por_pid[int(pid)] = proc
+        except (TypeError, ValueError):
+            continue
+
     for finding in findings:
-        # Caminho denunciado pelo achado: a referencia encontrada na evidencia
-        # (ex.: o binario que a unit executa) e, como apoio, o proprio alvo.
+        matches = []
+
+        # --- 1. PID que o achado ja nomeia -----------------------------------
+        declarado = _pid_declarado(finding)
+        if declarado is not None and declarado in por_pid:
+            matches.append(declarado)
+
+        # --- 2. Caminho denunciado, executado por alguem ---------------------
         evidence = finding.get("evidence") or {}
         candidates = []
         reference = evidence.get("reference")
         if reference:
             candidates.append(str(reference))
 
-        matches = []
-        for pid, proc in processes.items():
-            exe = str(proc.get("exe_path") or "")
-            cmd = str(proc.get("cmd") or "")
-            for path in candidates:
-                if not path or len(path) < 4:
-                    continue
-                if exe == path or path in cmd:
-                    matches.append(int(pid))
-                    break
+        if candidates:
+            for pid, proc in por_pid.items():
+                exe = str(proc.get("exe_path") or "")
+                cmd = str(proc.get("cmd") or "")
+                for path in candidates:
+                    if not path or len(path) < 4:
+                        continue
+                    if exe == path or path in cmd:
+                        matches.append(pid)
+                        break
 
         if matches:
             finding["related_pids"] = sorted(set(matches))
@@ -118,7 +175,7 @@ def correlate_findings_with_processes(findings, processes):
     return findings
 
 
-def collect_findings(processos=None):
+def collect_findings(processos=None, config=None):
     """
     Executa os coletores de achados estaticos e devolve a lista normalizada,
     deduplicada e ordenada por severidade (mais grave primeiro).
@@ -126,8 +183,21 @@ def collect_findings(processos=None):
     Hoje cobre a enumeracao de persistencia; novas fontes (integridade, SCAP)
     entram aqui e herdam automaticamente a deduplicacao e a ordenacao, mantendo
     um unico ponto de composicao de Findings.
+
+    PARAMETER config: configuracao do agente. Serve a aquisicao dirigida
+              (C-043): o Acquirer nasce AQUI, um por captura, porque o orcamento
+              total de bytes e por captura. Um objeto de vida longa acumularia
+              gasto entre capturas e desligaria a aquisicao sozinho depois de
+              algumas horas, sem avisar (a falha do agente que emudece, D-015).
     """
     findings = []
+    acquirer = None
+    try:
+        from src.core.acquisition import Acquirer
+        acquirer = Acquirer(config)
+    except Exception as exc:
+        logging.getLogger("CollectorMgr").error(
+            f"[COLLECT] Acquirer indisponivel: {exc}")
     try:
         findings.extend(collect_persistence())
     except Exception as exc:
@@ -137,84 +207,22 @@ def collect_findings(processos=None):
         findings.extend(collect_hidden())
     except Exception as exc:
         logging.getLogger("CollectorMgr").error(f"[COLLECT] Hidden scan failed: {exc}")
+    # [C-037] Rootkit: o detector de processo oculto acima pega quem esconde
+    # PROCESSO; este pega quem esconde a si mesmo dentro do kernel, cruzando as
+    # tres listas de modulos e o taint. Sao perguntas diferentes, e por isso dois
+    # coletores e nao um.
+    try:
+        from src.collectors.rootkit import collect_rootkit
+        findings.extend(collect_rootkit(acquirer=acquirer))
+    except Exception as exc:
+        logging.getLogger("CollectorMgr").error(f"[COLLECT] Rootkit scan failed: {exc}")
     # Reusa a arvore ja coletada em vez de varrer /proc de novo: o custo extra
     # no host inspecionado fica proximo de zero.
     if processos:
         try:
             from src.collectors.memory_forensics import collect_memory_forensics
-            findings.extend(collect_memory_forensics(processos))
+            findings.extend(collect_memory_forensics(processos, acquirer))
         except Exception as exc:
             logging.getLogger("CollectorMgr").error(
                 f"[COLLECT] Memory forensics failed: {exc}")
     return sort_findings(dedupe_findings(findings))
-
-
-class CollectionManager:
-    """
-    Standardizes the data collection process across all modes.
-    """
-    def __init__(self, config):
-        self.config = config
-        self.logger = logging.getLogger("CollectorMgr")
-        # Initialize the BPF/Heuristics Engine
-        self.engine = SysInspectorEngine(config)
-
-    def collect_snapshot(self, duration=30):
-        """
-        Performs a full collection cycle:
-        1. Starts BPF Engine (Traffic/Process monitoring).
-        2. Waits for 'duration' seconds (sampling window).
-        3. Collects Static Inventory (Hardware/Network).
-        4. Merges everything into a standardized Dictionary.
-        5. Stops Engine.
-
-        Returns:
-            dict: The complete forensic data structure ready for Encryption/Storage.
-        """
-        try:
-            self.logger.info(f"[COLLECT] Starting capture window ({duration}s)...")
-
-            # 1. Start Dynamic Analysis (eBPF + Pollers)
-            self.engine.start()
-
-            # 2. Sampling Loop
-            # We sleep in small chunks to remain responsive to interrupts if needed
-            start_time = time.time()
-            while (time.time() - start_time) < duration:
-                time.sleep(1)
-
-            # 3. Stop Engine (Freeze state)
-            self.engine.stop()
-
-            # 4. Static Collection
-            self.logger.info("[COLLECT] Gathering static system inventory...")
-            full_data = collect_full_inventory()
-
-            # 5. Merge Dynamic Data
-            # This calls the updated ProcessTree logic (Duration, EDR Wchan, etc.)
-            full_data['processes'] = self.engine.tree.to_json()
-
-            # 6. Static forensic findings (persistence mechanisms).
-            # Roda depois da janela eBPF para nao competir com a captura.
-            self.logger.info("[COLLECT] Enumerating persistence mechanisms...")
-            findings = collect_findings()
-            serialized = [f.to_dict() for f in findings]
-            # Liga o achado estatico ao runtime: a persistencia esta ativa?
-            correlate_findings_with_processes(serialized, full_data['processes'])
-            full_data['findings'] = serialized
-            full_data['findings_summary'] = summarize_by_severity(findings)
-
-            # 7. Metadata
-            full_data['capture_duration'] = duration
-            full_data['mode'] = self.config.get('general', {}).get('mode', 'unknown')
-
-            self.logger.info(f"[COLLECT] Capture complete. {len(full_data['processes'])} processes tracked, "
-                             f"{len(findings)} findings.")
-            return full_data
-
-        except Exception as e:
-            self.logger.error(f"[COLLECT] Critical failure during collection: {e}")
-            # Ensure engine stops even on error to release BPF probes
-            try: self.engine.stop()
-            except: pass
-            raise e

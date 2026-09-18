@@ -26,9 +26,20 @@ def _node(pid=100, ppid=1, cmd="proc"):
 # ------------------------------------------------------------------------------
 # Proveniencia do executavel
 # ------------------------------------------------------------------------------
-def test_no_block_when_exe_is_unknown():
-    """Sem caminho de executavel, o bloco nao e emitido."""
-    assert _render_exe_provenance(_node()) == ""
+def test_block_still_shows_when_exe_is_unknown():
+    """
+    [2026-08-20] Premissa INVERTIDA por decisao do Mario: "mesmo nao tendo
+    informacao, tudo tem que ficar visivel sempre". Um processo de kernel nao
+    tem binario em disco, e isso e uma RESPOSTA. Omitir o bloco deixava o
+    analista sem saber se o processo nao tem executavel ou se a ferramenta nao
+    conseguiu ler o caminho, que sao coisas diferentes num laudo (D-020).
+    """
+    node = ProcessNode(1, 0, "kthreadd", 0)
+    node.exe_path = ""
+    html = _render_exe_provenance(node)
+    assert "Executable Provenance" in html, "o bloco sumiu de novo (D-020)"
+    assert "sem binario em disco" in html, (
+        "o bloco aparece mas nao diz POR QUE esta vazio")
 
 
 def test_shows_path_and_mac_times():
@@ -100,11 +111,24 @@ def test_ancestry_shows_full_chain_in_order():
     assert html.index("systemd") < html.index("cron") < html.index("bash") < html.index("implant")
 
 
-def test_ancestry_omitted_for_root_process():
-    """Processo sem cadeia relevante nao gera bloco vazio."""
+def test_ancestry_still_shows_for_root_process():
+    """
+    [2026-08-20] A premissa deste teste foi INVERTIDA por decisao do Mario:
+    "mesmo nao tendo informacao, tudo tem que ficar visivel sempre". Antes o
+    bloco era omitido para um processo sem cadeia, e o analista ficava sem saber
+    se aquele processo nao TEM ancestral ou se a ferramenta nao COLETOU a
+    arvore. Numa peca forense essas duas respostas sao muito diferentes, e e o
+    que a D-020 fixa: todo campo visivel, em um de tres estados.
+
+    O teste passa a exigir o contrario: o bloco aparece, dizendo por que esta
+    vazio.
+    """
     tree = ProcessTree()
     tree.nodes[1] = ProcessNode(1, 0, "init", 0)
-    assert _render_ancestry(tree.nodes[1], tree) == ""
+    html = _render_ancestry(tree.nodes[1], tree)
+    assert "Process Ancestry" in html, "o bloco sumiu de novo (D-020)"
+    assert "sem ancestral capturado" in html, (
+        "o bloco aparece mas nao diz POR QUE esta vazio")
 
 
 def test_ancestry_survives_a_cycle():

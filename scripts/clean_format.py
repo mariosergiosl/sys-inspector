@@ -35,8 +35,8 @@ def clean_file(filepath):
         cleaned_lines.append(cleaned_line + '\n')
 
     while (
-        len(cleaned_lines) > 1 and 
-        cleaned_lines[-1] == '\n' and 
+        len(cleaned_lines) > 1 and
+        cleaned_lines[-1] == '\n' and
         cleaned_lines[-2] == '\n'
     ):
         cleaned_lines.pop()

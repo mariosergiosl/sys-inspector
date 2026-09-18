@@ -17,9 +17,12 @@
 # ==============================================================================
 
 import os
+import re
 import ssl
 import json
 import time
+import base64
+import hmac
 import threading
 import logging
 import datetime
@@ -29,6 +32,7 @@ import urllib.parse as urlparse
 
 # Internal Modules
 from src.exporters.html_report import generate_report
+from src.exporters.web_assets import JS_COLUNAS_AJUSTAVEIS
 from src.collectors.process_tree import ProcessTree, ProcessNode
 from src.core.crypto import load_private_key, decrypt_data
 from src.core.ingest import IngestQueue, process_batch
@@ -38,6 +42,28 @@ from src.core.capabilities import missing_for_scenarios
 from src.core.events import EventStore, events_from_capture
 from src.core import risk
 from src.core.attack import describe, technique_url
+
+# ------------------------------------------------------------------------------
+# ALLOWLIST DE IDENTIFICADOR (C-140)
+# ------------------------------------------------------------------------------
+# Todo identificador que chega pela URL passa por aqui antes de virar consulta.
+#
+# Recuperado do web_controller removido em 2026-08-19 (commit 16d9d9d), onde
+# vivia com os testes de travessia de caminho e injecao. Ao remover aquele
+# controlador, a ferramenta ficou com o painel que NAO tinha a guarda: as rotas
+# do servidor pegavam o uuid com `self.path.split('/')[-1]` e usavam direto.
+#
+# E allowlist, e nao lista de proibidos, de proposito: um uuid legitimo cabe
+# inteiro em letras, digitos e hifen, entao qualquer coisa fora disso e recusada
+# sem precisar prever a proxima forma de escapar.
+SAFE_ID_PATTERN = re.compile(r'^[A-Za-z0-9\-]{1,64}$')
+
+
+def id_valido(valor):
+    """Se um identificador vindo da URL pode ser usado como chave de consulta."""
+    return bool(valor) and bool(SAFE_ID_PATTERN.match(str(valor)))
+
+
 from src.version import __version__
 from src.core.correlation import correlate
 from src.core.commands import CommandQueue, ALLOWED, STUCK_LIMIT
@@ -119,10 +145,13 @@ _CSS_IDENTIDADE = _PALETA + (
     ".subtitle{color:var(--gry);font-size:0.85em;text-transform:uppercase;"
     "letter-spacing:2px;margin-top:4px;font-weight:bold}"
     ".meta{text-align:right;color:#888;font-size:0.9em}"
-    ".navlink{color:var(--cyn);text-decoration:none;border:1px solid #444;"
+    # [F-221] Sem borda. Os botoes de navegacao seguem a mesma linguagem dos
+    # icones de acao da tabela: sem caixa, o realce vem da cor no hover. A
+    # borda desenhava cinco retangulos competindo com a tabela por atencao.
+    ".navlink{color:var(--cyn);text-decoration:none;border:1px solid transparent;"
     "border-radius:4px;padding:4px 10px;margin-left:8px;font-size:11px;"
     "white-space:nowrap}"
-    ".navlink:hover{border-color:var(--cyn);background:#222}"
+    ".navlink:hover{background:#222;color:#fff}"
     ".conteudo{padding:24px 30px}"
     # Barra de controles no mesmo desenho da aba Processes do laudo: o analista
     # alterna entre as telas o tempo todo, e um controle que muda de forma a
@@ -393,33 +422,23 @@ def _selo_comando(ultimo):
     }.get(comando, "no agente")
 
     # Qual das tres paradas esta ativa. 0 enfileirado, 1 no agente, 2 desfecho.
+    # Cada estado diz qual parada esta ativa e como se chama o desfecho.
+    # Cancelado e desfecho PROPRIO: nao e falha (nada deu errado) nem conclusao
+    # (nada rodou). Tratado como "concluido" verde, mentia sobre o que aconteceu.
     if status == "PENDING":
-        ativo, falhou = 0, False
+        ativo, desfecho = 0, ("concluido", "#6bcB77")
     elif status == "SENT":
-        ativo, falhou = 1, False
+        ativo, desfecho = 1, ("concluido", "#6bcB77")
     elif status == "FAILED":
-        ativo, falhou = 2, True
+        ativo, desfecho = 2, ("falhou", "#ff4d4d")
+    elif status == "CANCELLED":
+        ativo, desfecho = 2, ("cancelado", "#9aa0a6")
     else:  # DONE (ou desconhecido) tratado como desfecho concluido
-        ativo, falhou = 2, False
+        ativo, desfecho = 2, ("concluido", "#6bcB77")
 
-    desfecho = ("falhou", "#ff4d4d") if falhou else ("concluido", "#6bcB77")
     paradas = [("enfileirado", "#7fb3d5"), (em_curso, "#ffd166"), desfecho]
 
-    # Trilha: paradas passadas em verde apagado com check, a atual em cor cheia
-    # com ponto, as futuras em cinza. E a proposta de "cor/icone por estado".
-    pecas = []
-    for i, (rotulo, cor) in enumerate(paradas):
-        if i < ativo:
-            pecas.append("<span style='color:#4a7a4a'>&#10003; %s</span>" % rotulo)
-        elif i == ativo:
-            marca = "&#9679; " if i != 2 else ""
-            pecas.append("<span style='color:%s; font-weight:bold'>%s%s</span>"
-                         % (cor, marca, rotulo))
-        else:
-            pecas.append("<span style='color:#555'>%s</span>" % rotulo)
-    trilha = " <span style='color:#444'>&rarr;</span> ".join(pecas)
-
-    # Carimbo de tempo da etapa atual e "ha quanto tempo" (cronometro vivo). O
+    # Carimbo de tempo da etapa ATIVA e "ha quanto tempo" (cronometro vivo). O
     # data-since deixa o JS atualizar a cada segundo entre os refreshes da pagina.
     carimbos = {0: ultimo.get("created_at"), 1: ultimo.get("delivered_at"),
                 2: ultimo.get("finished_at")}
@@ -438,6 +457,25 @@ def _selo_comando(ultimo):
         except Exception:
             tempo_html = ""
 
+    # Trilha: paradas passadas em verde apagado com check, a atual em cor cheia
+    # com ponto, as futuras em cinza. E a proposta de "cor/icone por estado".
+    #
+    # O tempo acompanha a etapa ATIVA, dentro da trilha. Solto no fim, logo
+    # depois da ultima parada, "ha 3m" era lido como "concluido ha 3m" enquanto
+    # o comando ainda estava rodando no agente, e nao se sabia se o cenario tinha
+    # terminado ou nao. O tempo pertence a etapa que esta acontecendo.
+    pecas = []
+    for i, (rotulo, cor) in enumerate(paradas):
+        if i < ativo:
+            pecas.append("<span style='color:#4a7a4a'>&#10003; %s</span>" % rotulo)
+        elif i == ativo:
+            marca = "&#9679; " if i != 2 else ""
+            pecas.append("<span style='color:%s; font-weight:bold'>%s%s</span>%s"
+                         % (cor, marca, rotulo, tempo_html))
+        else:
+            pecas.append("<span style='color:#555'>%s</span>" % rotulo)
+    trilha = " <span style='color:#444'>&rarr;</span> ".join(pecas)
+
     # Resultado completo no tooltip ("ver detalhes"), resumo visivel na linha.
     titulo = (" title='%s'" % _esc(resultado)) if resultado else ""
     linha_result = ""
@@ -445,8 +483,8 @@ def _selo_comando(ultimo):
         linha_result = ("<div style='color:#666; font-size:10px'>%s</div>"
                         % _esc(resultado[:70]))
 
-    return ("<div class='cmd-step'%s><span style='color:#888'>%s</span> %s%s%s</div>"
-            % (titulo, _esc(comando), trilha, tempo_html, linha_result))
+    return ("<div class='cmd-step'%s><span style='color:#888'>%s</span> %s%s</div>"
+            % (titulo, _esc(comando), trilha, linha_result))
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
@@ -492,12 +530,59 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         controller = self.server.controller
 
+        # [C-139] O painel inteiro exige credencial quando a auth esta ligada.
+        # A guarda fica AQUI, antes do roteamento, e nao em cada rota: uma rota
+        # nova nasce protegida por omissao, em vez de nascer aberta ate alguem
+        # lembrar. Foi o desenho do controlador removido, e vale mante-lo.
+        if not self._painel_autorizado(controller):
+            self._pede_credencial()
+            return
+
         if self.path == '/':
             # --- DASHBOARD ---
             self._serve_dashboard(controller.db, controller.commands)
 
-        elif self.path == '/log':
+        elif self.path.startswith('/log'):
+            # startswith, e nao igualdade, porque a tela aceita ?agent=<uuid>
+            # vindo do badge da fila de comandos na Manager.
             self._serve_command_log(controller)
+
+        elif self.path.startswith('/cmdcancel/'):
+            # /cmdcancel/<id>[?agent=<uuid>]: cancela UM pedido que aguarda.
+            alvo = self.path.split('?')[0].strip('/').split('/')
+            volta = "/log"
+            if "agent=" in self.path:
+                volta = "/log?agent=" + self.path.split("agent=")[1]
+            try:
+                if len(alvo) == 2:
+                    ok = controller.commands.cancel(int(alvo[1]),
+                                                    requested_by="dashboard")
+                    controller.logger.info("[CMD] cancel #%s -> %s", alvo[1], ok)
+            except Exception as e:
+                controller.logger.error("[CMD] Could not cancel: %s", e)
+            self.send_response(302)
+            self.send_header("Location", volta)
+            self.end_headers()
+            return
+
+        elif self.path.startswith('/cmdclear/'):
+            # /cmdclear/<uuid>: cancela TUDO que aguarda naquele agente. Nao
+            # toca no que ja foi entregue; e o botao de recuperacao da fila.
+            uuid_alvo = self.path.split('?')[0].strip('/').split('/')[-1]
+            if not id_valido(uuid_alvo):
+                self._recusa_id(uuid_alvo)
+                return
+            try:
+                n = controller.commands.clear_pending(uuid_alvo,
+                                                      requested_by="dashboard")
+                controller.logger.info("[CMD] queue of %s cleared (%d)",
+                                       uuid_alvo, n)
+            except Exception as e:
+                controller.logger.error("[CMD] Could not clear queue: %s", e)
+            self.send_response(302)
+            self.send_header("Location", "/log?agent=" + uuid_alvo)
+            self.end_headers()
+            return
 
         elif self.path.startswith('/timeline'):
             self._serve_timeline(controller)
@@ -510,7 +595,18 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
         elif self.path.startswith('/priority/'):
             # /priority/<uuid>/<valor>: reposiciona um agente na fila.
+            # A validacao vem ANTES do teste de aridade, e nao dentro dele.
+            #
+            # Medido em 2026-08-20: com a guarda dentro do `len == 3`, um valor
+            # contendo barra (`/priority/<script>x</script>/5`) virava QUATRO
+            # segmentos e escapava da validacao inteira. Nao era explorável,
+            # porque nada e usado quando a aridade nao bate, mas deixava a
+            # protecao dependente do formato da URL: o proximo ramo que alguem
+            # acrescentar aqui nasceria sem validacao nenhuma.
             partes = self.path.strip('/').split('/')
+            if len(partes) >= 2 and not id_valido(partes[1]):
+                self._recusa_id(partes[1])
+                return
             if len(partes) == 3:
                 try:
                     controller.queue.set_priority(partes[1], int(partes[2]))
@@ -524,7 +620,11 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             return
 
         elif self.path.startswith('/history/'):
-            self._serve_history(controller, self.path.split('/')[-1])
+            alvo_hist = self.path.split('?')[0].split('/')[-1]
+            if not id_valido(alvo_hist):
+                self._recusa_id(alvo_hist)
+                return
+            self._serve_history(controller, alvo_hist)
 
         elif self.path.startswith('/diff/'):
             self._serve_diff(controller)
@@ -532,6 +632,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         elif self.path.startswith('/cmd/'):
             # /cmd/<acao>/<uuid>: o analista enfileira; nada e executado aqui.
             partes = self.path.strip('/').split('/')
+            if len(partes) == 3 and not id_valido(partes[2]):
+                self._recusa_id(partes[2])
+                return
             if len(partes) == 3 and partes[1] in ALLOWED:
                 try:
                     controller.commands.enqueue(partes[2], partes[1],
@@ -549,6 +652,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # --- VIEW AGENT SNAPSHOT ---
             caminho, _, consulta = self.path.partition("?")
             agent_uuid = caminho.split('/')[-1]
+            if not id_valido(agent_uuid):
+                self._recusa_id(agent_uuid)
+                return
             args = urlparse.parse_qs(consulta or "")
             # Captura ESPECIFICA pedida (?capture=<id>), ou a mais recente.
             #
@@ -597,10 +703,14 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     # Barra de acoes do host: as mesmas acoes do gerente,
                     # ao alcance de quem ja esta lendo o laudo daquele agente.
                     def _acao(caminho, icone, titulo, extra=""):
+                        # [F-232] Sem borda: os icones seguem a mesma linguagem
+                        # da barra de filtros da aba Processes e da tabela da
+                        # Manager. A caixa em volta de cada emoji criava seis
+                        # retangulos concorrendo com o laudo por atencao.
                         return ("<a href=\"/cmd/%s/%s\" title=\"%s\" "
-                                "style=\"color:#4ec9b0; border:1px solid #444; "
-                                "border-radius:4px; padding:4px 8px; margin-left:6px; "
-                                "text-decoration:none; font-size:14px;%s\">%s</a>"
+                                "style=\"color:#4ec9b0; padding:4px 6px; "
+                                "margin-left:6px; opacity:0.75; "
+                                "text-decoration:none; font-size:17px;%s\">%s</a>"
                                 % (caminho, agent_uuid, titulo, extra, icone))
 
                     # IDADE DA CAPTURA, em destaque.
@@ -628,18 +738,23 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                            _human_age(idade_seg)))
 
                     back = (
+                        # [F-231] Barra mais baixa: 8px em cima e embaixo eram
+                        # altura tirada da arvore, que e onde se trabalha.
+                        # [F-232] "Fleet" virou "Manager": o botao volta para a
+                        # tela Manager, e e o nome do DESTINO que o operador
+                        # procura, nao um sinonimo do conceito.
                         "<div style=\"background:#1a1a1a; border-bottom:1px solid #333; "
-                        "padding:8px 20px; display:flex; align-items:center\">"
-                        "<a href=\"/\" style=\"color:#4ec9b0; border:1px solid #4ec9b0; "
-                        "border-radius:4px; padding:5px 14px; font-size:12px; "
+                        "padding:4px 16px; display:flex; align-items:center\">"
+                        "<a href=\"/\" title=\"Voltar para a tela Manager\" "
+                        "style=\"color:#4ec9b0; padding:4px 10px; font-size:12px; "
                         "font-family:sans-serif; text-decoration:none\">"
-                        "&larr; Fleet</a>"
+                        "&larr; Manager</a>"
                         + carimbo
                         + ("<a href=\"/history/%s\" title=\"Capturas anteriores "
                            "deste agente e comparacao entre duas\" "
-                           "style=\"color:#4ec9b0; border:1px solid #444; "
-                           "border-radius:4px; padding:4px 8px; margin-left:12px; "
-                           "text-decoration:none; font-size:14px\">&#128337;</a>"
+                           "style=\"color:#4ec9b0; padding:4px 6px; "
+                           "margin-left:12px; opacity:0.75; "
+                           "text-decoration:none; font-size:17px\">&#128337;</a>"
                            % agent_uuid)
                         + _acao("collect", "&#128248;",
                                 "Solicitar captura agora: entra na fila, o agente "
@@ -681,6 +796,76 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
     def _reply(self, payload, status=200):
         self._set_headers(status=status, content_type="application/json")
         self.wfile.write(json.dumps(payload).encode('utf-8'))
+
+    def _painel_autorizado(self, controller):
+        """
+        Basic Auth do painel (C-139), recuperado do web_controller removido.
+
+        Duas diferencas em relacao ao original, e as duas sao deliberadas:
+
+        - O original era um hook do Flask (`request.authorization`). Aqui o
+          servidor e BaseHTTPRequestHandler, entao o cabecalho e decodificado a
+          mao. Nao foi copia: foi reimplementacao do mesmo contrato.
+        - A comparacao do NOME de usuario usa hmac.compare_digest, e nao "==".
+          A comparacao curta vaza, pelo tempo, quantos caracteres iniciais
+          batem. Para a SENHA isso ja era tratado por check_password_hash; o
+          nome ficava de fora.
+
+        Devolve True quando pode seguir. Auth desligada devolve True (mantem o
+        comportamento aberto de quem nao configurou nada), e auth ligada SEM
+        hash devolve False: falha fechada, porque o operador pediu protecao.
+        """
+        if not controller.auth_enabled:
+            return True
+        if not controller.auth_hash:
+            return False
+
+        cabecalho = self.headers.get('Authorization', '') or ''
+        if not cabecalho.startswith('Basic '):
+            return False
+        try:
+            cru = base64.b64decode(cabecalho[6:].strip()).decode('utf-8', 'replace')
+        except Exception:
+            return False
+        usuario, _, senha = cru.partition(':')
+
+        if not hmac.compare_digest(str(usuario), str(controller.auth_user)):
+            return False
+        try:
+            from werkzeug.security import check_password_hash
+        except ImportError:
+            # Sem a biblioteca nao ha como conferir a senha. Recusar e a unica
+            # resposta honesta: seguir aberto entregaria a frota inteira.
+            controller.logger.error(
+                "[AUTH] werkzeug ausente: nao ha como conferir a senha, e o "
+                "painel esta RECUSANDO acesso.")
+            return False
+        return bool(check_password_hash(controller.auth_hash, senha))
+
+    def _pede_credencial(self):
+        """Resposta 401 com o desafio Basic."""
+        self.send_response(401)
+        self.send_header('WWW-Authenticate', 'Basic realm="Sys-Inspector"')
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Authentication required.")
+
+    def _recusa_id(self, valor):
+        """
+        Recusa um identificador que nao passou na allowlist (C-140).
+
+        Devolve 400 e NAO ecoa o valor recebido: repetir na resposta uma
+        entrada que ja se sabe hostil e como um XSS refletido nasce.
+        """
+        controller = self.server.controller
+        controller.logger.warning(
+            "[SEC] Identificador recusado em %s (%d caracteres)",
+            self.path.split('/')[1] if '/' in self.path[1:] else self.path,
+            len(str(valor or "")))
+        self.send_response(400)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Invalid identifier.")
 
     def _authorized(self, controller):
         """
@@ -733,6 +918,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                         agent_uuid, "ONLINE", hostname=host.get("hostname"),
                         ip=host.get("ip_address"), os_info=host.get("os_info"),
                         fqdn=host.get("fqdn"),
+                        hostnames=host.get("hostnames"),
+                        ip_addresses=host.get("ip_addresses"),
                         cycle_seconds=host.get("cycle_seconds"),
                         host_uptime=host.get("host_uptime"),
                         agent_uptime=host.get("agent_uptime"),
@@ -772,6 +959,15 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == '/upload':
+            # [SEC, 2026-08-20] Rota LEGADA (v0.60), e ate aqui a unica de
+            # ingestao que nao conferia token: qualquer um que alcancasse a
+            # porta podia injetar uma captura na base da frota, isto e,
+            # PLANTAR evidencia. Numa ferramenta forense isso e pior que ler
+            # sem autorizacao. Passa a exigir o mesmo Bearer das rotas novas.
+            # A remocao da rota esta registrada como item proprio.
+            if not self._authorized(controller):
+                self._reply({"status": "unauthorized"}, status=401)
+                return
             try:
                 content_len = int(self.headers.get('Content-Length', 0))
                 post_body = self.rfile.read(content_len)
@@ -1689,7 +1885,14 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         """
         commands = controller.commands
         commands.expire_stuck()
-        registros = commands.list_for(limit=200)
+
+        # Filtro por agente, vindo do badge da fila de comandos na Manager. E o
+        # caminho de recuperacao: o operador clica no numero, ve o que esta preso
+        # naquele host e age ali mesmo, sem precisar mexer no banco por fora.
+        agente_filtro = ""
+        if "agent=" in self.path:
+            agente_filtro = self.path.split("agent=")[1].split("&")[0].strip()
+        registros = commands.list_for(agente_filtro or None, limit=200)
 
         # Identidade legivel de cada agente, buscada uma vez.
         frota = {}
@@ -1697,7 +1900,38 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             frota[a.get("uuid")] = a
 
         cores = {"PENDING": "#7fb3d5", "SENT": "#ffd166",
-                 "DONE": "#6bcB77", "FAILED": "#ff4d4d"}
+                 "DONE": "#6bcB77", "FAILED": "#ff4d4d",
+                 "CANCELLED": "#9aa0a6"}
+
+        # Cabecalho do recorte: diz de quem e a fila e oferece limpar o que
+        # aguarda. Aparece SEMPRE que ha filtro, mesmo com zero pendente (D-020),
+        # para o operador nunca ficar em duvida se a fila esta vazia ou se a tela
+        # deixou de reportar.
+        recorte_html = ""
+        if agente_filtro:
+            aguardando = commands.pending_count(agente_filtro)
+            nome = _identifica_agente(frota.get(agente_filtro), agente_filtro)
+            botao = ""
+            if aguardando:
+                botao = ("<a href='/cmdclear/%s' class='btn-warn' "
+                         "title='Cancela os %d pedido(s) que ainda aguardam. "
+                         "Nao afeta um pedido ja entregue ao agente.' "
+                         "style='margin-left:14px;color:#ff8c42;"
+                         "text-decoration:none'>&#128465; limpar a fila</a>"
+                         % (_esc(agente_filtro), aguardando))
+            recorte_html = (
+                "<div style='background:#1a1a1a;border:1px solid #333;"
+                "border-radius:6px;padding:10px 14px;margin-bottom:12px;"
+                "font-size:12px'>"
+                "<b style='color:#4ec9b0'>Fila de comandos</b> de %s "
+                "&nbsp;&middot;&nbsp; <b>%d</b> aguardando o agente perguntar%s"
+                "<div style='color:#777;font-size:11px;margin-top:5px'>"
+                "Esta e a fila de COMANDOS (pedidos esperando o agente). Nao "
+                "confundir com a fila de INGESTAO (capturas esperando gravacao "
+                "no servidor), que fica na tela Fila."
+                "<a href='/log' style='color:#4ec9b0;text-decoration:none;"
+                "margin-left:10px'>ver todos os agentes</a></div></div>"
+                % (nome, aguardando, botao))
 
         # O que cada acao faz, e a tecnica que ela exercita quando for o caso.
         # Sem isso "chaos" e uma palavra sem significado para quem nao escreveu
@@ -1758,6 +1992,19 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                            % (r["agent_uuid"], r["agent_uuid"], minutos,
                               r["agent_uuid"]))
 
+            # Cancelar so aparece no que AINDA AGUARDA. Um pedido entregue esta
+            # com o agente e o servidor nao tem como desfaze-lo; oferecer o botao
+            # ali seria prometer na tela algo que nao acontece no host.
+            if r["status"] == "PENDING":
+                atalhos = ("<div style='margin-top:4px'>"
+                           "<a href='/cmdcancel/%d?agent=%s' "
+                           "title='Cancela este pedido antes de ele sair para o "
+                           "agente. O registro permanece, marcado como "
+                           "cancelado.' style='color:#ff8c42;"
+                           "text-decoration:none;font-size:11px'>"
+                           "&#10006; cancelar</a></div>"
+                           % (r["id"], _esc(r.get("agent_uuid") or ""))) + atalhos
+
             linhas += ("<tr class='item'>"
                        "<td style='color:#777;width:40px'>%s</td>"
                        "<td style='color:#4ec9b0;width:110px'>%s</td>"
@@ -1797,7 +2044,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             "laudo, a lista de capturas e a janela da linha do tempo que cobre "
             "aquele momento.</div>" % STUCK_LIMIT)
 
-        corpo = ("<div class='controles'>"
+        corpo = (recorte_html
+                 + "<div class='controles'>"
                  "<span class='rotulo'>Registro de comandos</span>"
                  "<span style='color:#777;font-size:11px'>%d pedido(s), do mais "
                  "recente para o mais antigo. Recarrega sozinho a cada 15s."
@@ -1895,9 +2143,23 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # Estado do ultimo comando pedido. Sem isso o analista clica e nao
             # sabe se o agente ja pegou, se esta executando ou se terminou: a
             # acao vira um botao que aparentemente nao faz nada.
+            # SEMPRE renderiza, inclusive com zero (D-020). Antes o badge so
+            # existia quando havia pedido: no zero ele sumia da linha, e um
+            # controle que desaparece deixa o operador sem saber se a fila esta
+            # vazia ou se a tela parou de reportar. Zero e informacao.
+            #
+            # E a FILA DE COMANDOS (pedidos esperando o agente perguntar), que
+            # nao e a mesma coisa que a fila de ingestao da tela /queue (capturas
+            # esperando gravacao no servidor). As duas ja foram lidas como se
+            # fossem uma so e os numeros "divergiam"; o rotulo diz qual e qual.
             aguardando = db_commands.pending_count(uuid) if db_commands else 0
-            cmd_badge = ("<span class='cmd-badge' title='queued, waiting for the "
-                         "agent to check in'>%d</span>" % aguardando) if aguardando else ""
+            cmd_badge = (
+                "<a class='cmd-badge%s' href='/log?agent=%s' "
+                "title='Fila de comandos: %d pedido(s) aguardando este agente "
+                "perguntar. Clique para ver, cancelar ou limpar. Nao confundir "
+                "com a fila de ingestao (capturas), na tela Fila.'>%d</a>"
+                % ("" if aguardando else " cmd-badge-zero",
+                   _esc(uuid), aguardando, aguardando))
 
             # Estado do ultimo comando como STEPPER (etapa atual destacada),
             # separado da cadencia automatica da coluna Next. Ver _selo_comando.
@@ -1910,12 +2172,44 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # simplesmente nao tem dominio configurado, e ver isso e informacao).
             # So vira um traco quando de fato nao ha FQDN, e o traco distingue
             # "host sem dominio" de "nao coletado".
+            # [F-227] TODOS os nomes, principal em destaque. Os demais (alias de
+            # /etc/hosts, reverso de DNS, nome curto) vao abaixo, menores: e por
+            # eles que o mesmo host aparece com identidades diferentes em
+            # sistemas diferentes, e esconde-los esconde metade do que amarra a
+            # maquina ao laudo.
+            outros_nomes = [n for n in (a.get('hostnames') or [])
+                            if n and n != fqdn]
             if fqdn:
-                fqdn_col = ("<span style='color:#999;font-family:monospace;"
-                            "font-size:11px'>%s</span>" % _esc(fqdn))
+                fqdn_col = ("<span style='color:#ccc;font-family:monospace;"
+                            "font-size:12px' title='Nome principal'>%s</span>"
+                            % _esc(fqdn))
             else:
                 fqdn_col = ("<span title='host sem FQDN resolvivel (sem dominio "
                             "configurado)' style='color:#555'>&mdash;</span>")
+            if outros_nomes:
+                fqdn_col += ("<div style='color:#777;font-family:monospace;"
+                             "font-size:10px' title='Outros nomes pelos quais "
+                             "este host e conhecido (aliases e DNS reverso)'>"
+                             "%s</div>"
+                             % "<br>".join(_esc(n) for n in outros_nomes[:4]))
+                if len(outros_nomes) > 4:
+                    fqdn_col += ("<div style='color:#555;font-size:10px'>+%d "
+                                 "outro(s)</div>" % (len(outros_nomes) - 4))
+
+            # [F-227] Mesmo tratamento para os enderecos: o da rota de saida em
+            # destaque (e o que o servidor ve), os demais abaixo.
+            todos_ips = [x for x in (a.get('ip_addresses') or []) if x]
+            outros_ips = [x for x in todos_ips if x != ip]
+            ip_col = ("<span title='Endereco usado na rota ate o servidor'>%s"
+                      "</span>" % _esc(ip))
+            if outros_ips:
+                ip_col += ("<div style='color:#777;font-family:monospace;"
+                           "font-size:10px' title='Outros enderecos deste host'>"
+                           "%s</div>"
+                           % "<br>".join(_esc(x) for x in outros_ips[:4]))
+                if len(outros_ips) > 4:
+                    ip_col += ("<div style='color:#555;font-size:10px'>+%d "
+                               "outro(s)</div>" % (len(outros_ips) - 4))
             fqdn_html = ""
             seen_html = ""
 
@@ -1937,13 +2231,19 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             findings = a.get('findings') or {}
             sev_colors = {'Critical': '#ff4d4d', 'High': '#ff8c42',
                           'Medium': '#ffd166', 'Low': '#6bcB77'}
-            sev_cells = ""
+            # [F-224] UMA celula com as quatro severidades lado a lado, em vez de
+            # quatro colunas largas para quatro numeros de um digito. O zero
+            # continua VISIVEL, apenas apagado (D-020): um contador que some
+            # deixa o operador sem saber se e zero ou se parou de reportar.
+            sev_itens = ""
             for level, color in sev_colors.items():
                 qty = findings.get(level, 0)
-                style = (f"background:{color}; color:#1e1e1e; font-weight:bold"
+                style = (f"background:{color}; color:#1e1e1e"
                          if qty else "background:#2a2a2a; color:#555")
-                sev_cells += (f"<td><span style='{style}; padding:2px 8px; "
-                              f"border-radius:3px; font-size:11px'>{qty}</span></td>")
+                sev_itens += (f"<span class='sev-cel' style='{style}' "
+                              f"title='{level}: {qty} achado(s) na ultima "
+                              f"captura'>{qty}</span>")
+            sev_cells = f"<td><div class='sev-bloco'>{sev_itens}</div></td>"
 
             # A borda da linha acompanha a pior severidade encontrada.
             worst = next((c for lv, c in sev_colors.items() if findings.get(lv)), None)
@@ -1953,14 +2253,37 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # mais rapido que a palavra, e o rotulo continua no title para quem
             # precisa da certeza. A cor da borda da linha ja carrega a gravidade;
             # o ponto carrega a presenca.
+            # [F-226] O ponto sozinho nao dizia DE QUEM era o estado, nem desde
+            # quando. Um host pode estar de pe com o agente mudo, e essa e
+            # justamente a situacao que interessa. Agora o rotulo nomeia o
+            # sujeito (o agente) e a ultima conversa aparece na propria celula,
+            # sem depender de passar o mouse.
+            # _dur_humana devolve so a duracao ("25s"); _human_age acrescenta
+            # " ago" em ingles, e "falou ha 25s ago" mistura os dois idiomas e
+            # diz a mesma coisa duas vezes.
+            try:
+                desde = _dur_humana(idade)
+            except Exception:
+                desde = "?"
             if is_online:
-                status_cell = ("<span title='ONLINE: reportou dentro do "
-                               "intervalo esperado' style='color:#51cf66;"
-                               "font-size:20px'>&#9679;</span>")
+                status_cell = ("<div><span title='O AGENTE falou com o servidor "
+                               "dentro do intervalo esperado' style='color:#51cf66;"
+                               "font-size:18px'>&#9679;</span>"
+                               "<span style='color:#51cf66;font-size:10px;"
+                               "margin-left:5px'>agente ativo</span></div>"
+                               "<div style='color:#777;font-size:10px' "
+                               "title='Ultima vez que este AGENTE falou com o "
+                               "servidor'>falou ha %s</div>" % desde)
             else:
-                status_cell = ("<span title='OFFLINE: passou de dois ciclos sem "
-                               "reportar' style='color:#ff6b6b;font-size:20px'>"
-                               "&#9679;</span>")
+                status_cell = ("<div><span title='O AGENTE passou de dois ciclos "
+                               "sem falar com o servidor. O host pode estar de pe: "
+                               "isto e o estado do AGENTE' style='color:#ff6b6b;"
+                               "font-size:18px'>&#9679;</span>"
+                               "<span style='color:#ff6b6b;font-size:10px;"
+                               "margin-left:5px'>agente mudo</span></div>"
+                               "<div style='color:#777;font-size:10px' "
+                               "title='Ultima vez que este AGENTE falou com o "
+                               "servidor'>desde ha %s</div>" % desde)
             border_style = risk_border or ("border-left: 4px solid #51cf66;" if is_online else "border-left: 4px solid #ff6b6b;")
 
             rows += f"""
@@ -1970,13 +2293,13 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     <br><small style='color:#666; font-family:monospace'>{uuid}</small>
                     {fqdn_html}{seen_html}
                 </td>
-                <td style='color:#ccc'>{ip}</td>
+                <td style='color:#ccc'>{ip_col}</td>
                 <td>{fqdn_col}</td>
                 {sev_cells}
-                <td style='color:#aaa'>{seen}</td>
-                <td>{proximo_html}</td>
-                <td style='color:#aaa;font-size:12px'>{uptime_col}</td>
-                <td style='text-align:center'>{status_cell}</td>
+                <td class='col-agente' style='color:#aaa'>{seen}</td>
+                <td class='col-agente'>{proximo_html}</td>
+                <td class='col-agente' style='color:#aaa;font-size:12px'>{uptime_col}</td>
+                <td class='col-agente'>{status_cell}</td>
                 <td style='white-space:nowrap'>
                     <a href='/agent/{uuid}' class='btn-ico' title='Abrir o laudo forense deste agente'>&#128269;</a>
                     <a href='/history/{uuid}' class='btn-ico' title='Capturas anteriores deste agente e comparacao entre duas: mostra o que mudou de uma para a outra'>&#128337;</a>
@@ -2018,11 +2341,60 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         <meta http-equiv="refresh" content="30">
         <style>
             {_CSS_IDENTIDADE}
-            table {{ width: 90%; margin: 30px auto; border-collapse: separate; border-spacing: 0 10px; }}
-            th {{ text-align: left; color: #777; text-transform: uppercase; font-size: 0.85em; padding: 0 15px 10px 15px; letter-spacing: 1px; }}
-            td {{ padding: 15px; }}
-            tr {{ transition: transform 0.2s; }}
-            tr:hover {{ transform: scale(1.01); background: #2a2d2e !important; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }}
+            /* [F-230] A tabela ocupava 90% e ainda tinha 30px de margem: sobravam
+               faixas largas dos dois lados numa tela cuja informacao e horizontal.
+               [F-223] table-layout:fixed e o que permite a largura de coluna ser
+               respeitada; sem isso o navegador recalcula tudo e o arraste nao gruda. */
+            /* [F-223] Largura de cada coluna numa fonte so, como no laudo.
+               Com `table-layout:fixed` quem manda e o colgroup (ou a PRIMEIRA
+               linha). A linha de agrupamento que este cabecalho ganhou usa
+               colspan, entao sem colgroup o navegador derivava tudo dela e as
+               larguras individuais eram ignoradas: era por isso que o arraste
+               nao pegava e a coluna Action ficava espremida. */
+            :root {{
+                --m-w-host: 230px;
+                --m-w-ip: 150px;
+                --m-w-fqdn: 190px;
+                --m-w-sev: 150px;
+                --m-w-seen: 190px;
+                --m-w-next: 130px;
+                --m-w-up: 120px;
+                --m-w-stat: 150px;
+                --m-w-act: 420px;
+            }}
+            table {{ width: 100%; margin: 12px 0 30px 0; border-collapse: separate;
+                     border-spacing: 0 8px; table-layout: fixed; }}
+            th {{ text-align: left; color: #777; text-transform: uppercase; font-size: 0.85em; padding: 0 15px 10px 15px; letter-spacing: 1px; position: relative; }}
+            /* Sem `overflow:hidden`: era ele que cortava o texto de estado
+               da coluna Action pela metade. Com largura declarada, o
+               conteudo quebra em linha em vez de sumir. */
+            td {{ padding: 12px 15px; vertical-align: top; word-break: break-word; }}
+            /* [F-222] Sem animacao de tamanho nem de posicao. `transform:scale`
+               movia a linha inteira sob o cursor, deslocando o alvo do clique no
+               instante em que se vai clicar. A mudanca de cor basta para dizer
+               qual linha esta sob o mouse, e nao mexe em nada de lugar. */
+            tr {{ transition: background 0.15s; }}
+            tr:hover {{ background: #2a2d2e !important; }}
+            /* [F-223] Alca de arraste na borda direita do cabecalho. */
+            .col-grip {{ position:absolute; top:0; right:0; width:6px; bottom:0;
+                            cursor:col-resize; user-select:none; }}
+            .col-grip:hover {{ background:var(--cyn); opacity:0.5; }}
+            /* [F-224] As quatro severidades num bloco so, em vez de quatro colunas
+               largas para quatro numeros de um digito. */
+            .sev-bloco {{ display:flex; gap:3px; align-items:center; }}
+            .sev-cel {{ min-width:26px; text-align:center; padding:2px 5px;
+                        border-radius:3px; font-size:11px; font-weight:bold; }}
+            /* [F-228] Last Seen, Next, Uptime e Status respondem a MESMA
+               pergunta (o agente esta vivo e em que ritmo). Lidas como quatro
+               colunas independentes elas parecem se contradizer; sob um rotulo
+               comum, lê-se um bloco so. */
+            .grp-linha th {{ padding: 0 15px 4px 15px; }}
+            .grp-vazio {{ border: none; }}
+            .grp-agente {{ text-align:center !important; color:#8ab4f8 !important;
+                           font-size:0.7em !important; letter-spacing:2px;
+                           border-bottom:1px solid #2f4667; }}
+            .col-agente {{ background:rgba(80,120,180,0.05); }}
+            td.col-agente {{ background:rgba(80,120,180,0.05); }}
             .btn-view {{ background: #333; color: #fff; text-decoration: none; padding: 6px 12px; font-size: 10px; border-radius: 3px; border: 1px solid #555; transition:0.2s; }}
             /* Icones de acao no MESMO padrao da barra de filtros da aba
                Processes (.filter-btn): emoji "pelado", sem caixa, opacidade
@@ -2032,30 +2404,51 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             .btn-ico:hover {{ opacity:1; transform:scale(1.25); filter:none; }}
             .btn-lab:hover {{ text-shadow:0 0 8px #ff8c42; }}
             .btn-warn:hover {{ text-shadow:0 0 8px var(--red); }}
-            .cmd-badge {{ background:var(--acc); color:#fff; font-size:10px; padding:1px 7px; border-radius:8px; margin-left:4px; }}
+            .cmd-badge {{ background:var(--acc); color:#fff; font-size:10px; padding:1px 7px; border-radius:8px; margin-left:4px; text-decoration:none; }}
+            .cmd-badge:hover {{ filter:brightness(1.25); }}
+            /* Zero continua VISIVEL (D-020), apenas discreto: um controle que
+               some deixa o operador sem saber se a fila esta vazia ou se a tela
+               parou de reportar. */
+            .cmd-badge-zero {{ background:transparent; color:#666; border:1px solid #3a3a3a; }}
             .cmd-step {{ margin-top:5px; font-size:10px; line-height:1.5; max-width:340px; }}
             .btn-view:hover {{ background: #0078d4; border-color: #0078d4; }}
         </style>
         </head><body>
         {cabecalho}
         <table>
-            <thead><tr>
-                <th title="Nome curto e UUID estavel da origem da captura">Hostname / UUID</th>
-                <th title="Endereco pela rota de saida ate o servidor">IP</th>
-                <th title="Nome de dominio: o mesmo host aparece com nomes diferentes em sistemas diferentes">FQDN</th>
-                <th title="Achados criticos na ultima captura">Crit</th>
-                <th title="Achados de severidade alta">High</th>
-                <th title="Achados de severidade media">Med</th>
-                <th title="Achados de severidade baixa">Low</th>
-                <th title="Momento da ultima captura recebida, hora local e UTC">Last Seen</th>
-                <th title="AGENDADOR: proxima coleta esperada, a partir do ciclo do agente (capture_duration + interval). O agente coleta sozinho nessa cadencia; o icone de captura na acao pede uma coleta agora, fora do ciclo.">Next / cadencia</th>
-                <th title="Uptime do host (desde o boot) e do agente (desde que subiu)">Uptime</th>
-                <th title="Verde = reportou dentro do intervalo esperado; vermelho = passou de dois ciclos sem reportar">Status</th>
+            <colgroup>
+                <col style="width:var(--m-w-host)">
+                <col style="width:var(--m-w-ip)">
+                <col style="width:var(--m-w-fqdn)">
+                <col style="width:var(--m-w-sev)">
+                <col style="width:var(--m-w-seen)">
+                <col style="width:var(--m-w-next)">
+                <col style="width:var(--m-w-up)">
+                <col style="width:var(--m-w-stat)">
+                <col style="width:var(--m-w-act)">
+            </colgroup>
+            <thead>
+            <tr class="grp-linha">
+                <th colspan="3" class="grp-vazio"></th>
+                <th class="grp-vazio"></th>
+                <th colspan="4" class="grp-agente">Agente: presenca e ritmo</th>
+                <th class="grp-vazio"></th>
+            </tr>
+            <tr>
+                <th title="Nome curto e UUID estavel da origem da captura">Hostname / UUID<span class="col-grip" data-col="--m-w-host"></span></th>
+                <th title="Enderecos deste host. O primeiro e o usado na rota de saida ate o servidor">IP<span class="col-grip" data-col="--m-w-ip"></span></th>
+                <th title="Nomes de dominio deste host. O principal em destaque; os demais sao aliases e reverso de DNS">FQDN<span class="col-grip" data-col="--m-w-fqdn"></span></th>
+                <th title="Achados da ultima captura, por severidade: Critical, High, Medium, Low">Severidade<span class="col-grip" data-col="--m-w-sev"></span></th>
+                <th class="col-agente" title="Momento da ultima captura recebida, hora local e UTC">Last Seen<span class="col-grip" data-col="--m-w-seen"></span></th>
+                <th class="col-agente" title="AGENDADOR: proxima coleta esperada, a partir do ciclo do agente (capture_duration + interval). O agente coleta sozinho nessa cadencia; o icone de captura na acao pede uma coleta agora, fora do ciclo.">Next / cadencia<span class="col-grip" data-col="--m-w-next"></span></th>
+                <th class="col-agente" title="Uptime do host (desde o boot) e do agente (desde que subiu)">Uptime<span class="col-grip" data-col="--m-w-up"></span></th>
+                <th class="col-agente" title="Estado do AGENTE, nao do host: verde = falou com o servidor dentro do intervalo esperado; vermelho = passou de dois ciclos sem falar">Status do agente<span class="col-grip" data-col="--m-w-stat"></span></th>
                 <th title="Abrir laudo, historico, pedir captura agora, cenario de teste (lab), reiniciar">Action</th>
             </tr></thead>
             <tbody>{rows}</tbody>
         </table>
         {js_ticker}
+        {JS_COLUNAS_AJUSTAVEIS}
         </body></html>
         """
         self.wfile.write(html.encode('utf-8'))
@@ -2091,6 +2484,27 @@ class ServerController:
         if self.notifier.enabled:
             self.logger.info("[NOTIFY] Alerts enabled from severity %s",
                              self.notifier.min_severity)
+        # [C-139] Autenticacao do PAINEL, recuperada do web_controller removido
+        # em 2026-08-19. Ela protege o acesso humano; as rotas de ingestao
+        # continuam usando o token Bearer do agente, que e outra conversa.
+        auth_cfg = (rede.get('auth') or {})
+        self.auth_enabled = bool(auth_cfg.get('enabled', False))
+        self.auth_user = auth_cfg.get('username', 'admin')
+        self.auth_hash = auth_cfg.get('password_hash', '') or ''
+        if self.auth_enabled and not self.auth_hash:
+            # FALHA FECHADA. Sem hash nao ha como conferir senha alguma; seguir
+            # aberto seria pior que recusar, porque o operador PEDIU protecao e
+            # acreditaria estar protegido.
+            self.logger.error(
+                "[AUTH] network.auth.enabled esta ligado e nao ha "
+                "password_hash: o painel vai RECUSAR todo acesso. Gere o hash "
+                "com tools/gen_password.py.")
+        elif not self.auth_enabled:
+            self.logger.warning(
+                "[AUTH] Painel SEM autenticacao: quem alcancar a porta le a "
+                "coleta inteira da frota. Ligue network.auth para exigir "
+                "credencial.")
+
         self.ingest_token = (config.get('server', {}) or {}).get('auth_token', '') or ''
         if not self.ingest_token:
             self.logger.warning(
@@ -2158,13 +2572,26 @@ class ServerController:
         server = ThreadingHTTPServer(('0.0.0.0', port), ServerHTTPHandler)
         server.controller = self
 
-        # TLS opcional, desligado por padrao para nao quebrar instalacoes que
-        # ja apontam agentes para HTTP.
-        scheme = "http"
-        if bool(self.config.get('network', {}).get('tls_enabled', False)):
-            if self._wrap_tls(server):
-                scheme = "https"
-        self.scheme = scheme
+        # HTTPS e o UNICO transporte deste servidor (D-033). Nao existe ramo
+        # de texto claro: nem por configuracao, nem como degradacao quando o
+        # TLS falha.
+        #
+        # A degradacao silenciosa era o pior dos dois desfechos possiveis. O
+        # operador pede cifra, o servidor nao consegue ativar, cai para HTTP e
+        # segue servindo: a partir dai todos acreditam que a evidencia viaja
+        # protegida, e ela nao viaja. Um servidor que NAO SOBE e um problema
+        # visivel em trinta segundos; um que serve em claro acreditando-se
+        # cifrado pode durar meses.
+        if not self._wrap_tls(server):
+            self.logger.critical(
+                "[HTTPS] Nao foi possivel ativar TLS na porta %s. O servidor "
+                "NAO vai subir: esta ferramenta nao serve evidencia forense em "
+                "texto claro. Confira network.ssl_cert e network.ssl_key, ou "
+                "deixe os dois ausentes para que um par autoassinado seja "
+                "gerado automaticamente.", port)
+            server.server_close()
+            raise RuntimeError("TLS indisponivel: o servidor nao sobe em claro")
+        self.scheme = "https"
 
         t_server = threading.Thread(target=server.serve_forever)
         t_server.daemon = True
@@ -2235,8 +2662,8 @@ class ServerController:
         t_queue.daemon = True
         t_queue.start()
 
-        self.logger.info(f"[HTTP] Server Manager listening on port {port} ({scheme})")
-        self.logger.info(f"[INFO] Dashboard available at {scheme}://<server-ip>:{port}")
+        self.logger.info(f"[HTTPS] Server Manager listening on port {port}")
+        self.logger.info(f"[INFO] Dashboard available at https://<server-ip>:{port}")
 
         try:
             while not self.shutdown_event.is_set():

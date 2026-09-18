@@ -21,7 +21,7 @@ import time
 import pytest
 
 from src.core.commands import (CommandQueue, RETRY_AFTER, CMD_CHAOS_COLLECT,
-                               CMD_COLLECT, ST_SENT)
+                               CMD_COLLECT)
 from src.core.executed import ExecutionLedger
 
 

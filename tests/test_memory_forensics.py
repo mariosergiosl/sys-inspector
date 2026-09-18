@@ -16,7 +16,7 @@
 import pytest
 
 from src.collectors import memory_forensics as mf
-from src.core.findings import SEV_HIGH, SEV_MEDIUM, SEV_LOW
+from src.core.findings import SEV_HIGH, SEV_LOW
 
 
 def _mapa(entradas):

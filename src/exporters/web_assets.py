@@ -14,6 +14,7 @@
 # ==============================================================================
 
 from src.core import risk
+from src.core import badges as badges_reg
 
 # ------------------------------------------------------------------------------
 # 1. LEGEND COMPONENT
@@ -27,19 +28,116 @@ from src.core import risk
 
 
 def _linhas_legenda():
+    """
+    Duas linhas por sinal: a compacta (bit/rotulo/severidade) e, logo
+    abaixo, a explicacao por extenso, sempre VISIVEL.
+
+    [2026-08-18] Antes a explicacao so ia no title (hover): o Mario testou
+    e relatou "ainda estou tentando entender a numeracao e valores" -- um
+    popup cujo unico jeito de entender cada linha e passar o mouse em cima,
+    uma de cada vez, nao ensina nada de longe. A explicacao de risk.SINAIS
+    ja e escrita nesse tom (o que o sinal representa para seguranca/pericia,
+    nao so o nome tecnico); so precisava parar de estar escondida.
+    """
     linhas = ""
-    for bit, _chave, rotulo, severidade, _explicacao in risk.SINAIS:
+    for bit, _chave, rotulo, severidade, explicacao in risk.SINAIS:
         linhas += ("<tr><td>+%d</td><td>%s</td>"
                    "<td style='color:%s'>%s</td></tr>"
-                   % (bit, rotulo, risk.CORES.get(severidade, "#888"),
-                      severidade))
+                   "<tr class='leg-exp-row'><td></td>"
+                   "<td colspan='2'><span class='leg-sig'>%s</span></td></tr>"
+                   % (bit, _esc_legenda(rotulo),
+                      risk.CORES.get(severidade, "#888"), severidade,
+                      _esc_legenda(explicacao)))
     return linhas
 
 
+def _esc_legenda(valor):
+    """Escape minimo para texto vindo de risk.SINAIS dentro de atributo/celula."""
+    return (str(valor).replace("&", "&amp;").replace('"', "&quot;")
+            .replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _botoes_filtro():
+    """
+    Um botao de filtro por chave de src.core.badges.TAG_MAP, na mesma ordem.
+
+    Existia aqui uma lista de 11 botoes escrita a mao, que ja tinha ficado
+    para tras (IMMUTABLE e DELETED tinham badge e nenhum filtro) antes mesmo
+    do F-201 acrescentar 13 badges novos. Um sinal presente que ninguem
+    consegue isolar numa arvore de centenas de processos esta la so
+    formalmente (D-028); gerar daqui, do MESMO registro que desenha o badge,
+    e o que impede a proxima divergencia.
+    """
+    linhas = ""
+    for tag, (icone, _cls, tooltip, _sig) in badges_reg.TAG_MAP.items():
+        linhas += ('<span class="filter-btn" onclick="setFilter(\'%s\', this)" '
+                   'title="%s">%s</span>\n                    '
+                   % (tag, tooltip, icone))
+    return linhas
+
+
+FILTER_BAR_HTML = _botoes_filtro()
+
+# Badges que a barra de filtro desenha por caminho proprio (fora do
+# TAG_MAP): NEW (node.is_new) e NET ERR (contadores agregados). Precisam de
+# legenda tambem, senao o popup mente por omissao sobre dois botoes que
+# estao bem ali do lado.
+_BADGES_FORA_DO_MAPA = (
+    ("NEW", "✨", "Processo novo nesta captura, ausente na anterior.",
+     "Sozinho e neutro (todo host cria processos o tempo todo). O valor "
+     "forense esta em CRUZAR com o resto da arvore: processo novo com "
+     "caminho gravavel, ou novo direto sob PID 1 sem passar por um "
+     "gerenciador de servico conhecido, pesa mais que o badge isolado."),
+    ("NET ERR", "❌",
+     "Falhas de rede do processo (retransmissoes TCP + pacotes descartados), somadas.",
+     "Pode ser so problema de infraestrutura (link instavel, MTU errado). "
+     "Tambem e a assinatura de C2 mal configurado ou de exfiltracao para "
+     "um destino que bloqueia/reseta a conexao repetidamente."),
+)
+
+
+def _linhas_legenda_badges():
+    linhas = ""
+    for tag, icone, explicacao, significado in _BADGES_FORA_DO_MAPA:
+        linhas += ("<tr><td>%s</td><td>%s</td><td>%s<br><span class='leg-sig'>%s</span></td></tr>"
+                   % (icone, _esc_legenda(tag), _esc_legenda(explicacao),
+                      _esc_legenda(significado)))
+    for tag, (icone, _cls, explicacao, significado) in badges_reg.TAG_MAP.items():
+        linhas += ("<tr><td>%s</td><td>%s</td><td>%s<br><span class='leg-sig'>%s</span></td></tr>"
+                   % (icone, _esc_legenda(tag), _esc_legenda(explicacao),
+                      _esc_legenda(significado)))
+    return linhas
+
+
+BADGE_LEGEND_HTML = ("""
+<div class="score-legend-wrapper">
+    <span class="legend-icon" title="Legenda dos badges" onclick="toggleLegend(this)">?</span>
+    <div class="legend-backdrop" onclick="this.closest('.score-legend-wrapper').classList.remove('open')"></div>
+    <div class="score-tooltip">
+        <span class="legend-close" onclick="this.closest('.score-legend-wrapper').classList.remove('open')" title="Fechar">&times;</span>
+        <h4>Badges da arvore de processos</h4>
+        <div style="font-size:10px; color:#999; margin-bottom:6px;">
+            Rotulo tecnico (o que a sonda observou) e, logo abaixo em cinza,
+            o que isso costuma significar para seguranca e pericia.
+        </div>
+        <table class="badge-legend">%s</table>
+        <div style="font-size:9px; color:#777; margin-top:5px;
+                    border-top:1px solid #333; padding-top:2px;">
+            * Clique num icone da barra de Filters para isolar so os
+            processos com aquele sinal. Esta lista e a mesma fonte que
+            desenha os icones (src/core/badges.py): nunca fica desatualizada
+            em relacao aos botoes ao lado.
+        </div>
+    </div>
+</div>
+""" % _linhas_legenda_badges())
+
 LEGEND_HTML = ("""
 <div class="score-legend-wrapper">
-    <span class="legend-icon" title="Anomaly Score Rules">?</span>
+    <span class="legend-icon" title="Anomaly Score Rules" onclick="toggleLegend(this)">?</span>
+    <div class="legend-backdrop" onclick="this.closest('.score-legend-wrapper').classList.remove('open')"></div>
     <div class="score-tooltip">
+        <span class="legend-close" onclick="this.closest('.score-legend-wrapper').classList.remove('open')" title="Fechar">&times;</span>
         <h4>Sinais do anomaly score (campo de bits)</h4>
         <table>%s</table>
         <div style="font-size:9px; color:#777; margin-top:5px;
@@ -57,11 +155,124 @@ LEGEND_HTML = ("""
 # ------------------------------------------------------------------------------
 CSS_BASE = r"""
 :root { --bg:#121212; --fg:#e0e0e0; --acc:#0078d4; --red:#ff6b6b; --grn:#51cf66; --yel:#fcc419; --pur:#b180ff; --gry:#777; --drk:#252526; --border:#333; --cyn:#4ec9b0; }
-body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:var(--fg); padding:20px; font-size:13px; margin:0; }
+/* [F-239] Antes 20px em volta do corpo inteiro. Numa tela cuja informacao e
+   horizontal (a arvore de comando trunca com "..."), essa moldura era largura
+   tirada do que se le. O topo e a base ficam em zero porque a barra grudada ja
+   traz o proprio respiro. */
+/* A pagina ocupa a janela e NAO rola: quem rola e a arvore. Ver .tabela-rolagem. */
+/* `overflow:hidden` no html TAMBEM, e nao so no body: sem isso a janela
+   continua rolavel por script mesmo sem barra de rolagem, e um
+   `window.scrollTo` levava a viewport para 1844px de area vazia. A tela
+   ficava EM BRANCO e parecia que a pagina tinha quebrado. */
+html { height: 100%; overflow: hidden; }
+body {
+    font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg);
+    color:var(--fg); padding:0 8px; font-size:13px; margin:0;
+    height: 100%; box-sizing: border-box;
+    display: flex; flex-direction: column; overflow: hidden;
+}
+/* As abas que NAO sao a arvore (Findings, ATT&CK) rolam por dentro tambem, pelo
+   mesmo motivo: duas barras na mesma tela e sempre uma a mais. */
+.findings-container { overflow: auto; flex: 1 1 auto; min-height: 0; }
+.table-container { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
+.table-container.panel-hidden, .findings-container.panel-hidden { display: none; }
 
+/* [F-220] Controle de recolher o inventario. */
+.inv-toggle {
+    display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+    color:var(--gry); font-size:11px; text-transform:uppercase;
+    letter-spacing:1px; padding:2px 6px; margin-bottom:6px; user-select:none;
+}
+.inv-toggle:hover { color:var(--cyn); }
+.inv.oculto { display:none; }
+
+/* [F-238] A arvore rola dentro da propria caixa, nos DOIS eixos. Sem isto a
+   tabela era cortada e nao havia como alcancar o que passava da largura: o
+   dado existia e ficava inacessivel, que e pior que nao ter o dado. */
+/* UMA barra de rolagem, e ela e da arvore.
+   A primeira versao deixava a pagina rolar TAMBEM, e o resultado eram duas
+   barras concorrendo, sendo que a da pagina ficava enorme sem ter conteudo
+   proporcional. A pagina passa a ocupar exatamente a altura da janela, a barra
+   grudada e as abas tem altura propria, e a arvore recebe o que sobrar. Quem
+   rola e so ela. */
+.tabela-rolagem {
+    overflow: auto; flex: 1 1 auto; min-height: 120px;
+    border: 1px solid var(--border); border-radius: 4px;
+}
+/* Cabecalho fixo enquanto se rola: perder o nome da coluna depois de vinte
+   linhas transforma numero em enigma.
+   O cabecalho das colunas vive DENTRO desta caixa, e nao na barra grudada do
+   topo. Fora dela, a rolagem horizontal moveria so o corpo e as colunas
+   deixariam de bater com seus titulos, que e pior que nao rolar. */
+/* UMA fonte de geometria: o cabecalho vive DENTRO da tabela, entao ele nao tem
+   como discordar do corpo. Enquanto foram dois elementos (uma div flex por cima
+   de uma table), cada tentativa de alinhar os dois abria um desencontro novo:
+   colgroup contra as divs, depois `min-width:100%` esticando so o corpo, depois
+   `table-layout:fixed` encolhendo so a tabela. O <thead> resolve por
+   construcao, e nao por ajuste. */
+.tabela-rolagem thead th {
+    position: sticky; top: 0; background: var(--drk); z-index: 5;
+    text-align: center; text-transform: uppercase; font-size: 11px;
+    color: #aaa; font-weight: bold; padding: 8px 5px;
+    border-bottom: 2px solid #444;
+}
+    position: sticky; top: 0; z-index: 6; background: var(--bg);
+    width: max-content;
+}
+/* A tabela nunca encolhe abaixo da soma das colunas: e o que garante que o
+   corpo e o cabecalho rolem juntos, em vez de o corpo se comprimir. */
+/* A largura da tabela e a soma das colunas; a caixa rola quando nao cabe.
+   `max-content` inflava a PAGINA em vez da caixa. */
+/* Cabecalho e corpo tem que ter EXATAMENTE a mesma largura, senao as
+   colunas desencontram. `min-width:100%` esticava a TABELA ate o
+   container enquanto o cabecalho ficava na soma das colunas: cada
+   coluna do corpo ganhava um pouco e o titulo ficava para tras.
+   Os dois passam a ser exatamente a soma das variaveis. */
+/* Preenche o container e cresce alem dele quando as colunas pedem mais; a
+   caixa e quem rola. Com o cabecalho dentro da tabela, esticar ou
+   encolher move os dois juntos, entao isto ja nao pode desalinhar. */
+.tabela-rolagem table { width: 100%; min-width: max-content; }
+
+/* [F-219] Alca de arraste na borda direita do cabecalho, mesmo mecanismo da
+   tela Manager (JS_COLUNAS_AJUSTAVEIS). */
+.col-grip { position:absolute; top:0; right:0; width:6px; bottom:0;
+               cursor:col-resize; user-select:none; }
+/* A alca precisa APARECER. Sem nada na tela, so descobre que a coluna e
+   ajustavel quem passa o mouse por acaso no pixel certo. O tracinho marca a
+   divisa entre colunas e o cursor de arraste confirma o que ele faz. */
+.col-grip::after {
+    content: ''; position: absolute; right: 2px; top: 22%; bottom: 22%;
+    width: 1px; background: #4a4a4a;
+}
+.col-grip:hover::after { background: var(--cyn); width: 2px; }
+.col-grip:hover { background:var(--cyn); opacity:0.5; }
+
+
+/* [F-219] Largura das colunas da aba Processes numa FONTE SO.
+   Antes o mesmo numero vivia em dois lugares (as divs do cabecalho e o
+   colgroup da tabela): mexer num sem o outro desalinhava a tela, e era a
+   divergencia silenciosa de sempre. Agora o arraste altera a variavel e as
+   duas pontas seguem juntas por construcao. */
+:root {
+    --w-cmd: 540px;   /* px, e nao %: a tabela usa width:max-content */
+    --w-pid: 60px;
+    --w-dur: 90px;
+    --w-user: 90px;
+    --w-nice: 50px;
+    --w-cpu: 60px;
+    --w-rss: 80px;
+    --w-dhot: 100px;
+    --w-dhist: 100px;
+    --w-ntx: 90px;
+    --w-nrx: 90px;
+    --w-alerts: 320px;
+}
 /* --- HEADER & LAYOUT --- */
+/* Ja nao precisa ser "sticky": a pagina inteira nao rola mais, entao o topo
+   fica onde esta por construcao. Sticky aqui, com a pagina sem rolagem,
+   so criava um contexto de empilhamento a toa. */
 .sticky-wrapper {
-    position: sticky; top: 0; z-index: 1000;
+    flex: 0 0 auto; z-index: 1000;
     background-color: var(--bg);
     padding: 10px 20px 0 20px;
     border-bottom: 1px solid var(--acc);
@@ -170,7 +381,11 @@ body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:
 .net-gw-dns { margin-top: 8px; border-top: 1px dashed #444; padding-top: 4px; font-size: 0.9em; color: #888; }
 
 /* --- BADGES & ICONS --- */
-.controls { display:flex; flex-direction: column; gap:10px; margin-bottom:15px; width: 100%; }
+/* [F-237] A faixa entre o campo de filtro e o cabecalho da arvore
+   somava 15px de margem mais 20px de padding do container: quase
+   uma linha de processo desperdicada, na tela em que altura e o
+   recurso escasso. */
+.controls { display:flex; flex-direction: column; gap:8px; margin-bottom:4px; width: 100%; }
 .legend { display:flex; gap:15px; background:#222; padding:8px 12px; border:1px solid #444; border-radius:3px; align-items:center; flex-wrap:wrap; width: 100%; box-sizing: border-box; }
 .leg-grp { display:flex; align-items:center; gap:10px; padding-right:15px; border-right:1px solid #444; }
 .leg-grp:last-child { border:none; }
@@ -185,12 +400,69 @@ body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:
 .tag {
     display:inline-flex; align-items:center; justify-content:center;
     padding:1px 4px; border-radius:3px;
-    font-weight:bold; margin-right:4px; cursor:help;
+    font-weight:bold; margin-right:1px; cursor:help;
     font-size:16px; /* Optimized for Emojis */
     border:1px solid transparent;
     vertical-align: middle;
 }
+
+/* A coluna ALERTS pode usar DUAS linhas: a altura da linha ja e ditada pela
+   coluna DISK, que ocupa tres. Antes os badges eram forcados numa linha so
+   (regra global `td { white-space:nowrap }`) e o excedente era cortado, com a
+   altura sobrando ao lado, sem uso. Fonte um pouco menor pelo mesmo motivo:
+   cabe mais sinal no mesmo espaco. */
+/* COMMAND TREE tambem quebra, ate tres linhas. A linha inteira ja tem essa
+   altura por causa da coluna DISK, e o comando truncado com "..." escondia
+   justamente o argumento que interessa numa analise (o caminho de onde o
+   binario foi lancado costuma estar no fim). Passando de tres linhas volta a
+   cortar, para uma linha de comando gigante nao empurrar a tabela toda. */
+td:first-child:not(.det-cell) {
+    /* SEM `display:-webkit-box`: isso tira a celula do fluxo de tabela, e foi o
+       que produziu o vao gigante entre o comando e a coluna PID (a celula
+       ocupava a largura declarada, o texto se espremia em ~150px). Quebra
+       normal de linha basta; a largura da coluna e quem limita. */
+    white-space: normal; overflow-wrap: anywhere; line-height: 1.4;
+}
+td.alert-cell, td:last-child {
+    white-space: normal; overflow: visible; text-overflow: clip;
+    line-height: 1.5;
+}
+td:last-child .tag { margin-right: 1px; margin-bottom: 2px; }
 .tag:hover { transform: scale(1.2); transition: 0.1s; background: rgba(255,255,255,0.1); }
+
+/* Detalhe da custodia: os LIMITES da aquisicao, logo abaixo do nivel. Fonte
+   menor mas cor legivel de proposito -- e ressalva, nao rodape decorativo. */
+.fnd-cust-det {
+    margin-top: 3px; font-size: 10.5px; color: #a0a0a0; line-height: 1.5;
+    white-space: normal; word-break: break-word;
+}
+.fnd-cust-det code { color: var(--cyn); font-size: 10px; word-break: break-all; }
+
+/* --- ENCAMINHAMENTO A BANCADA (C-044) --- */
+/* Bloco visualmente distinto do resto do detalhe do achado de proposito: ele
+   nao fala com o operador do host, fala com quem vai continuar o trabalho fora
+   da frota, e essa mudanca de interlocutor precisa ser vista antes de ser lida. */
+.fnd-referral {
+    margin: 8px 0; padding: 8px 10px;
+    border-left: 3px solid var(--cyn);
+    background: rgba(78,201,176,0.06);
+    border-radius: 0 3px 3px 0;
+}
+.fnd-ref-hdr {
+    color: var(--cyn); font-weight: bold; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px;
+}
+.fnd-ref-why {
+    display: block; text-transform: none; letter-spacing: 0;
+    font-weight: normal; color: #8a8a8a; font-size: 10px; margin-top: 1px;
+}
+.fnd-ref-tbl { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.fnd-ref-tbl td {
+    padding: 2px 6px 2px 0; vertical-align: top;
+    white-space: normal; overflow: visible; text-overflow: clip;
+}
+.fnd-ref-k { color: #999; width: 190px; font-weight: bold; }
+.fnd-ref-tbl code { color: var(--yel); word-break: break-all; }
 
 /* Visually Hidden (But searchable/filterable) */
 .visually-hidden {
@@ -208,7 +480,12 @@ body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:
 
 /* Special Badges (Backgrounds can be minimal now, relying on Icon) */
 .t-warn { border-color:var(--red); background:rgba(255, 107, 107, 0.1); }
-.t-err  { background:var(--red); color:#000; }
+/* [2026-08-20] Estes dois carregam numero, entao sao os mais largos e os
+   que mais empurravam a altura da linha: o padding interno somado a
+   margem externa fazia duas linhas onde cabia uma. */
+.t-err  { background:var(--red); color:#000; padding:0 3px; margin-right:1px; }
+.t-warn { padding:0 3px; margin-right:1px; }
+.t-err span, .t-warn span { font-size:0.9em; }
 
 .btn-clear { cursor:pointer; padding:2px 6px; border-radius:3px; border:1px solid #555; font-size:10px; font-weight:bold; color:#aaa; background:#333; }
 /* [UI] Sort buttons styled as bare icons, symmetric with .filter-btn (no gray box) */
@@ -219,7 +496,8 @@ body { font-family:'Segoe UI', 'Roboto', monospace; background:var(--bg); color:
 #search { width:100%; padding:8px; background:#252526; border:1px solid #555; color:white; border-radius:3px; font-family:monospace; box-sizing:border-box; }
 
 /* --- TABLE STYLES --- */
-.table-container { padding: 0 20px 20px 20px; }
+/* [F-239] Sem moldura lateral: a largura vai toda para a arvore. */
+.table-container { padding: 0 0 12px 0; }
 table { width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed; }
 th { text-align:left; background:#2d2d30; padding:10px 5px; border-bottom:2px solid #444; color:#aaa; text-transform:uppercase; font-size:11px; }
 td { padding:6px 5px; border-bottom:1px solid #2a2a2a; vertical-align:middle; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -228,7 +506,10 @@ td { padding:6px 5px; border-bottom:1px solid #2a2a2a; vertical-align:middle; wh
 .exp { color:var(--acc); font-weight:bold; display:inline-block; width:16px; height:16px; line-height:14px; text-align:center; background:#333; border:1px solid #555; border-radius:3px; cursor:pointer; }
 .hidden { display:none; }
 tr.det-row { display:none; } tr.det-row.show { display:table-row; }
-.det-cell { background:#151515; border-left:3px solid var(--acc); padding:20px; white-space:normal; }
+/* A celula de detalhe usa colspan e atravessa a tabela inteira: ela nao
+   pode herdar as regras da PRIMEIRA COLUNA, senao a largura dela passa a
+   ser a da coluna Command Tree e o painel encolhe. */
+.det-cell { width:auto; background:#151515; border-left:3px solid var(--acc); padding:20px; white-space:normal; }
 .det-blk { margin-bottom:15px; border-bottom:1px solid #333; padding-bottom:10px; }
 .det-title { color:var(--acc); font-weight:bold; margin-bottom:8px; display:block; font-size:1.1em; border-bottom:1px solid #444; padding-bottom:2px; }
 .ctx-tbl { width:100%; border-spacing:0; }
@@ -244,19 +525,64 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
 .lib-list { max-height:150px; overflow-y:auto; background:#1a1a1a; padding:5px; border:1px solid #333; color:#bbb; }
 
 /* Legend Tooltip */
-.score-legend-wrapper { position: relative; display: inline-flex; align-items: center; justify-content: center; margin-left: 8px; cursor: help; vertical-align: middle; }
-.legend-icon { background: var(--drk); border: 1px solid var(--acc); color: var(--acc); width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; }
+/* [FIX] Era :hover com o popup ancorado (position:absolute) perto do icone
+   "?". Em monitor pequeno, com o icone la embaixo na barra de filtros, o
+   popup nascia estourando o rodape da janela; rolar ATE ele tirava o mouse
+   da area de hover e ele fechava sozinho antes do analista ler a metade de
+   baixo. Agora e clique (ver toggleLegend no JS) e o popup e FIXED e
+   CENTRALIZADO na tela: sempre cabe inteiro no viewport, em qualquer
+   resolucao, e o scroll interno (quando a lista nao cabe) fica sempre
+   alcancavel porque o popup nao depende mais de onde o botao esta na
+   pagina nem do mouse continuar sobre ele. */
+.score-legend-wrapper { position: relative; display: inline-flex; align-items: center; justify-content: center; margin-left: 8px; vertical-align: middle; }
+.legend-icon { background: var(--drk); border: 1px solid var(--acc); color: var(--acc); width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; cursor: pointer; }
+.legend-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 9998;
+    background: rgba(0,0,0,0.6);
+}
+.score-legend-wrapper.open .legend-backdrop { display: block; }
 .score-tooltip {
-    display: none; position: absolute; right: 0; top: 30px; z-index: 9999;
-    background: #1e1e1e; border: 1px solid var(--acc); padding: 10px;
-    width: 280px; box-shadow: 0 5px 15px rgba(0,0,0,0.9); border-radius: 4px;
+    display: none; position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%); z-index: 9999;
+    background: #1e1e1e; border: 1px solid var(--acc); padding: 14px;
+    width: 460px; max-width: 90vw; max-height: 80vh; overflow-y: auto;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.9); border-radius: 6px;
     text-align: left;
 }
-.score-legend-wrapper:hover .score-tooltip { display: block; }
-.score-tooltip h4 { margin: 0 0 8px 0; color: var(--acc); border-bottom: 1px solid #333; padding-bottom: 4px; font-size: 12px; text-transform: uppercase; }
-.score-tooltip table { width: 100%; border-collapse: collapse; }
-.score-tooltip td { padding: 3px 0; border-bottom: 1px solid #333; color: #ccc; font-size: 11px; }
-.score-tooltip td:first-child { color: var(--red); font-weight: bold; text-align: right; padding-right: 10px; width: 40px; }
+.score-legend-wrapper.open .score-tooltip { display: block; }
+.legend-close {
+    position: absolute; top: 8px; right: 10px; cursor: pointer;
+    color: #888; font-size: 16px; font-weight: bold; line-height: 1;
+}
+.legend-close:hover { color: var(--red); }
+.score-tooltip h4 { margin: 0 0 8px 0; color: var(--acc); border-bottom: 1px solid #333; padding-bottom: 4px; font-size: 12px; text-transform: uppercase; padding-right: 20px; }
+.score-tooltip table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+/* [FIX] O 'td { white-space:nowrap; text-overflow:ellipsis }' global (regra da
+   arvore de processos) vazava para esta tabela e cortava rotulo e severidade
+   no meio da palavra ("carregou kernel via ke...", "Hig..."). Aqui o texto
+   PRECISA quebrar linha: e a unica explicacao de cada sinal que o laudo
+   oferece antes do analista clicar num processo de verdade. */
+.score-tooltip td {
+    padding: 4px 4px; border-bottom: 1px solid #333; color: #ccc; font-size: 11px;
+    white-space: normal; overflow: visible; text-overflow: clip; vertical-align: top;
+}
+.score-tooltip td:first-child { color: var(--red); font-weight: bold; text-align: right; padding-right: 8px; width: 52px; }
+.score-tooltip td:nth-child(2) { width: auto; }
+.score-tooltip td:last-child { width: 60px; font-weight: bold; text-align: right; white-space: nowrap; }
+/* Legenda de badges: 1a coluna e o icone (nao um numero), 2a e o nome curto
+   em destaque, 3a a explicacao -- layout diferente da legenda de score. */
+.score-tooltip table.badge-legend td:first-child { color: inherit; font-weight: normal; text-align: center; padding-right: 4px; width: 26px; font-size: 15px; }
+.score-tooltip table.badge-legend td:nth-child(2) { color: #fff; font-weight: bold; width: 96px; white-space: normal; }
+.score-tooltip table.badge-legend td:last-child { width: auto; font-weight: normal; text-align: left; white-space: normal; color: #ccc; }
+/* Significado forense/seguranca: mais discreto que o rotulo tecnico acima
+   dele, mas legivel -- e a resposta a "o que isso quer dizer de verdade". */
+.leg-sig { color: #888; font-size: 10px; font-style: italic; display: inline-block; margin-top: 2px; }
+/* Linha de explicacao do popup de score: continuacao visual da linha
+   compacta acima dela, sem borda propria repetida. */
+.leg-exp-row td { border-bottom: 1px solid #333 !important; padding-top: 0 !important; padding-bottom: 6px !important; }
+/* Significado forense no bloco "Probe Signals" do detalhe do processo
+   (mesmo texto de risk.SINAIS, ver _render_probe_signals). */
+.probe-sig { color: #888; font-size: 10px; font-style: italic; white-space: normal; margin-top: 2px; }
 
 /* --- TABS (Findings / Processes) --- */
 /* A troca de aba usa esta classe, nunca o estilo inline: o cabecalho da tabela
@@ -387,9 +713,33 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
 # 3. JAVASCRIPT (State Preservation, AJAX, & Logic)
 # ------------------------------------------------------------------------------
 JS_BLOCK = r"""
+
+// [F-220] Recolhe o inventario (System, Storage, Network) e devolve a altura
+// para a arvore de processos. O estado fica no navegador: quem trabalha com a
+// arvore nao quer recolher o bloco a cada laudo que abre.
+function alternarInventario(){
+    var bloco = document.getElementById('bloco-inventario');
+    var seta = document.getElementById('inv-seta');
+    var rotulo = document.getElementById('inv-rotulo');
+    if (!bloco) return;
+    var oculto = bloco.classList.toggle('oculto');
+    if (seta) seta.innerHTML = oculto ? '&#9654;' : '&#9660;';
+    if (rotulo) rotulo.textContent = oculto ? 'Mostrar inventario'
+                                            : 'Ocultar inventario';
+    try { localStorage.setItem('si_inv_oculto', oculto ? '1' : '0'); } catch (e) {}
+}
+(function(){
+    function restaurar(){
+        var guardado = null;
+        try { guardado = localStorage.getItem('si_inv_oculto'); } catch (e) {}
+        if (guardado === '1') { alternarInventario(); }
+    }
+    if (document.readyState === 'loading'){
+        document.addEventListener('DOMContentLoaded', restaurar);
+    } else { restaurar(); }
+})();
     // --- STATE MANAGEMENT ---
     var state = {
-        isLive: false,
         expandedPids: new Set(),
         detailsOpenPids: new Set(),
         currentFilter: "",
@@ -488,44 +838,6 @@ JS_BLOCK = r"""
         // [UI] Highlight the active filter badge (single active filter at a time)
         document.querySelectorAll(".filter-btn").forEach(function(b){ b.classList.remove("active"); });
         if (el) el.classList.add("active");
-    }
-
-    // --- LIVE MODE LOGIC ---
-    function updateTableContent(newHtml) {
-        var tbody = document.querySelector(".table-container tbody");
-        if(tbody) {
-            tbody.innerHTML = newHtml;
-            restoreTreeState();
-        }
-        var banner = document.getElementById('live-banner-ts');
-        if(banner) banner.innerText = new Date().toLocaleTimeString();
-    }
-
-    async function startLiveMode() {
-        if(state.isLive) return;
-        state.isLive = true;
-        console.log("Starting Live Updates...");
-
-        // Create Banner safely if not exists
-        if(!document.getElementById('live-banner')) {
-            var div = document.createElement('div');
-            div.id = 'live-banner';
-            div.style.cssText = 'background:#004400; color:#fff; padding:5px; text-align:center; font-weight:bold; border-bottom:1px solid #0f0; position:sticky; top:0; z-index:2000;';
-            div.innerHTML = '🟢 LIVE MODE ACTIVE | Auto-Update (5s) | Last: <span id="live-banner-ts">Just now</span>';
-            document.body.prepend(div);
-        }
-
-        setInterval(async () => {
-            try {
-                const response = await fetch('/live_update');
-                if (response.ok) {
-                    const newRows = await response.text();
-                    updateTableContent(newRows);
-                }
-            } catch (e) {
-                console.error("Live Update Failed:", e);
-            }
-        }, 5000);
     }
 
     // --- UTILS ---
@@ -733,10 +1045,24 @@ JS_BLOCK = r"""
 
         // 5. Rola descontando o cabecalho fixo; sem isso a linha para embaixo
         //    dele e parece que o pivo nao chegou a lugar nenhum.
-        var sticky = document.querySelector('.sticky-wrapper');
-        var offset = sticky ? sticky.getBoundingClientRect().height + 20 : 20;
-        var y = row.getBoundingClientRect().top + window.pageYOffset - offset;
-        window.scrollTo({top: y > 0 ? y : 0, behavior: 'smooth'});
+        // Quem rola e a CAIXA da arvore, nao a janela: desde que a pagina passou
+        // a ocupar exatamente a altura do viewport, `window.scrollTo` nao move
+        // nada visivel -- e, pior, movia a viewport para dentro de area vazia,
+        // deixando a tela EM BRANCO (medido: scrollY 1844). `scrollIntoView`
+        // acha sozinho o ancestral rolavel, e `block:'center'` ja resolve o
+        // cabecalho grudado.
+        // Rola a CAIXA diretamente, com a conta feita a mao. `scrollIntoView`
+        // resolve o alvo, mas rola tambem os ancestrais -- inclusive a janela,
+        // que `overflow:hidden` esconde mas nao impede de mover por script.
+        // Medido: a janela deslocava 166px e levava o cabecalho para fora da
+        // vista. Mexendo so no scrollTop da caixa, nada mais se move.
+        var caixa = row.closest('.tabela-rolagem');
+        if (caixa) {
+            caixa.scrollTop = Math.max(0, row.offsetTop
+                                          - (caixa.clientHeight / 2));
+        } else {
+            row.scrollIntoView({block: 'center'});
+        }
 
         // 6. Destaca o alvo e os demais processos correlacionados.
         document.querySelectorAll('.pivot-target').forEach(function (e) {
@@ -793,6 +1119,40 @@ JS_BLOCK = r"""
                       '. Use "Ver todos os niveis" para limpar o filtro.');
         }
     }
+
+    // --- LEGENDAS DE AJUDA (score / badges) ---
+    // [FIX] Eram :hover puro: em monitor pequeno o popup nasce perto do
+    // icone "?" (que fica la embaixo, na barra de filtros ja rolada) e
+    // estoura o rodape da tela. Rolar ATE o popup tira o mouse da area de
+    // hover, e ele fecha antes de dar para ler o resto -- o analista nunca
+    // via a segunda metade da lista. Clique fixa o popup ABERTO (nao
+    // depende do mouse continuar sobre nada) e centralizado na tela (nao
+    // depende de onde o botao esta na pagina), entao o scroll interno
+    // sempre fica alcancavel em qualquer resolucao.
+    function toggleLegend(el) {
+        var wrapper = el.closest('.score-legend-wrapper');
+        if (!wrapper) return;
+        var estavaAberto = wrapper.classList.contains('open');
+        document.querySelectorAll('.score-legend-wrapper.open').forEach(function (w) {
+            w.classList.remove('open');
+        });
+        if (!estavaAberto) wrapper.classList.add('open');
+    }
+
+    document.addEventListener('click', function (e) {
+        if (e.target.closest && e.target.closest('.score-legend-wrapper')) return;
+        document.querySelectorAll('.score-legend-wrapper.open').forEach(function (w) {
+            w.classList.remove('open');
+        });
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.score-legend-wrapper.open').forEach(function (w) {
+                w.classList.remove('open');
+            });
+        }
+    });
 """
 
 # ------------------------------------------------------------------------------
@@ -822,7 +1182,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <div class="meta">{TIMESTAMP}<br>{HOSTNAME}</div>
         </div>
 
-        <div class="inv">
+        <!-- [F-220] O bloco das tres caixas (System, Storage, Network) ocupa
+             metade da altura util e quase nunca muda durante uma analise. O
+             controle abaixo o recolhe e devolve a tela para a arvore de
+             processos, que e onde o analista trabalha. Reversivel, e o estado
+             fica gravado no navegador para nao ter que recolher a cada laudo. -->
+        <div class="inv-toggle" onclick="alternarInventario()"
+             title="Mostrar ou ocultar System, Storage e Network, para dar espaco a arvore">
+            <span id="inv-seta">&#9660;</span>
+            <span id="inv-rotulo">Ocultar inventario</span>
+        </div>
+
+        <div class="inv" id="bloco-inventario">
             <div class="card">
                 <h3>System</h3>
                 <div id="os-info">{OS_CONTENT}</div>
@@ -879,16 +1250,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 <div class="leg-grp" style="border:none; margin-left:auto; display:flex; align-items:center;">
                     <span class="leg-lbl">Filters</span>
                     <span class="filter-btn" onclick="setFilter('NEW', this)" title="New Processes">✨</span>
-                    <span class="filter-btn" onclick="setFilter('SSH', this)" title="SSH Connections">🔌</span>
-                    <span class="filter-btn" onclick="setFilter('SUDO', this)" title="Privileged (Sudo)">🛡️</span>
-                    <span class="filter-btn" onclick="setFilter('CONTAINER', this)" title="Containerized">📦</span>
-                    <span class="filter-btn" onclick="setFilter('EDR/AV', this)" title="Security Inspectors - EDR (Endpoint Detection and Response) / AV (Antivirus)">💊</span>
-                    <span class="filter-btn" onclick="setFilter('EDR-WAIT', this)" title="Process Frozen by EDR/AV (Wchan Wait)">🧊</span>
-                    <span class="filter-btn" onclick="setFilter('GPU', this)" title="GPU Activity">🕹️</span>
-                    <span class="filter-btn" onclick="setFilter('MINER', this)" title="Mining Signature">⛏️</span>
-                    <span class="filter-btn" onclick="setFilter('UNSAFE', this)" title="Unsafe Path">☢️</span>
+                    {FILTER_BAR_HTML}
                     <span class="filter-btn" onclick="setFilter('NET ERR', this)" title="Network Errors">❌</span>
-                    <span class="filter-btn" onclick="setFilter('ZOMBIE', this)" title="Zombies">🧟</span>
+                    {BADGE_LEGEND_HTML}
 
                     <span class="btn-clear" onclick="setFilter('')">🧹 CLEAR</span>
                     <span class="btn-act" onclick="window.print()" title="Save PDF">🖨️</span>
@@ -899,20 +1263,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <input type="text" id="search" placeholder="Filter processes (PID, User, Disk, Alert)..." onkeyup="filterTable()">
         </div>
 
-        <div class="tbl-hdr panel-hidden" data-panel="processes" style="display:flex; border-bottom:2px solid #444; font-weight:bold; color:#aaa; text-transform:uppercase; padding:8px 5px; font-size:11px;">
-             <div style="width:20%">Command Tree</div>
-             <div style="width:60px">PID</div>
-             <div style="width:90px">Duration</div>
-             <div style="width:90px">User</div>
-             <div style="width:50px">Nice</div>
-             <div style="width:60px">CPU%</div>
-             <div style="width:80px">RSS</div>
-             <div style="width:100px" title="Current Disk I/O (Bytes/sec) - Hot Activity">Disk &Delta;<br>I/O Hot</div>
-             <div style="width:100px" title="Total Disk I/O during Session (Accumulated in Tree)">Disk &Sigma;<br>I/O Hist</div>
-             <div style="width:90px" title="Network Transmit: Current Delta / Total Session">Net TX<br>&Delta; / &Sigma;</div>
-             <div style="width:90px" title="Network Receive: Current Delta / Total Session">Net RX<br>&Delta; / &Sigma;</div>
-             <div>Alerts</div>
-        </div>
     </div>
 
     <div class="findings-container" data-panel="findings">
@@ -924,26 +1274,118 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
 
     <div class="table-container panel-hidden" data-panel="processes">
+        <div class="tabela-rolagem">
         <table>
             <colgroup>
-                <col width="20%">
-                <col width="60px">
-                <col width="90px">
-                <col width="90px">
-                <col width="50px">
-                <col width="60px">
-                <col width="80px">
-                <col width="100px">
-                <col width="100px">
-                <col width="90px">
-                <col width="90px">
-                <col>
+                <col style="width:var(--w-cmd)">
+                <col style="width:var(--w-pid)">
+                <col style="width:var(--w-dur)">
+                <col style="width:var(--w-user)">
+                <col style="width:var(--w-nice)">
+                <col style="width:var(--w-cpu)">
+                <col style="width:var(--w-rss)">
+                <col style="width:var(--w-dhot)">
+                <col style="width:var(--w-dhist)">
+                <col style="width:var(--w-ntx)">
+                <col style="width:var(--w-nrx)">
+                <col style="width:var(--w-alerts)">
             </colgroup>
+            <thead>
+              <tr>
+                <th data-col="--w-cmd">Command Tree<span class="col-grip"></span></th>
+                <th data-col="--w-pid">PID<span class="col-grip"></span></th>
+                <th data-col="--w-dur">Duration<span class="col-grip"></span></th>
+                <th data-col="--w-user">User<span class="col-grip"></span></th>
+                <th data-col="--w-nice">Nice<span class="col-grip"></span></th>
+                <th data-col="--w-cpu">CPU%<span class="col-grip"></span></th>
+                <th data-col="--w-rss">RSS<span class="col-grip"></span></th>
+                <th title="Current Disk I/O (Bytes/sec) - Hot Activity" data-col="--w-dhot">Disk &Delta;<br>I/O Hot<span class="col-grip"></span></th>
+                <th title="Total Disk I/O during Session (Accumulated in Tree)" data-col="--w-dhist">Disk &Sigma;<br>I/O Hist<span class="col-grip"></span></th>
+                <th title="Network Transmit: Current Delta / Total Session" data-col="--w-ntx">Net TX<br>&Delta; / &Sigma;<span class="col-grip"></span></th>
+                <th title="Network Receive: Current Delta / Total Session" data-col="--w-nrx">Net RX<br>&Delta; / &Sigma;<span class="col-grip"></span></th>
+                <th data-col="--w-alerts">Alerts<span class="col-grip"></span></th>
+              </tr>
+            </thead>
             <tbody style="margin-top:10px">
                 {TABLE_ROWS}
             </tbody>
         </table>
+        </div>
     </div>
 </body>
 </html>
 """
+
+
+# ------------------------------------------------------------------------------
+# COLUNAS AJUSTAVEIS (F-219 na aba Processes, F-223 na tela Manager)
+# ------------------------------------------------------------------------------
+# Escrito UMA vez e usado nas duas telas. Sao o mesmo pedido do Mario feito em
+# datas diferentes ("as colunas devem ter tamanho ajustavel"), e duas
+# implementacoes do mesmo comportamento e exatamente a divergencia silenciosa
+# que este projeto ja pagou caro: uma seria corrigida um dia e a outra nao.
+#
+# Requisitos do lado do HTML, nos dois casos:
+#   - a tabela precisa de `table-layout:fixed`, senao o navegador recalcula as
+#     larguras e o arraste nao gruda;
+#   - cada `th` redimensionavel carrega um `<span class="col-grip"></span>`.
+_JS_COLUNAS_CORE = r"""
+(function(){
+  function ligar(grip){
+    var alvo = grip.parentElement;
+    // Duas telas, dois jeitos de guardar a largura, um mecanismo so:
+    //  - Manager: tabela de verdade, a largura vai no proprio <th>;
+    //  - laudo: cabecalho em divs e corpo em <table>, com as larguras vindas de
+    //    variaveis CSS. Ali o arraste altera a VARIAVEL, e as duas pontas se
+    //    movem juntas. Escrever dois arrastes diferentes recriaria a
+    //    divergencia que as variaveis acabaram de eliminar.
+    // O nome da variavel pode vir na propria alca (Manager, onde o <th> ja
+    // carrega outros atributos) ou no elemento que a contem (laudo, onde o
+    // cabecalho e uma div por coluna). Aceitar os dois evita obrigar as duas
+    // telas a escrever o HTML do mesmo jeito para usar o mesmo mecanismo.
+    var variavel = grip.getAttribute('data-col') || alvo.getAttribute('data-col');
+    var iniX = 0, iniW = 0, arrastando = false;
+    grip.addEventListener('mousedown', function(e){
+      arrastando = true; iniX = e.pageX; iniW = alvo.offsetWidth;
+      if (!variavel){
+        // Fixa a largura ATUAL de todas as colunas antes do primeiro arraste.
+        // Sem isso, mexer numa coluna faz as vizinhas se redistribuirem e a
+        // tabela inteira "pula" no primeiro pixel de movimento.
+        var linha = alvo.parentElement;
+        for (var i = 0; i < linha.children.length; i++){
+          var c = linha.children[i];
+          if (!c.style.width) { c.style.width = c.offsetWidth + 'px'; }
+        }
+      }
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', function(e){
+      if (!arrastando) return;
+      var largura = iniW + (e.pageX - iniX);
+      if (largura <= 40) return;
+      if (variavel){
+        document.documentElement.style.setProperty(variavel, largura + 'px');
+      } else {
+        alvo.style.width = largura + 'px';
+      }
+    });
+    document.addEventListener('mouseup', function(){
+      if (!arrastando) return;
+      arrastando = false;
+      document.body.style.userSelect = '';
+    });
+  }
+  function iniciar(){
+    var grips = document.getElementsByClassName('col-grip');
+    for (var i = 0; i < grips.length; i++){ ligar(grips[i]); }
+  }
+  if (document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', iniciar);
+  } else { iniciar(); }
+})();
+"""
+
+# A Manager injeta o bloco pronto, com as tags; o laudo injeta o NUCLEO
+# dentro do <script> que ja existe la. Uma fonte, dois involucros.
+JS_COLUNAS_AJUSTAVEIS = "<script>" + _JS_COLUNAS_CORE + "</script>"

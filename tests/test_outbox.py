@@ -14,7 +14,6 @@
 import os
 import tempfile
 
-import pytest
 
 from src.core.database import DatabaseManager
 from src.core.outbox import Outbox
@@ -224,3 +223,89 @@ def test_duplicate_is_treated_as_delivered():
     _queue(db, 2)
     assert _outbox(db, _FakeServer(status="duplicate")).deliver_once() == 2
     assert db.get_pending_snapshots() == []
+
+
+# ------------------------------------------------------------------------------
+# TRANSPORTE CIFRADO POR PADRAO (2026-08-20)
+# ------------------------------------------------------------------------------
+# O padrao anterior derivava o transporte do NUMERO DA PORTA
+# (`use_tls = server_port == 443`). Um servidor em 8080, que e o caso comum em
+# laboratorio e em rede interna, fazia o agente falar em texto claro sem avisar.
+# O que viaja nessa conexao e a captura inteira mais o cabecalho
+# `Authorization: Bearer <token>`.
+#
+# Estes testes fixam a inversao: cifrar e o padrao, em qualquer porta, e a
+# renuncia precisa ser PEDIDA e fica registrada.
+# ------------------------------------------------------------------------------
+def _cfg_agente(**extra):
+    daemon = {"server_ip": "10.1.1.1", "auth_token": "segredo"}
+    daemon.update(extra)
+    return {"daemon": daemon}
+
+
+def test_o_agente_so_fala_https_em_qualquer_porta():
+    """
+    A porta e escolha de operacao; cifrar nao e (D-033).
+
+    O padrao anterior derivava o transporte do NUMERO DA PORTA
+    (`use_tls = server_port == 443`). Um servidor em 8080, que e o caso comum
+    em laboratorio e em rede interna, fazia o agente falar em texto claro sem
+    avisar ninguem -- levando junto a captura e o cabecalho
+    `Authorization: Bearer <token>`.
+    """
+    for porta in (8080, 9000, 443, 12345):
+        ob = Outbox(_db(), _cfg_agente(server_port=porta))
+        assert ob._base_url().startswith("https://"), porta
+
+
+def test_nao_existe_chave_para_pedir_texto_claro():
+    """
+    A opcao nao foi invertida, foi removida. Enquanto existir uma chave capaz
+    de desligar a cifra, existe a configuracao errada, o copiar e colar de um
+    exemplo antigo, e o "so nesta rede, so por hoje" que vira permanente.
+    """
+    ob = Outbox(_db(), _cfg_agente(server_port=8080, use_tls=False))
+    assert ob._base_url().startswith("https://"), (
+        "use_tls voltou a ter efeito: o texto claro ressuscitou")
+    assert not hasattr(ob, "use_tls")
+
+
+def test_desligar_a_verificacao_continua_possivel_e_fica_registrado(caplog):
+    """
+    Verificar certificado e outra coisa, e continua sendo escolha: depende de
+    infraestrutura (uma CA que assine o certificado) que nem todo ambiente tem.
+
+    Desligar protege contra escuta passiva e NAO contra um interceptador ativo,
+    e essa diferenca muda o quanto o laudo daquele agente vale -- por isso vai
+    para o log, e nao fica so no arquivo de configuracao.
+    """
+    import logging
+    with caplog.at_level(logging.WARNING):
+        ob = Outbox(_db(), _cfg_agente(server_port=8443, verify_tls=False))
+    assert ob._base_url().startswith("https://")   # a cifra permanece
+    texto = " ".join(r.getMessage() for r in caplog.records)
+    assert "interceptador" in texto
+
+
+def test_agente_sem_servidor_nao_reclama_de_transporte(caplog):
+    """
+    Sem destino configurado nao ha transporte, e um aviso ali seria ruido no
+    caso de uso pontual (--once), que e justamente o que nao envia nada.
+    """
+    import logging
+    with caplog.at_level(logging.WARNING):
+        ob = Outbox(_db(), {"daemon": {}})
+    assert ob.enabled is False
+    assert not [r for r in caplog.records if "OUTBOX" in r.getMessage()]
+
+
+def test_o_config_do_produto_nao_oferece_transporte_em_claro():
+    """
+    O padrao de FABRICA importa mais que a capacidade: quem instala e nao mexe
+    em nada precisa terminar cifrado, sem depender de ler documentacao.
+    """
+    import io as _io
+    texto = _io.open("conf/config.yaml", encoding="utf-8").read()
+    assert "tls_enabled" not in texto, (
+        "voltou a existir chave de transporte no config de fabrica")
+    assert "http://" not in texto

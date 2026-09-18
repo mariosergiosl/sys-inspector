@@ -188,6 +188,7 @@ def test_timeout_do_lsattr_nao_derruba_a_coleta(lab, monkeypatch):
         class _T(object):
             def communicate(self, timeout=None):
                 raise pt.subprocess.TimeoutExpired("lsattr", timeout)
+
             def kill(self):
                 pass
         return _T()

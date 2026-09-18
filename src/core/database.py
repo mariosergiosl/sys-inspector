@@ -26,6 +26,16 @@ from contextlib import closing
 DEFAULT_DB_PATH = "/var/lib/sys-inspector/sys_inspector.db"
 DEFAULT_RETENTION_COUNT = 100
 
+# Tipos de captura. Guardar o tipo e o que permite a limpeza distinguir o barato
+# do probatorio: um heartbeat de agente ocioso pode ser descartado cedo, uma
+# captura completa e evidencia e nao deve sumir por politica automatica. Sem o
+# tipo gravado, qualquer retencao trata os dois igual, e o operador escolhe entre
+# guardar heartbeat demais ou apagar evidencia junto.
+CAPTURE_IDLE = "idle"      # heartbeat do estado ocioso, custo e tamanho fixos
+CAPTURE_FULL = "full"      # captura completa: eBPF, inventario, achados
+CAPTURE_CHAOS = "chaos"    # captura logo apos plantar o cenario de teste
+CAPTURE_TYPES = (CAPTURE_IDLE, CAPTURE_FULL, CAPTURE_CHAOS)
+
 
 class DatabaseManager:
     def __init__(self, db_path=None, max_snapshots=DEFAULT_RETENTION_COUNT):
@@ -135,7 +145,16 @@ class DatabaseManager:
                                       # ("qual host esta pior?") sem
                                       # descriptografar captura por captura.
                                       # Guarda numeros, nunca o conteudo.
-                                      ("findings_summary", "TEXT")):
+                                      ("findings_summary", "TEXT"),
+                                      # Que TIPO de captura e esta. Sem isso o
+                                      # banco nao distingue um heartbeat barato
+                                      # de uma captura eBPF completa, e qualquer
+                                      # limpeza trata os dois igual: ou guarda
+                                      # heartbeat demais, ou apaga evidencia
+                                      # junto. E o que torna a retencao granular
+                                      # possivel, e o que deixa a linha do tempo
+                                      # dizer o que cada ponto custou.
+                                      ("capture_type", "TEXT")):
                     try:
                         conn.execute("ALTER TABLE snapshots ADD COLUMN %s %s"
                                      % (column, ctype))
@@ -149,7 +168,14 @@ class DatabaseManager:
                                      ("host_uptime", "INTEGER"),
                                      ("agent_uptime", "INTEGER"),
                                      ("clock_offset", "REAL"),
-                                     ("clock_measured", "INTEGER")):
+                                     ("clock_measured", "INTEGER"),
+                                     # [F-227] Todos os nomes e todos os
+                                     # enderecos do host, em JSON. Um host
+                                     # aparece com nomes diferentes em sistemas
+                                     # diferentes, e numa peca forense e isso
+                                     # que o amarra ao laudo.
+                                     ("hostnames", "TEXT"),
+                                     ("ip_addresses", "TEXT")):
                     try:
                         conn.execute("ALTER TABLE agents ADD COLUMN %s %s"
                                      % (coluna, tipo))
@@ -200,7 +226,8 @@ class DatabaseManager:
             return []
 
     def insert_snapshot(self, encrypted_bundle, agent_uuid="local", metrics=None,
-                        custody=None, findings_summary=None):
+                        custody=None, findings_summary=None,
+                        capture_type=CAPTURE_FULL):
         if metrics is None: metrics = {}
 
         # Prepare JSON before lock
@@ -223,8 +250,8 @@ class DatabaseManager:
                         agent_uuid, timestamp,
                         cpu_avg, mem_used_mb, pids_count, alert_score, is_alert,
                         json_blob, synced, digest, previous_digest, custody,
-                        findings_summary
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+                        findings_summary, capture_type
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
                 """, (
                     agent_uuid,
                     time.time(),
@@ -237,7 +264,8 @@ class DatabaseManager:
                     (custody or {}).get('digest'),
                     (custody or {}).get('previous_digest'),
                     json.dumps(custody) if custody else None,
-                    json.dumps(findings_summary) if findings_summary else None
+                    json.dumps(findings_summary) if findings_summary else None,
+                    capture_type or CAPTURE_FULL
                 ))
                 # Guarda o id da linha recem-inserida para retorno ao chamador
                 # (antes retornava True, o que fazia o log exibir "ID: True").
@@ -274,7 +302,8 @@ class DatabaseManager:
     def update_agent_status(self, uuid, status, hostname=None, ip=None,
                             os_info=None, fqdn=None, cycle_seconds=None,
                             host_uptime=None, agent_uptime=None,
-                            clock_offset=None, clock_measured=None):
+                            clock_offset=None, clock_measured=None,
+                            hostnames=None, ip_addresses=None):
         try:
             with closing(self._get_conn()) as conn:
                 sql = "UPDATE agents SET status=?, last_seen=CURRENT_TIMESTAMP"
@@ -310,6 +339,15 @@ class DatabaseManager:
                 if clock_measured is not None:
                     sql += ", clock_measured=?"
                     params.append(1 if clock_measured else 0)
+                # [F-227] Listas guardadas como JSON. Lista VAZIA nao sobrescreve
+                # o que ja existe: um agente antigo, que ainda nao envia estes
+                # campos, apagaria a identidade estendida a cada check-in.
+                if hostnames:
+                    sql += ", hostnames=?"
+                    params.append(json.dumps(list(hostnames)))
+                if ip_addresses:
+                    sql += ", ip_addresses=?"
+                    params.append(json.dumps(list(ip_addresses)))
 
                 sql += " WHERE uuid=?"
                 params.append(uuid)
@@ -446,7 +484,7 @@ class DatabaseManager:
                 # a captura de forma idempotente no reenvio.
                 cursor = conn.execute("""
                     SELECT id, json_blob, cpu_avg, mem_used_mb, pids_count,
-                           alert_score, custody, findings_summary
+                           alert_score, custody, findings_summary, capture_type
                     FROM snapshots
                     WHERE synced=0
                     ORDER BY id ASC LIMIT ?
@@ -466,6 +504,14 @@ class DatabaseManager:
                                     'score': r['alert_score']},
                         'custody': _load(r['custody']),
                         'findings_summary': _load(r['findings_summary']),
+                        # Viaja com a captura: quem decide o que a limpeza pode
+                        # descartar e o SERVIDOR, que guarda a frota inteira. Se
+                        # o tipo nao subir, o servidor assume o padrao e um
+                        # heartbeat barato entra no acervo como se fosse captura
+                        # completa, que e a mesma classe de defeito que este
+                        # projeto ja paga caro: duas pontas com o mesmo fato,
+                        # divergindo sem avisar.
+                        'capture_type': r['capture_type'] or CAPTURE_FULL,
                     })
                 return pending
         except Exception as e:
@@ -526,6 +572,13 @@ class DatabaseManager:
         colunas em claro. Assim o analista consegue ordenar dezenas ou centenas
         de hosts por gravidade ("qual esta pior?") sem descriptografar nada, que
         seria caro e exporia conteudo desnecessariamente.
+
+        A ordem e ESTAVEL, por nome do host. Antes era por last_seen, que muda a
+        cada check-in: as linhas trocavam de lugar sozinhas entre atualizacoes da
+        tela e o operador perdia a referencia visual do host que estava olhando,
+        exatamente quando a tela se atualiza mais rapido, que e durante um
+        incidente. Painel vivo nao pode significar painel que se reorganiza; o
+        uuid entra como desempate para a ordem nunca depender do acaso.
         """
         try:
             with closing(self._get_conn()) as conn:
@@ -534,6 +587,7 @@ class DatabaseManager:
                            a.fqdn, a.cycle_seconds, a.status, a.last_seen,
                            a.host_uptime, a.agent_uptime,
                            a.clock_offset, a.clock_measured,
+                           a.hostnames, a.ip_addresses,
                            s.timestamp AS last_capture,
                            s.alert_score, s.is_alert, s.cpu_avg,
                            s.mem_used_mb, s.pids_count, s.findings_summary
@@ -543,7 +597,7 @@ class DatabaseManager:
                         WHERE agent_uuid = a.uuid
                         ORDER BY id DESC LIMIT 1
                     )
-                    ORDER BY a.last_seen DESC
+                    ORDER BY a.hostname COLLATE NOCASE, a.uuid
                 """)
                 fleet = []
                 for row in cursor:
@@ -553,6 +607,15 @@ class DatabaseManager:
                         item["findings"] = json.loads(raw) if raw else {}
                     except Exception:
                         item["findings"] = {}
+                    # [F-227] Listas de identidade. Guardadas em JSON; um valor
+                    # ilegivel vira lista vazia, e a tela cai no nome principal,
+                    # em vez de a frota inteira quebrar por um registro torto.
+                    for campo in ("hostnames", "ip_addresses"):
+                        bruto = item.get(campo)
+                        try:
+                            item[campo] = json.loads(bruto) if bruto else []
+                        except Exception:
+                            item[campo] = []
                     fleet.append(item)
                 return fleet
         except Exception as e:

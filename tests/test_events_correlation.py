@@ -22,7 +22,7 @@ from src.core.events import (EventStore, make_event, corrected_ts,
 from src.core.correlation import (correlate, rule_active_c2,
                                   rule_persistence_after_activity,
                                   rule_fleet_campaign, rule_attack_chain,
-                                  MIN_RECORRENCIA, MIN_TATICAS_CADEIA)
+                                  MIN_RECORRENCIA)
 from src.core.findings import SEV_CRITICAL, SEV_HIGH
 
 

@@ -43,7 +43,7 @@ import logging
 
 from src.core.findings import (Finding, SEV_HIGH, SEV_MEDIUM, SEV_LOW,
                                SRC_HEURISTIC, CONF_PROBABLE, CONF_HEURISTIC,
-                               CUSTODY_NONE, CUSTODY_METADATA)
+                               CUSTODY_NONE, CUSTODY_METADATA, make_referral)
 
 LOG = logging.getLogger("MemForensics")
 
@@ -194,13 +194,19 @@ def find_foreign_libraries(pid):
 # ------------------------------------------------------------------------------
 # COMPOSICAO
 # ------------------------------------------------------------------------------
-def collect_memory_forensics(processos):
+def collect_memory_forensics(processos, acquirer=None):
     """
     Converte os tres sinais em Findings.
 
     PARAMETER processos: dict pid -> dados, como a arvore ja produziu. Reusar a
                          arvore evita uma segunda varredura de /proc e mantem o
                          custo no host inspecionado proximo de zero.
+    PARAMETER acquirer: instancia de core.acquisition.Acquirer (C-043), ou None.
+                        Quando presente, o achado deixa de apenas RECOMENDAR
+                        preservar a evidencia e passa a preserva-la: hash da
+                        regiao/arquivo, metadados e recorte, dentro dos tetos da
+                        D-032. None mantem o comportamento anterior, e o campo de
+                        custodia continua dizendo a verdade sobre isso.
     """
     achados = []
 
@@ -219,6 +225,23 @@ def collect_memory_forensics(processos):
         if regioes:
             interpretador = _gerador_de_codigo(cmd)
             total = sum(r["size"] for r in regioes)
+
+            # [C-043] A regiao MAIOR e a que se adquire. Nao e escolha
+            # arbitraria: um shellcode desempacotado ocupa a regiao que cresceu,
+            # e adquirir todas multiplicaria o custo sem multiplicar a
+            # informacao. Se a aquisicao estiver desligada, o dict volta dizendo
+            # isso, e o laudo continua honesto sobre o que tem em maos.
+            maior = max(regioes, key=lambda r: r["size"])
+            custodia = {"level": CUSTODY_NONE}
+            if acquirer is not None:
+                try:
+                    custodia = acquirer.acquire_memory_region(
+                        pid, maior["start"], maior["end"])
+                except Exception as exc:
+                    LOG.error("[MEM] Aquisicao da regiao %s-%s do PID %d "
+                              "falhou: %s", maior["start"], maior["end"],
+                              pid, exc)
+
             achados.append(Finding(
                 title="Memoria gravavel e executavel em %s (PID %d)"
                       % (os.path.basename(cmd.split()[0]) if cmd else "?", pid),
@@ -243,12 +266,28 @@ def collect_memory_forensics(processos):
                           "jit_capable": interpretador},
                 technique="T1055",
                 confidence=CONF_HEURISTIC if interpretador else CONF_PROBABLE,
-                custody={"level": CUSTODY_NONE},
+                custody=custodia,
                 recommendation=(
                     "Capturar a memoria do processo ANTES de qualquer acao: "
                     "encerra-lo apaga exatamente o conteudo que provaria a "
                     "injecao. Comparar as regioes com as de um processo "
-                    "equivalente sabidamente integro.")))
+                    "equivalente sabidamente integro."),
+                referral=make_referral(
+                    analysis=(
+                        "Desmontagem e analise do conteudo da regiao de memoria "
+                        "(engenharia reversa, ou comparacao contra amostra "
+                        "conhecida). Se o processo ainda estiver vivo, dump "
+                        "completo do processo antes de encerra-lo."),
+                    reason=(
+                        "A ferramenta observa a PERMISSAO da regiao (escrita e "
+                        "execucao ao mesmo tempo) e preserva hash e recorte "
+                        "dela, o que identifica o objeto e sustenta a leitura "
+                        "do padrao. O que ela nao faz, por escopo declarado "
+                        "(D-032), e concluir O QUE aquele codigo executa: isso "
+                        "exige analise de bancada sobre o conteudo integral."),
+                    obj=("pid:%d regiao %s-%s (%d KB) em %s"
+                         % (pid, maior["start"], maior["end"],
+                            maior["size"] // 1024, cmd[:120] or "?")))))
 
         # --- 2. executavel trocado ---
         try:
@@ -256,6 +295,17 @@ def collect_memory_forensics(processos):
         except Exception:
             lastro = None
         if lastro and lastro.get("replaced"):
+            # [C-043] Aqui a aquisicao vale ainda mais do que na memoria: o
+            # arquivo que esta HOJE no disco e o do atacante, e ele pode ser
+            # removido a qualquer momento. Hash mais recorte identificam a
+            # amostra mesmo depois de ela sumir do host.
+            custodia_arq = {"level": CUSTODY_METADATA}
+            if acquirer is not None:
+                try:
+                    custodia_arq = acquirer.acquire_file(lastro["path"])
+                except Exception as exc:
+                    LOG.error("[MEM] Aquisicao de %s falhou: %s",
+                              lastro["path"], exc)
             achados.append(Finding(
                 title="Binario em execucao foi substituido no disco (PID %d)" % pid,
                 severity=SEV_HIGH,
@@ -272,11 +322,27 @@ def collect_memory_forensics(processos):
                 evidence=lastro,
                 technique="T1036",
                 confidence=CONF_PROBABLE,
-                custody={"level": CUSTODY_METADATA},
+                custody=custodia_arq,
                 recommendation=(
                     "Preservar o arquivo atual e, se possivel, extrair o "
                     "original ainda mapeado em memoria. Comparar com a versao "
-                    "do pacote e conferir o horario da troca contra o log.")))
+                    "do pacote e conferir o horario da troca contra o log."),
+                referral=make_referral(
+                    analysis=(
+                        "Analise da amostra substituta (desmontagem, execucao "
+                        "em ambiente controlado, comparacao com a versao "
+                        "legitima do pacote) e extracao do binario ORIGINAL, "
+                        "que so existe hoje mapeado na memoria do processo."),
+                    reason=(
+                        "A ferramenta prova a TROCA (o inode mapeado difere do "
+                        "inode em disco) e preserva a identidade do arquivo "
+                        "atual. Ela nao recupera o binario original nem "
+                        "determina o que a versao nova faz: o primeiro exige "
+                        "reconstrucao a partir da memoria, o segundo exige "
+                        "analise do conteudo integral."),
+                    obj="pid:%d arquivo %s (inode mapeado %s, em disco %s)"
+                        % (pid, lastro["path"], lastro.get("mapped_inode"),
+                           lastro.get("disk_inode")))))
 
         # --- 3. biblioteca estranha ---
         try:
@@ -286,6 +352,13 @@ def collect_memory_forensics(processos):
         arriscadas = [l for l in libs
                       if l.get("world_writable") or l.get("missing")]
         if arriscadas:
+            custodia_lib = {"level": CUSTODY_NONE}
+            alvo_lib = arriscadas[0].get("path")
+            if acquirer is not None and alvo_lib:
+                try:
+                    custodia_lib = acquirer.acquire_file(alvo_lib)
+                except Exception as exc:
+                    LOG.error("[MEM] Aquisicao de %s falhou: %s", alvo_lib, exc)
             achados.append(Finding(
                 title="Biblioteca carregada de local nao confiavel (PID %d)" % pid,
                 severity=SEV_MEDIUM,
@@ -301,10 +374,22 @@ def collect_memory_forensics(processos):
                 evidence={"pid": pid, "cmd": cmd[:300], "libraries": arriscadas[:10]},
                 technique="T1574.006",
                 confidence=CONF_HEURISTIC,
-                custody={"level": CUSTODY_NONE},
+                custody=custodia_lib,
                 recommendation=(
                     "Conferir a procedencia do arquivo e quem pode escrever "
                     "nele. Verificar LD_PRELOAD e /etc/ld.so.preload no "
-                    "ambiente do processo.")))
+                    "ambiente do processo."),
+                referral=make_referral(
+                    analysis=(
+                        "Analise da biblioteca carregada: quais simbolos ela "
+                        "substitui, e se ela intercepta chamadas do processo "
+                        "hospedeiro (rootkit de espaco de usuario)."),
+                    reason=(
+                        "A ferramenta ve DE ONDE a biblioteca veio e quem pode "
+                        "escrever nela, e preserva hash e recorte. Dizer se ela "
+                        "sequestra o processo depende do conteudo dela, que e "
+                        "analise de bancada."),
+                    obj="pid:%d biblioteca %s"
+                        % (pid, arriscadas[0].get("path", "?")))))
 
     return achados

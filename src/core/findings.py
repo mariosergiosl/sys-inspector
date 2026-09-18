@@ -95,6 +95,53 @@ CUSTODY_LABELS = {
 }
 
 
+# ------------------------------------------------------------------------------
+# REFERRAL / ENCAMINHAMENTO A BANCADA (C-044, decisoes D-028 e D-032)
+# ------------------------------------------------------------------------------
+# O campo que impede a fronteira de escopo de virar omissao.
+#
+# A D-032 fixou que esta ferramenta coleta o suficiente para IDENTIFICAR e
+# DIRECIONAR, e nao a massa que PROVA: nada de gigabytes de memoria ou de
+# trafego. Essa e uma decisao de produto defensavel, mas ela so e honesta se
+# vier acompanhada da outra metade -- dizer quem termina o servico. Uma
+# ferramenta que decide deliberadamente nao trazer a prova contrai a obrigacao
+# de apontar onde ela esta.
+#
+# Por que nao serve o campo `recommendation` que ja existia: ele fala com o
+# OPERADOR da frota, que age no host (contenha, isole, remova), e e prosa livre.
+# O encaminhamento fala com quem trabalha FORA da frota, e precisa ser
+# estruturado para que a proxima ferramenta receba um objeto, e nao um paragrafo.
+#
+# As tres perguntas, e por que sao exatamente estas tres:
+#   analysis -> QUE analise conclui o que este achado nao conclui
+#   reason   -> POR QUE este achado especifico a motiva (sem isto o
+#               encaminhamento vira boilerplate colado em todo achado)
+#   object   -> QUAL o objeto, com precisao suficiente para ser buscado depois
+#               (pid, regiao de memoria, caminho de arquivo, host)
+REFERRAL_CAMPOS = ("analysis", "reason", "object")
+
+
+def make_referral(analysis, reason, obj):
+    """
+    Monta um encaminhamento a bancada.
+
+    Os tres campos sao OBRIGATORIOS juntos: um encaminhamento que diz a analise
+    e nao diz o objeto nao encaminha nada, so recomenda genericamente. Devolve
+    dict vazio se algum faltar, para o laudo poder distinguir "nao encaminhado"
+    de "encaminhado pela metade" (D-020).
+    """
+    if not (analysis and reason and obj):
+        return {}
+    return {"analysis": str(analysis), "reason": str(reason),
+            "object": str(obj)}
+
+
+def has_referral(referral):
+    """Se um achado de fato declara encaminhamento (os tres campos presentes)."""
+    return (isinstance(referral, dict)
+            and all(referral.get(c) for c in REFERRAL_CAMPOS))
+
+
 def confidence_label(confidence):
     """Rotulo PT de um nivel de confianca, ou vazio se nao declarado."""
     return CONFIDENCE_LABELS.get(confidence, "")
@@ -130,7 +177,7 @@ class Finding(object):
     def __init__(self, title, severity, source, category=None, target=None,
                  description=None, evidence=None, technique=None,
                  references=None, recommendation=None,
-                 confidence=None, custody=None):
+                 confidence=None, custody=None, referral=None):
         """
         PARAMETER title: resumo curto do achado (aparece na lista).
         PARAMETER severity: um dos SEV_* (escala unica do produto).
@@ -146,6 +193,9 @@ class Finding(object):
                   o coletor ainda nao declarou; a interface trata como nao dito.
         PARAMETER custody: dict de custodia {"level": CUSTODY_*, "sha256": ...,
                   "copy_path": ...}. Declara o que foi preservado do artefato.
+        PARAMETER referral: dict de encaminhamento a bancada (ver make_referral),
+                  com analysis/reason/object. Vazio quando o achado se conclui
+                  dentro do alcance da frota, e isso tambem e uma resposta.
         """
         self.title = title
         self.severity = severity if severity in SEVERITY_ORDER else SEV_INFO
@@ -159,6 +209,7 @@ class Finding(object):
         self.recommendation = recommendation or ""
         self.confidence = confidence if confidence in CONFIDENCE_ORDER else None
         self.custody = custody if isinstance(custody, dict) else {}
+        self.referral = referral if isinstance(referral, dict) else {}
 
     @property
     def fingerprint(self):
@@ -193,6 +244,7 @@ class Finding(object):
             "recommendation": self.recommendation,
             "confidence": self.confidence,
             "custody": self.custody,
+            "referral": self.referral,
         }
 
     def __repr__(self):

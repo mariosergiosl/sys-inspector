@@ -26,6 +26,8 @@ from bcc import BPF
 # Internal Modules
 from src.utils.config_loader import load_config
 from src.probes.loader import load_probe_source
+from src.core.eventfmt import (formata_conexao, formata_escuta,
+                               decodifica_saida, nome_dns, nome_sni)
 from src.collectors.process_tree import ProcessTree, unsafe_path_in_cmdline
 # from src.collectors.system_inventory import collect_full_inventory
 
@@ -75,6 +77,73 @@ class SysInspectorEngine:
 
             # Attach Probes (Network Connection Tracking)
             self.bpf.attach_kprobe(event="tcp_v4_connect", fn_name="kprobe__tcp_v4_connect")
+            # IPv6 e OPCIONAL de proposito: um kernel sem a funcao (IPv6 compilado
+            # fora) faria o attach levantar e derrubaria TODAS as sondas junto,
+            # trocando um ponto cego por uma cegueira total. Falha aqui vira
+            # capacidade ausente, registrada, nunca silencio.
+            self._probes_opcionais = {}
+            self._attach_opcional("tcp_v6_connect", "kprobe__tcp_v6_connect",
+                                  "conexao IPv6")
+
+            # Credencial, modulo de kernel e escuta. Todas opcionais pelo mesmo
+            # motivo: um simbolo ausente num kernel especifico nao pode derrubar
+            # as demais sondas junto, e a ausencia precisa ficar REGISTRADA, nao
+            # virar silencio indistinguivel de "nada aconteceu".
+            self._attach_opcional("commit_creds", "kprobe__commit_creds",
+                                  "mudanca de credencial")
+            for chamada, funcao, desc in (
+                    ("init_module", "syscall__init_module",
+                     "carga de modulo de kernel"),
+                    ("finit_module", "syscall__finit_module",
+                     "carga de modulo por descritor"),
+                    ("bind", "syscall__bind", "socket passando a escutar"),
+                    ("ptrace", "syscall__ptrace",
+                     "leitura/injecao em processo alheio"),
+                    ("process_vm_readv", "syscall__process_vm_readv",
+                     "leitura de memoria alheia"),
+                    ("memfd_create", "syscall__memfd_create",
+                     "arquivo so em memoria (fileless)"),
+                    ("mprotect", "syscall__mprotect",
+                     "memoria virando executavel"),
+                    ("bpf", "syscall__bpf", "uso de eBPF por terceiros"),
+                    ("setns", "syscall__setns", "entrada em namespace alheio"),
+                    ("unshare", "syscall__unshare", "criacao de namespace"),
+                    ("kexec_load", "syscall__kexec_load", "troca de kernel"),
+                    # [C-023] Completam setns/unshare na fuga de conteiner: o
+                    # processo troca de namespace (ja coberto) e ENTAO monta o
+                    # sistema de arquivos do host, ou troca a propria raiz.
+                    ("mount", "syscall__mount",
+                     "montagem de sistema de arquivos"),
+                    ("pivot_root", "syscall__pivot_root",
+                     "troca da raiz do sistema de arquivos")):
+                self._attach_opcional(self.bpf.get_syscall_fnname(chamada),
+                                      funcao, desc)
+
+            # Sondas de funcao interna do kernel (sem prefixo de syscall).
+            for evento, funcao, desc in (
+                    ("vfs_unlink", "kprobe__vfs_unlink", "arquivo apagado"),
+                    ("vfs_rename", "kprobe__vfs_rename", "arquivo renomeado"),
+                    ("udp_sendmsg", "kprobe__udp_sendmsg",
+                     "consulta DNS (nome do destino)"),
+                    # [C-022] SNI: o nome dito PELA conexao TLS, que cobre o
+                    # caso em que nao houve consulta DNS nenhuma (cache, IP
+                    # fixo, DoH).
+                    ("tcp_sendmsg", "kprobe__tcp_sendmsg",
+                     "SNI do ClientHello TLS (nome do destino)")):
+                self._attach_opcional(evento, funcao, desc)
+
+            # Conexao aceita: e kretprobe, o socket so existe no retorno.
+            try:
+                self.bpf.attach_kretprobe(event="inet_csk_accept",
+                                          fn_name="kretprobe__inet_csk_accept")
+                self._probes_opcionais["inet_csk_accept"] = True
+                print("[+] eBPF: inet_csk_accept (conexao aceita) anexada.")
+            except Exception as exc:
+                self._probes_opcionais["inet_csk_accept"] = False
+                print("[!] eBPF: inet_csk_accept INDISPONIVEL: %s" % exc)
+
+            # Fim de processo e tracepoint, nao kprobe: o BCC anexa sozinho pelo
+            # nome da funcao, entao nao entra na lista de attach explicito.
 
             # Attach Probes (Disk I/O Latency)
             self.bpf.attach_kprobe(event="vfs_read", fn_name="kprobe__vfs_read")
@@ -89,12 +158,42 @@ class SysInspectorEngine:
             traceback.print_exc()
             # Don't exit here, allow Manager to handle it
 
+    def _attach_opcional(self, evento, funcao, descricao):
+        """
+        Anexa uma sonda cuja ausencia e aceitavel, e REGISTRA o desfecho.
+
+        Nem todo kernel exporta todo simbolo. Anexar sem guarda faz uma unica
+        funcao ausente derrubar o motor inteiro; anexar com um except mudo cria
+        coisa pior, que e a ferramenta afirmar cobertura que nao tem. Uma sonda
+        que nao anexou produz o mesmo sintoma de uma sonda que nunca dispara:
+        nenhum evento. Sem este registro, nao ha como distinguir as duas.
+        """
+        try:
+            self.bpf.attach_kprobe(event=evento, fn_name=funcao)
+            self._probes_opcionais[evento] = True
+            print("[+] eBPF: %s (%s) anexada." % (evento, descricao))
+            return True
+        except Exception as exc:
+            self._probes_opcionais[evento] = False
+            print("[!] eBPF: %s (%s) INDISPONIVEL neste kernel: %s"
+                  % (evento, descricao, exc))
+            return False
+
+    def probes_opcionais(self):
+        """O que anexou e o que nao, para a tela de capacidades nao supor."""
+        return dict(getattr(self, "_probes_opcionais", {}))
+
     def _get_cpu_ticks(self, pid):
         try:
             with open(f"/proc/{pid}/stat", "r") as f:
                 parts = f.read().split()
                 return int(parts[13]) + int(parts[14])
-        except: return 0
+        # Processo que terminou entre a listagem e a leitura e o caso COMUM, nao
+        # um erro: /proc/<pid> some junto com ele. A classe fica declarada (em
+        # vez de um except nu) para que um erro de OUTRA natureza aqui volte a
+        # aparecer, em vez de ser lido como "processo morreu".
+        except (IOError, OSError, IndexError, ValueError):
+            return 0
 
     def _update_cpu_stats(self, duration):
         """Calculates CPU usage percentage for all nodes."""
@@ -104,7 +203,10 @@ class SysInspectorEngine:
                 delta = end_ticks - node.cpu_start_ticks
                 try:
                     node.cpu_usage_pct = (delta / float(self.clk_tck)) / duration * 100.0
-                except: pass
+                # Janela de duracao zero: a conta nao existe, e o percentual fica
+                # no valor inicial. Classe declarada pelo mesmo motivo acima.
+                except ZeroDivisionError:
+                    pass
 
     def _check_heuristics(self, node):
         """Applies static anomaly detection rules."""
@@ -158,13 +260,122 @@ class SysInspectorEngine:
                 node.open_files.add(filename)
 
         elif ev_type == 'N':  # Network Connect
+            # [FIX] Era "except: pass": foi ESTE bloco que engoliu por meses
+            # o AttributeError de node.connections ser set() em vez de lista
+            # (corrigido em process_tree.py). Um except mudo aqui de novo
+            # descartaria em silencio qualquer falha futura de formatacao,
+            # deixando a lista de conexoes vazia sem nenhum rastro -- a
+            # mesma classe de perda silenciosa, so que escondida atras da
+            # PROXIMA mudanca. Print (nao logging: o resto do arquivo usa
+            # print para diagnostico, ver _attach_opcional) mantem o rastro
+            # visivel sem propor um mecanismo novo so para este ponto.
             try:
-                dst = socket.inet_ntop(socket.AF_INET, struct.pack("I", event.daddr))
-                port = socket.ntohs(event.dport)
-                conn_str = f"IPv4 -> {dst}:{port}"
+                conn_str = formata_conexao(
+                    getattr(event, "ip_ver", 4), event.daddr,
+                    getattr(event, "daddr6", b""), event.dport)
                 if conn_str not in node.connections:  # Avoid duplicates
                     node.connections.append(conn_str)  # v0.70 uses List for JSON compat
-            except: pass
+            except Exception as exc:
+                print("[!] eBPF: falha ao registrar conexao do PID %s: %s"
+                      % (pid, exc))
+
+        elif ev_type == 'X':  # Fim de processo
+            # Guardado no proprio no: o diff entre capturas passa a ter o
+            # instante real do fim, em vez de deduzir "sumiu" por ausencia.
+            node.exited = True
+            node.exit_code = decodifica_saida(getattr(event, "exit_code", 0))
+
+        elif ev_type == 'S':  # Mudanca de credencial (commit_creds)
+            # COLETA apenas. O julgamento de escalada precisa do loginuid e da
+            # arvore de ancestrais para nao acusar todo sudo legitimo, e isso e
+            # trabalho da regra, com o processo ja montado.
+            try:
+                anterior = int(event.uid)
+                novo = int(event.new_uid)
+                if anterior != novo:
+                    marca = "%d->%d" % (anterior, novo)
+                    if marca not in node.cred_changes:
+                        node.cred_changes.append(marca)
+                        node.loginuid_at_change = int(event.loginuid)
+            except Exception as exc:
+                print("[!] eBPF: falha ao registrar troca de credencial do "
+                      "PID %s: %s" % (pid, exc))
+
+        elif ev_type == 'M':  # Carga de modulo de kernel
+            node.kernel_module_loads += 1
+            if filename and filename not in node.module_args:
+                node.module_args.append(filename)
+
+        elif ev_type == 'L':  # bind(): socket passando a escutar
+            try:
+                escuta = formata_escuta(
+                    getattr(event, "ip_ver", 0), event.daddr,
+                    getattr(event, "daddr6", b""), event.dport)
+                if escuta not in node.listening:
+                    node.listening.append(escuta)
+            except Exception as exc:
+                print("[!] eBPF: falha ao registrar escuta do PID %s: %s"
+                      % (pid, exc))
+
+        elif ev_type == 'A':  # Conexao ACEITA (alguem entrou)
+            try:
+                origem = socket.inet_ntop(socket.AF_INET,
+                                          struct.pack("I", event.daddr))
+                marca = "aceita de %s na porta %d" % (origem, event.sport)
+                if marca not in node.accepted:
+                    node.accepted.append(marca)
+            except Exception as exc:
+                print("[!] eBPF: falha ao registrar conexao aceita do "
+                      "PID %s: %s" % (pid, exc))
+
+        elif ev_type == 'P':  # ptrace / process_vm_readv
+            alvo_pid = int(event.inspector_pid)
+            via = "process_vm_readv" if int(event.prio) < 0 else "ptrace"
+            marca = "%s -> pid %d" % (via, alvo_pid)
+            if marca not in node.mem_access:
+                node.mem_access.append(marca)
+
+        elif ev_type == 'G':  # memfd_create (fileless)
+            node.memfd_created += 1
+            if filename and filename not in node.memfd_names:
+                node.memfd_names.append(filename)
+
+        elif ev_type == 'Z':  # memoria virando executavel
+            node.exec_mem_grants += 1
+
+        elif ev_type == 'B':  # uso de bpf() por terceiros
+            node.bpf_calls += 1
+
+        elif ev_type == 'U':  # apagou / renomeou (anti-forense)
+            if int(event.prio) == 1:
+                node.files_renamed += 1
+            else:
+                node.files_deleted += 1
+
+        elif ev_type == 'C':  # namespace (fuga de conteiner)
+            node.ns_changes += 1
+
+        elif ev_type == 'T':  # mount / pivot_root (C-023)
+            # COLETA apenas, como no caso da credencial: montar e trocar raiz
+            # sao operacoes legitimas de rotina (systemd, autofs, runtime de
+            # conteiner). O que separa rotina de fuga e o CONTEXTO -- o processo
+            # ja ter mudado de namespace, estar dentro de um conteiner, ou o
+            # destino ser a raiz do host -- e isso e trabalho da regra, com a
+            # arvore ja montada.
+            alvo = filename or "(destino ilegivel)"
+            if int(event.prio) == 1:
+                if alvo not in node.pivot_roots:
+                    node.pivot_roots.append(alvo)
+            else:
+                # As flags dizem MUITO sobre a intencao: MS_BIND (0x1000) e a
+                # forma corrente de trazer um caminho do host para dentro de um
+                # conteiner, e e o que uma montagem de rotina raramente usa.
+                marca = "%s (flags 0x%x)" % (alvo, int(getattr(event, "mem_vsz", 0)))
+                if marca not in node.mount_ops:
+                    node.mount_ops.append(marca)
+
+        elif ev_type == 'K':  # kexec_load
+            node.kexec_calls += 1
 
         elif ev_type == 'R':  # Read
             node.read_bytes_delta += event.io_bytes
@@ -196,7 +407,9 @@ class SysInspectorEngine:
                 node.anomaly_score += 5
                 if "NET ERR" not in node.context_tags: node.context_tags.append("NET ERR")
 
-            except Exception: pass
+            except Exception as exc:
+                print("[!] eBPF: falha ao registrar descarte do PID %s: %s"
+                      % (pid, exc))
 
     def _collect_network_counters(self):
         """Reads BPF Maps for high-volume metrics."""
@@ -226,6 +439,49 @@ class SysInspectorEngine:
     # [v0.70] NEW THREADING MODEL (Non-Blocking)
     # --------------------------------------------------------------------------
 
+    def _handle_dns_event(self, cpu, data, size):
+        """
+        Consulta DNS: o kernel entregou bytes crus, o nome sai aqui.
+
+        O parse fica no espaco de usuario de proposito (D-030): decodificar
+        rotulos DNS dentro do verificador do eBPF e caro e limitado, e aqui um
+        datagrama truncado apenas devolve None em vez de virar problema no kernel.
+        """
+        try:
+            evento = self.bpf["dns_events"].event(data)
+            nome = nome_dns(evento.payload, evento.payload_len)
+            if not nome:
+                return
+            with self.lock:
+                no = self.tree.nodes.get(evento.pid)
+                if no is not None and nome not in no.dns_queries:
+                    no.dns_queries.append(nome)
+        except Exception as exc:
+            # Um datagrama estranho nao pode interromper o laco de coleta, mas
+            # tambem nao pode sumir sem rastro: era exatamente assim que esta
+            # sonda ficava "anexada e entregando zero" sem ninguem perceber.
+            print("[!] eBPF: falha ao tratar evento DNS: %s" % exc)
+
+    def _handle_tls_event(self, cpu, data, size):
+        """
+        ClientHello TLS: o kernel entregou bytes crus, o nome (SNI) sai aqui.
+
+        Mesma divisao de trabalho do DNS (D-030). Um ClientHello cortado, ou um
+        envio na porta 443 que nao e TLS, apenas devolve None: nao e erro, e a
+        resposta "isto nao carrega nome".
+        """
+        try:
+            evento = self.bpf["tls_events"].event(data)
+            nome = nome_sni(evento.payload, evento.payload_len)
+            if not nome:
+                return
+            with self.lock:
+                no = self.tree.nodes.get(evento.pid)
+                if no is not None and nome not in no.tls_sni:
+                    no.tls_sni.append(nome)
+        except Exception as exc:
+            print("[!] eBPF: falha ao tratar evento TLS/SNI: %s" % exc)
+
     def _poll_loop(self):
         """Background thread loop to drain perf buffers."""
         print("[DEBUG] BPF Polling Thread Started.")
@@ -250,6 +506,19 @@ class SysInspectorEngine:
             # buffer continua valido e uma unica abertura basta.
             if not self._perf_buffer_aberto:
                 self.bpf["events"].open_perf_buffer(self._handle_bpf_event)
+                # Canal proprio das consultas DNS. Abre em try porque a sonda e
+                # opcional: num kernel onde ela nao anexou, o mapa existe mas
+                # nunca recebe nada, e a falta do canal nao pode derrubar a coleta.
+                try:
+                    self.bpf["dns_events"].open_perf_buffer(self._handle_dns_event)
+                except Exception as exc:
+                    print("[!] eBPF: canal DNS indisponivel: %s" % exc)
+                # Canal proprio do SNI, pelo mesmo motivo do DNS: buffer grande
+                # nao cabe no evento comum, e a sonda e opcional.
+                try:
+                    self.bpf["tls_events"].open_perf_buffer(self._handle_tls_event)
+                except Exception as exc:
+                    print("[!] eBPF: canal TLS/SNI indisponivel: %s" % exc)
                 self._perf_buffer_aberto = True
 
             while self.running:

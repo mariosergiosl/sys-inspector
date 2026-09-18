@@ -12,7 +12,6 @@
 # AUTHOR: Mario Luz (Sys-Inspector Project)
 # ==============================================================================
 
-import pytest
 
 from src.core import clock
 
@@ -88,6 +87,7 @@ def test_timeout_do_chronyc_e_nao_medido(monkeypatch):
     class _Trava(object):
         def communicate(self, timeout=None):
             raise clock.subprocess.TimeoutExpired("chronyc", timeout)
+
         def kill(self):
             pass
     monkeypatch.setattr(clock.subprocess, "Popen", lambda *_a, **_k: _Trava())

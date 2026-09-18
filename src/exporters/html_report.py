@@ -16,11 +16,16 @@
 import re
 import datetime
 import html as html_lib
-from src.exporters.web_assets import HTML_TEMPLATE, CSS_BASE, JS_BLOCK, LEGEND_HTML
+from src.exporters.web_assets import (HTML_TEMPLATE, CSS_BASE, JS_BLOCK,
+                                      _JS_COLUNAS_CORE,
+                                      LEGEND_HTML, FILTER_BAR_HTML,
+                                      BADGE_LEGEND_HTML)
 from src.core.findings import (SEV_INFO, SEVERITY_ORDER, confidence_label,
-                               custody_label, custody_level, CONF_CONFIRMED,
+                               custody_label, custody_level, has_referral,
+                               CONF_CONFIRMED,
                                CONF_PROBABLE, CONF_HEURISTIC, CUSTODY_NONE)
 from src.core import risk
+from src.core import badges as badges_reg
 from src.core.attack import describe, technique_url, used_techniques
 
 
@@ -111,6 +116,38 @@ def build_disk_string(path, mount_map, is_container=False):
     if path.startswith("/"):
         return "<span class='disk-str'>(FS: Host Filesystem | Mount info missing)</span>"
 
+    return ""
+
+
+# [2026-08-18, pedido do Mario] "Probe Signals" nao e o UNICO lugar do
+# detalhe do processo com dado ligado a um badge -- Security Forensics
+# tambem e. As frases de detection_reasons sao texto livre (nao tem uma
+# chave estruturada como as sondas do F-201), entao o icone vem de casar um
+# pedaco do texto com o badge que aquela deteccao de fato dispara em
+# process_tree.py. Ordem importa: o primeiro pedaco que bater vence.
+_ICONE_POR_TRECHO_DO_MOTIVO = (
+    ("Executable deleted from disk", "DELETED"),
+    ("INTEGRITY: Binary file has been deleted", "DELETED"),
+    ("Fileless execution from memory", "DELETED"),
+    ("Unsafe Library Path", "UNSAFE"),
+    ("Executed from unsafe path", "UNSAFE"),
+    ("LOCATION: Executed from temporary", "UNSAFE"),
+    ("GPU Hardware Access", "GPU"),
+    ("GPU Library Loaded", "GPU"),
+    ("Heuristic Name Match", "MINER"),
+    ("Filesystem Anomaly", "IMMUTABLE"),
+    ("Security Inspector", "EDR/AV"),
+    ("INSPECTION TYPE", "EDR/AV"),
+    ("Sync mode causes", "EDR/AV"),
+    ("ZOMBIE/DEFUNCT", "ZOMBIE"),
+)
+
+
+def _icone_do_motivo(motivo):
+    """Icone do badge que este motivo de deteccao dispara, ou "" se nenhum bater."""
+    for trecho, tag in _ICONE_POR_TRECHO_DO_MOTIVO:
+        if trecho in motivo:
+            return badges_reg.TAG_MAP.get(tag, ("",))[0]
     return ""
 
 
@@ -282,27 +319,10 @@ def _severity_label(score):
 # ------------------------------------------------------------------------------
 def _render_badges(node, tree=None):
     badges = []
-    tag_map = {
-        "SSH": ("🔌", "t-ssh", "Active SSH Connection"),
-        "SUDO": ("🛡️", "t-sudo", "Running via Sudo"),
-        "MINER": ("⛏️", "t-miner", "Crypto Mining Signature"),
-        "UNSAFE": ("☢️", "t-unsafe", "Unsafe Path (/tmp, /dev/shm)"),
-        "EDR/AV": ("💊", "t-edr", "Security Inspectors - EDR/AV"),
-        "INSPECTOR": ("💊", "t-edr", "Security Inspectors - EDR/AV"),
-        "EDR-WAIT": ("🧊", "t-edr", "Process Frozen by EDR/AV (Wchan Wait)"),
-        "GPU": ("🕹️", "t-gpu", "Accessing GPU Resources"),
-        "CONTAINER": ("📦", "t-cont", "Containerized Process"),
-        "ZOMBIE": ("🧟", "t-zombie", "Zombie Process"),
-        "IMMUTABLE": ("🔒", "t-immutable", "Immutable File Attribute"),
-        # O binario sumiu do disco enquanto o processo continua rodando. E um
-        # dos sinais mais fortes que a arvore carrega: apagar o executavel apos
-        # a execucao e tecnica corrente para nao deixar amostra para analise
-        # (ATT&CK T1070.004). Faltava aqui, e como o laco abaixo descartava em
-        # silencio tudo que nao estivesse neste mapa, o coletor detectava, o
-        # dado trafegava ate o laudo e a interface o jogava fora sem aviso.
-        "DELETED": ("👻", "t-deleted",
-                    "Binario apagado do disco com o processo em execucao")
-    }
+    # Registro unico (src/core/badges.py): a barra de filtro do topo nasce da
+    # MESMA lista, para um sinal novo nunca aparecer so como badge sem forma
+    # de isolar na arvore (D-028).
+    tag_map = badges_reg.TAG_MAP
 
     if node.is_new:
         badges.append('<span class="tag t-new" data-filter="NEW" title="New Process">✨<span class="visually-hidden">NEW</span></span>')
@@ -333,7 +353,13 @@ def _render_badges(node, tree=None):
             continue
 
         if tag in tag_map and tag not in seen:
-            icon, cls, tooltip = tag_map[tag]
+            icon, cls, tooltip, significado = tag_map[tag]
+            # O significado forense/seguranca entra no MESMO tooltip do
+            # badge, nao so no popup de legenda: quem esta olhando UM
+            # processo especifico nao devia precisar abrir outra tela para
+            # entender o que aquele icone quer dizer (achado do Mario,
+            # 2026-08-18).
+            tooltip += "\n\n" + significado
             if tag == "ZOMBIE" and tree:
                 parent_node = tree.get(node.ppid)
                 if parent_node:
@@ -403,6 +429,20 @@ def _fmt_epoch(value):
         return "-"
 
 
+def _bloco_vazio(titulo, motivo):
+    """
+    Bloco de detalhe SEM dado, mas presente (D-020).
+
+    A regra do projeto e que todo campo fica visivel sempre, em um de tres
+    estados. Um bloco que simplesmente nao e desenhado deixa o analista sem
+    saber se aquele processo nao TEM o dado ou se a ferramenta nao COLETOU,
+    e numa peca forense essas duas respostas sao muito diferentes.
+    """
+    return ("<div class='det-blk'><span class='det-title'>%s</span>"
+            "<div class='list-box' style='color:#666;font-style:italic'>"
+            "%s</div></div>" % (titulo, motivo))
+
+
 def _render_ancestry(node, tree):
     """
     Monta a cadeia de ancestrais do processo (do mais antigo ate ele).
@@ -428,8 +468,11 @@ def _render_ancestry(node, tree):
             break
         current = parent
 
+    # [D-020] Cadeia de um elemento so tambem e resposta: quer dizer que
+    # este processo nao tem ancestral capturado nesta janela.
     if len(chain) < 2:
-        return ""
+        return _bloco_vazio("Process Ancestry",
+                            "sem ancestral capturado nesta janela")
 
     chain.reverse()
     parts = []
@@ -452,14 +495,24 @@ def _render_exe_provenance(node):
     execucao e um dos indicadores mais fortes de anti-forense.
     """
     exe_path = getattr(node, "exe_path", "") or ""
+    # [D-020] Sem caminho de executavel o bloco continua aparecendo,
+    # dizendo POR QUE esta vazio: um processo de kernel nao tem binario
+    # em disco, e isso e uma resposta, nao ausencia de coleta.
     if not exe_path:
-        return ""
+        return _bloco_vazio(
+            "Executable Provenance",
+            "sem binario em disco (processo de kernel, ou caminho ilegivel)")
 
+    # [2026-08-18, pedido do Mario] O icone do badge que essa condicao
+    # dispara (DELETED, mesma tag para os dois casos -- ver
+    # process_tree.py::_collect_exe_provenance) junto do rotulo, para ligar
+    # visualmente esta linha ao selo que aparece na arvore.
+    icone_deleted = badges_reg.TAG_MAP["DELETED"][0]
     flags = []
     if getattr(node, "exe_deleted", False):
-        flags.append("<span class='tag t-unsafe'>DELETED FROM DISK</span>")
+        flags.append(f"<span class='tag t-unsafe'>{icone_deleted} DELETED FROM DISK</span>")
     if getattr(node, "exe_memfd", False):
-        flags.append("<span class='tag t-unsafe'>FILELESS (memfd)</span>")
+        flags.append(f"<span class='tag t-unsafe'>{icone_deleted} FILELESS (memfd)</span>")
     flag_html = (" ".join(flags)) if flags else ""
 
     size = getattr(node, "exe_size", 0)
@@ -475,6 +528,115 @@ def _render_exe_provenance(node):
         for lbl, val in rows)
 
     return ("<div class='det-blk'><span class='det-title'>Executable Provenance</span>"
+            f"<table class='ctx-tbl'>{body}</table></div>")
+
+
+# [F-201] Ordem de exibicao: chave em process_tree.py/risk.py, rotulo da
+# linha, funcao que formata a lista/contador daquele campo do Node, e a
+# chave em risk.SINAIS que explica o que aquele numero significa para
+# seguranca/pericia (mesmo texto do popup do anomaly score e do badge --
+# fonte unica, D-021/D-028). None quando o campo nao vira bit (nenhum caso
+# hoje: todo campo que aparece aqui ja tem badge e sinal correspondente).
+_PROBE_SIGNAL_ROWS = (
+    ("cred_changes", "Credential Changes", "list", "cred_change"),
+    ("kernel_module_loads", "Kernel Modules Loaded", "count_with_args:module_args", "kmod_load"),
+    ("listening", "Listening", "list", "new_listener"),
+    ("accepted", "Accepted Connections", "list", "accepted_conn"),
+    ("mem_access", "Memory Access", "list", "mem_access"),
+    ("memfd_created", "Memfd Created", "count_with_args:memfd_names", "memfd_create"),
+    ("exec_mem_grants", "Exec Mem Grants (mprotect)", "count", "exec_mem_grant"),
+    ("bpf_calls", "BPF Calls", "count", "bpf_use"),
+    ("files_deleted", "Files Deleted", "count", "file_deleted"),
+    ("files_renamed", "Files Renamed", "count", "file_renamed"),
+    ("ns_changes", "Namespace Changes", "count", "ns_change"),
+    ("kexec_calls", "Kexec Calls", "count", "kexec_load"),
+    ("dns_queries", "DNS Queries", "list", "dns_query"),
+    # [Lote 2, 2026-08-19] SNI logo abaixo do DNS de proposito: sao a mesma
+    # pergunta ("com quem este processo falou") por dois caminhos, e ler os
+    # dois lado a lado e o que mostra o caso interessante -- fluxo TLS para um
+    # nome que NAO aparece em nenhuma consulta DNS desta captura.
+    ("tls_sni", "TLS SNI (nome do destino)", "list", "tls_sni"),
+    ("mount_ops", "Mount Operations", "list", "mount_op"),
+    ("pivot_roots", "Pivot Root", "list", "pivot_root"),
+)
+
+_EXPLICACAO_RISCO_POR_CHAVE = {
+    chave: explicacao for _bit, chave, _rotulo, _sev, explicacao in risk.SINAIS
+}
+
+
+def _render_probe_signals(node):
+    """
+    Dado bruto das sondas de 2026-08-17 que ainda nao tem bloco proprio no
+    laudo (F-201). So aparece linha para campo que TEM dado: silencio aqui
+    significa "a sonda olhou e nao havia", nao "nao foi coletado" (D-020) --
+    os campos existem sempre no Node (ver ProcessNode.__init__), so o valor
+    varia.
+
+    [2026-08-18] Cada linha traz, junto do numero cru, o QUE aquele numero
+    significa para seguranca/pericia (mesmo texto de risk.SINAIS que ja
+    explica o badge e o popup de score). Antes so o numero aparecia ("BPF
+    Calls: 3"), e o Mario relatou ter que ir procurar em outro lugar o que
+    aquilo queria dizer -- e a mesma dica que motivou D-028 (todo indicador
+    presente, todo encaminhamento dito): um numero sem explicacao ao lado e
+    presenca so formal.
+    """
+    rows = []
+    for campo, rotulo, modo, chave_risco in _PROBE_SIGNAL_ROWS:
+        # [D-020, corrigido em 2026-08-20] O Mario: "temos uma regra de nunca
+        # esconder um campo sem valor". Antes a linha era PULADA quando o sinal
+        # nao tinha disparado, e o silencio era tratado como resposta. Nao e: da
+        # tela nao havia como distinguir "a sonda olhou e nao achou" de "esta
+        # captura nao produziu o campo", e a segunda invalida qualquer conclusao
+        # tirada da ausencia. Todo campo declarado aparece agora, em um dos tres
+        # estados da D-020.
+        tem_chave = hasattr(node, campo)
+        valor = getattr(node, campo, None)
+        if not tem_chave:
+            texto = ("<span style='color:%s' title=\"%s\">%s</span>"
+                     % (ESTADO_AUSENTE[1], _esc(ESTADO_AUSENTE[2]),
+                        ESTADO_AUSENTE[0]))
+        elif not valor:
+            texto = ("<span style='color:%s' title=\"%s\">%s</span>"
+                     % (ESTADO_VAZIO[1], _esc(ESTADO_VAZIO[2]),
+                        ESTADO_VAZIO[0]))
+        elif modo == "list":
+            texto = ", ".join(_esc(v) for v in valor)
+        elif modo == "count":
+            texto = str(valor)
+        else:  # "count_with_args:<campo_da_lista>"
+            campo_args = modo.split(":", 1)[1]
+            args = getattr(node, campo_args, None)
+            texto = str(valor)
+            if args:
+                texto += " - " + ", ".join(_esc(a) for a in args)
+        significado = _EXPLICACAO_RISCO_POR_CHAVE.get(chave_risco, "")
+        # [2026-08-18, pedido do Mario] O icone do MESMO badge que apareceu
+        # na arvore vai junto do rotulo aqui: "qual informacao e relacionada
+        # aquele probe/deteccao" fica visivel de cara, sem ter que decorar
+        # qual emoji e qual campo. A chave de risk.py em maiusculo bate
+        # exatamente com a chave de badges.TAG_MAP para os 13 sinais do
+        # F-201 (cred_change -> CRED_CHANGE, etc.).
+        icone = badges_reg.TAG_MAP.get(chave_risco.upper(), ("", "", "", ""))[0]
+        rows.append((icone, rotulo, texto, significado))
+
+    # [D-020] Quarta violacao encontrada olhando a tela com o Mario: o
+    # bloco de sinais das sondas sumia inteiro quando nenhuma sonda
+    # tinha disparado para aquele processo. Era o caso da MAIORIA dos
+    # processos, e quem lia o laudo nao sabia se aquele processo nao
+    # acionou sonda nenhuma ou se as sondas nao rodaram para ele.
+    if not rows:
+        return _bloco_vazio(
+            "Probe Signals",
+            "nenhuma sonda eBPF disparou para este processo nesta captura")
+
+    body = "".join(
+        f"<tr><td class='ctx-lbl'>{icone} {lbl}:</td><td class='ctx-val'>{val}"
+        f"<div class='probe-sig'>{_esc(sig)}</div></td></tr>"
+        for icone, lbl, val, sig in rows)
+    return ("<div class='det-blk'><span class='det-title'>Probe Signals "
+            "<span style='font-weight:normal; color:#777; font-size:0.85em'>"
+            "(dado bruto das sondas eBPF, nesta captura)</span></span>"
             f"<table class='ctx-tbl'>{body}</table></div>")
 
 
@@ -500,6 +662,13 @@ def _get_details_html(node, mounts, tree=None):
     is_sudo = "Yes" if "sudo" in node.cmd else "No"
     is_ssh = "Yes" if "sshd" in node.cmd else "No"
     html += f"<tr><td class='ctx-lbl'>Sudo/SSH:</td><td class='ctx-val'>Sudo:{is_sudo} / SSH:{is_ssh}</td></tr>"
+
+    # [F-201] sched_process_exit nao vira badge de anomalia (todo processo
+    # termina), mas o dado e coletado e por D-020 nao pode ficar invisivel.
+    exit_style = "color:var(--red); font-weight:bold" if getattr(node, "exited", False) and node.exit_code != 0 else ""
+    exit_val = (f"Exited (code {node.exit_code})" if getattr(node, "exited", False)
+                else "Running")
+    html += f"<tr><td class='ctx-lbl'>Exit Status:</td><td class='ctx-val' style='{exit_style}'>{_esc(exit_val)}</td></tr>"
 
     role_val = "Standard Process"
     role_style = ""
@@ -582,13 +751,25 @@ def _get_details_html(node, mounts, tree=None):
     # "como chegou aqui", que a linha do processo sozinha nao conta.
     html += _render_exe_provenance(node)
     html += _render_ancestry(node, tree)
+    html += _render_probe_signals(node)
 
+    # [D-020] O bloco aparece SEMPRE. Estava dentro de `if reasons:`, entao
+    # sumia da tela quando o processo estava limpo, e o analista ficava sem
+    # saber se nao havia motivo de seguranca ou se a analise nao tinha rodado
+    # para aquele processo. Ausencia de achado e uma resposta, e resposta se
+    # escreve.
     reasons = _get_anomaly_reasons(node)
     if reasons:
         html += "<div class='det-blk'><span class='det-title' style='color:var(--red)'>Security Forensics</span>"
         for r in reasons:
-            html += f"<div style='color:#ff6b6b; margin-left:10px; font-weight:bold;'>&bull; {_esc(r)}</div>"
+            icone = _icone_do_motivo(r)
+            prefixo = f"{icone} " if icone else ""
+            html += f"<div style='color:#ff6b6b; margin-left:10px; font-weight:bold;'>&bull; {prefixo}{_esc(r)}</div>"
         html += "</div>"
+    else:
+        html += _bloco_vazio("Security Forensics",
+                             "nenhum motivo de seguranca disparou para este "
+                             "processo nesta captura")
 
     html += "<div class='det-blk'><span class='det-title'>Loaded Libraries</span>"
     if node.libs:
@@ -599,7 +780,9 @@ def _get_details_html(node, mounts, tree=None):
             # Escapa o caminho ANTES de envolver na marcacao de destaque.
             safe_lib = _esc(lib)
             if is_suspicious_lib(lib):
-                safe_lib = f"<span style='color:var(--red);font-weight:bold'>{_esc(lib)} <span class='tag t-unsafe'>[UNSAFE]</span></span>"
+                icone_unsafe = badges_reg.TAG_MAP["UNSAFE"][0]
+                safe_lib = (f"<span style='color:var(--red);font-weight:bold'>{_esc(lib)} "
+                            f"<span class='tag t-unsafe'>{icone_unsafe} [UNSAFE]</span></span>")
             ls_html.append(f"<div>{safe_lib} {dstr}</div>")
 
         libs_content = '\n'.join(ls_html)
@@ -997,17 +1180,96 @@ def _confidence_badge(confidence):
 
 
 def _custody_line(custody):
-    """Linha de custodia: o que foi de fato preservado do artefato."""
+    """
+    Linha de custodia: o que foi de fato preservado do artefato, e o que NAO foi.
+
+    [C-043/D-032] Passou a declarar os limites, e nao so o nivel. Tres coisas
+    tinham que aparecer, porque cada uma muda a leitura da evidencia:
+
+    - o ESCOPO do hash. Um sha256 calculado so sobre o recorte identifica o
+      recorte, nao o objeto. Exibi-lo do mesmo jeito que o hash do objeto
+      inteiro faria o leitor concluir que a amostra esta identificada quando
+      nao esta;
+    - a TRUNCAGEM do recorte, pelo mesmo motivo: recorte cortado em silencio e
+      lido como artefato inteiro (D-020);
+    - o MOTIVO de nao haver aquisicao. "Aquisicao desligada neste agente" e
+      uma resposta; a ausencia muda de significado quando se sabe disso.
+    """
     nivel = custody_level(custody)
-    extra = ""
-    if isinstance(custody, dict) and custody.get("sha256"):
-        extra = " (sha256 %s...)" % _esc(str(custody["sha256"])[:12])
-    aviso = ("" if nivel != CUSTODY_NONE else
+    dados = custody if isinstance(custody, dict) else {}
+    partes = []
+
+    if dados.get("sha256"):
+        escopo = dados.get("hash_scope", "full")
+        if escopo == "full":
+            rotulo = "sha256 do objeto inteiro"
+        else:
+            rotulo = ("sha256 do RECORTE apenas (objeto grande demais para "
+                      "varrer no host medido)")
+        partes.append("%s: <code>%s</code>" % (rotulo, _esc(str(dados["sha256"]))))
+
+    if dados.get("size"):
+        partes.append("tamanho do objeto: %s" % _esc(format_bytes(dados["size"])))
+
+    if dados.get("excerpt_bytes"):
+        corte = (" de %s, o restante NAO foi preservado"
+                 % _esc(format_bytes(dados.get("size", 0)))
+                 if dados.get("truncated") else " (objeto inteiro)")
+        partes.append("recorte preservado: %s%s"
+                      % (_esc(format_bytes(dados["excerpt_bytes"])), corte))
+
+    if dados.get("copy_path"):
+        partes.append("copia integral em <code>%s</code>"
+                      % _esc(str(dados["copy_path"])))
+    if dados.get("copy_error"):
+        partes.append("<span style='color:var(--red)'>a copia falhou: %s</span>"
+                      % _esc(str(dados["copy_error"])))
+
+    if dados.get("acquired") is False and dados.get("reason"):
+        partes.append("<span style='color:#999'>nao adquirido: %s</span>"
+                      % _esc(str(dados["reason"])))
+
+    aviso = ("" if nivel != CUSTODY_NONE or partes else
              " &mdash; nada do artefato foi retido para pericia")
+    detalhe = ("<div class='fnd-cust-det'>" + " &middot; ".join(partes) + "</div>"
+               if partes else "")
+
     return ("<div class='fnd-custody' title='Custodia: o que foi preservado do "
-            "artefato para a pericia. Hoje a ferramenta coleta metadado; hash e "
-            "copia do artefato entram no roadmap.'><b>Custodia:</b> %s%s%s</div>"
-            % (_esc(custody_label(custody)), extra, aviso))
+            "artefato para a pericia. A aquisicao e DIRIGIDA (D-032): hash, "
+            "metadado e um recorte pequeno, o suficiente para identificar e "
+            "direcionar. A massa que PROVA e trabalho de bancada.'>"
+            "<b>Custodia:</b> %s%s%s</div>"
+            % (_esc(custody_label(custody)), aviso, detalhe))
+
+
+def _referral_block(referral):
+    """
+    Encaminhamento a bancada (C-044), VISIVEL no detalhe do achado.
+
+    Nao vai em title/tooltip de proposito. A D-028 pede todo encaminhamento
+    DITO, e um texto que so aparece com o mouse em cima nao esta dito: numa lista
+    de dezenas de achados ninguem passa o mouse em cada um para descobrir se
+    havia direcionamento ali.
+
+    Ausencia tambem e resposta: quando o achado se conclui dentro do alcance da
+    frota, o bloco simplesmente nao aparece, e isso significa "nao precisa de
+    bancada", nao "esqueceram de preencher" (D-020).
+    """
+    if not has_referral(referral):
+        return ""
+    return (
+        "<div class='fnd-referral'>"
+        "<div class='fnd-ref-hdr'>&#128269; Encaminhamento a bancada"
+        "<span class='fnd-ref-why'>o que esta ferramenta NAO conclui, e quem "
+        "conclui</span></div>"
+        "<table class='fnd-ref-tbl'>"
+        "<tr><td class='fnd-ref-k'>Analise necessaria</td><td>%s</td></tr>"
+        "<tr><td class='fnd-ref-k'>Por que este achado a motiva</td><td>%s</td></tr>"
+        "<tr><td class='fnd-ref-k'>Objeto</td><td><code>%s</code></td></tr>"
+        "</table></div>"
+        % (_esc(referral.get("analysis", "")),
+           _esc(referral.get("reason", "")),
+           _esc(referral.get("object", ""))))
 
 
 def _evidence_key_html(key):
@@ -1147,6 +1409,7 @@ def render_findings_panel(findings):
         # detalhe, junto da evidencia). Vem do contrato de resposta do achado.
         conf_html = _confidence_badge(f.get("confidence"))
         custody_html = _custody_line(f.get("custody"))
+        referral_html = _referral_block(f.get("referral"))
 
         items.append(f"""
         <div class="fnd-item" data-sev="{_esc(sev)}" data-source="{_esc(f.get('source', ''))}" data-technique="{_esc(technique)}">
@@ -1163,6 +1426,7 @@ def render_findings_panel(findings):
                 <div class="fnd-desc">{_esc(f.get('description', ''))}</div>
                 {rec_html}
                 {custody_html}
+                {referral_html}
                 {refs_html}
                 <div class="fnd-ev-title">Evidencia</div>
                 {ev_html}
@@ -1300,11 +1564,25 @@ def generate_report(inventory, process_tree, output_file, version):
 
         html = HTML_TEMPLATE.format(
             VERSION=version,
-            HOSTNAME=inventory['os']['hostname'],
+            # [F-235] O canto do laudo mostrava so o nome curto. A tela
+            # Manager ja exibe o FQDN, e o laudo, que e a peca que sai
+            # daqui, nao pode identificar o host com menos precisao que o
+            # painel. Quando nao ha dominio configurado, o nome curto
+            # continua sendo a resposta certa.
+            HOSTNAME=(inventory['os'].get('fqdn')
+                      or inventory['os']['hostname']),
             TIMESTAMP=inventory['generated'],
             CSS_BLOCK=CSS_BASE,
-            JS_BLOCK=JS_BLOCK + "\n    // Auto-start check handled by main.py injection or manual call",
+            # [F-219] O nucleo do arraste de colunas entra AQUI, dentro do
+            # <script> que o template ja tem, em vez de virar um placeholder
+            # novo. Placeholder novo obriga todo teste que monta o template a
+            # mao a ser atualizado junto, e foi exatamente isso que dois testes
+            # acusaram na primeira tentativa.
+            JS_BLOCK=(JS_BLOCK + _JS_COLUNAS_CORE
+                      + "\n    // Auto-start check handled by main.py injection or manual call"),
             LEGEND_HTML=LEGEND_HTML,
+            FILTER_BAR_HTML=FILTER_BAR_HTML,
+            BADGE_LEGEND_HTML=BADGE_LEGEND_HTML,
             OS_CONTENT=os_c,
             DISK_CONTENT=disk_c,
             NET_CONTENT=net_c,

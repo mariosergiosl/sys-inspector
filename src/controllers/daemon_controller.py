@@ -27,7 +27,7 @@ from src.collectors.system_inventory import collect_full_inventory
 from src.collectors.manager import (summarize_metrics, collect_findings,
                                     correlate_findings_with_processes)
 from src.core.findings import summarize_by_severity
-# from src.core.database import DatabaseManager
+from src.core.database import CAPTURE_FULL, CAPTURE_CHAOS
 from src.core.crypto import load_public_key, encrypt_data
 from src.core.outbox import Outbox
 from src.core.custody import build_for_capture
@@ -36,7 +36,7 @@ from src.core.executed import ExecutionLedger
 
 
 class DaemonController:
-    def __init__(self, config, db_manager, shutdown_event):
+    def __init__(self, config, db_manager, shutdown_event, run_once=False):
         """
         Initialize the Daemon Controller.
 
@@ -44,7 +44,16 @@ class DaemonController:
             config (dict): Configuration dictionary.
             db_manager (DatabaseManager): Initialized DB handler.
             shutdown_event (threading.Event): Signal for graceful shutdown.
+            run_once (bool): roda UM ciclo e sai, em vez do laco continuo.
+
+        [2026-08-19, C-134] run_once preserva o primeiro uso em uma linha, que
+        era o que o modo snapshot oferecia antes de ser removido. Nao e um modo
+        novo: e o MESMO caminho de coleta do agente, parando depois de um ciclo.
+        O caminho ja funcionava sozinho, sem servidor, porque Outbox.enabled ja
+        devolve False quando nao ha server_ip nem token -- entao a captura fica
+        guardada localmente e nada e enviado.
         """
+        self.run_once = bool(run_once)
         self.config = config
         self.db = db_manager
         self.shutdown_event = shutdown_event
@@ -152,7 +161,10 @@ class DaemonController:
         Initializes the Engine ONCE and toggles collection cyclically.
         """
         self.logger.info(f"[DAEMON] Starting Universal Collector (v0.80). Agent ID: {self.agent_uuid}")
-        self.logger.info(f"[DAEMON] Cycle Config: Capture={self.capture_duration}s | Sleep={self.interval}s")
+        if self.run_once:
+            self.logger.info(f"[DAEMON] Ciclo UNICO: Capture={self.capture_duration}s")
+        else:
+            self.logger.info(f"[DAEMON] Cycle Config: Capture={self.capture_duration}s | Sleep={self.interval}s")
 
         # 1. Initialize Engine ONCE to avoid recompilation overhead
         try:
@@ -190,7 +202,15 @@ class DaemonController:
             except Exception as e:
                 self.logger.error(f"[SYNC] Unexpected sync error: {e}")
 
-            # 4. Sleep Interval (Idle Time)
+            # 4. Ciclo unico: sai antes de dormir. A saida vem DEPOIS da
+            # entrega acima, e nao no fim da captura, para que uma execucao
+            # pontual com servidor configurado ainda entregue o que coletou em
+            # vez de deixar a captura presa no banco local.
+            if self.run_once:
+                self.logger.info("[DAEMON] Ciclo unico concluido (--once).")
+                break
+
+            # 5. Sleep Interval (Idle Time)
             if not self.shutdown_event.is_set():
                 self.logger.info(f"[WAIT] Sleeping for {self.interval}s...")
                 self.shutdown_event.wait(self.interval)
@@ -322,40 +342,132 @@ class DaemonController:
         import subprocess
 
         duracao = str(int(params.get("duration", 300) or 300))
-        candidatos = ["/opt/sys-inspector/tools/chaos_maker.sh",
+        # Alem dos caminhos de instalacao, procura ao lado do proprio codigo:
+        # rodando a partir da arvore de fontes, que e o fluxo de teste do
+        # laboratorio, o script vive em tools/ e nao em /opt nem /usr/bin.
+        raiz = os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))))
+        candidatos = [os.path.join(raiz, "tools", "chaos_maker.sh"),
+                      "/opt/sys-inspector/tools/chaos_maker.sh",
                       "/usr/bin/chaos_maker.sh"]
         script = next((c for c in candidatos if os.path.exists(c)), None)
         if not script:
             raise RuntimeError("chaos_maker.sh not installed on this host")
 
-        log_path = "/tmp/si_chaos_cmd.log"
+        # UM LOG POR RODADA. O arquivo unico reaproveitado era a causa de a
+        # captura sair cedo demais: o marcador de pronto de uma rodada ANTERIOR
+        # continuava no arquivo, a espera terminava antes de o cenario novo subir
+        # e a cena inteira se perdia. Truncar nao resolve, porque uma rodada
+        # ainda viva segue escrevendo no mesmo caminho depois do truncamento.
+        # Com um arquivo por rodada nao existe marcador alheio para confundir.
+        marca = "%d-%d" % (int(time.time()), os.getpid())
+        log_path = "/tmp/si_chaos_%s.log" % marca
         try:
             log_fh = open(log_path, "w")
-        except OSError:
-            log_fh = subprocess.DEVNULL
+        except OSError as exc:
+            # Sem log nao ha como saber quando o cenario ficou de pe. Capturar
+            # assim mediria uma cena que talvez nem exista, e o laudo diria
+            # "detectou pouco" quando o correto e dizer que a rodada nao vale.
+            raise RuntimeError(
+                "sem log para acompanhar o cenario (%s); rodada abortada" % exc)
+
+        self._limpar_logs_de_chaos_antigos()
+
+        # A trava do gateway e decidida pelo SCRIPT, que sabe conferir se este
+        # host possui o IP de roteamento do laboratorio. Aqui so se declara a
+        # intencao: quem clica o botao na tela nao tem como saber em qual host
+        # esta clicando, e derrubar a rede do gateway cega a frota inteira,
+        # justamente a frota que se queria observar.
+        ambiente = dict(os.environ)
+        ambiente["SAFE_ON_GATEWAY"] = "1"
+
         # stdout num arquivo (nao DEVNULL) para poder esperar o marcador de
         # pronto sem bloquear o processo do chaos, que segue escrevendo la.
-        subprocess.Popen(["/bin/bash", script, "--all", "--duration", duracao],
-                         stdout=log_fh, stderr=subprocess.STDOUT,
-                         start_new_session=True)
-        if hasattr(log_fh, "close"):
-            try: log_fh.close()
-            except OSError: pass
+        processo = subprocess.Popen(
+            ["/bin/bash", script, "--all", "--duration", duracao],
+            stdout=log_fh, stderr=subprocess.STDOUT,
+            start_new_session=True, env=ambiente)
+        try:
+            log_fh.close()
+        except OSError:
+            pass
 
-        pronto = self._esperar_chaos_pronto(log_path, self.CHAOS_SETUP_TIMEOUT)
-        estado = "pronto para captura" if pronto else \
-            "setup nao confirmado em %ss (capturando mesmo assim)" \
-            % self.CHAOS_SETUP_TIMEOUT
-        return "chaos rodando por %ss; %s" % (duracao, estado)
+        pronto = self._esperar_chaos_pronto(log_path, self.CHAOS_SETUP_TIMEOUT,
+                                            processo)
+        if pronto:
+            return "chaos rodando por %ss; pronto para captura (log %s)" % (
+                duracao, log_path)
 
-    def _esperar_chaos_pronto(self, log_path, timeout):
+        # O cenario NAO subiu. Ate 2026-08-20 este caminho respondia
+        # "capturando mesmo assim", e essa frase custou caro: o chaos_maker
+        # estava com CRLF e morria no primeiro `{`, sem rodar UMA linha. O
+        # comando dizia sucesso parcial, a captura vinha vazia, e a leitura
+        # obvia era "a ferramenta nao detecta" quando a verdade era "a cena
+        # nunca existiu". Capturar o nada e pior que nao capturar: produz uma
+        # captura de aparencia normal que nega deteccao que funciona.
+        rabo = self._final_do_log(log_path)
+        if processo.poll() is not None:
+            raise RuntimeError(
+                "chaos_maker terminou com codigo %s antes de montar o cenario; "
+                "nada foi plantado e a captura nao vale. Log %s: %s"
+                % (processo.returncode, log_path, rabo))
+        raise RuntimeError(
+            "chaos_maker nao confirmou o cenario em %ss e segue rodando; "
+            "a captura nao vale porque a cena pode estar pela metade. "
+            "Log %s: %s" % (self.CHAOS_SETUP_TIMEOUT, log_path, rabo))
+
+    @staticmethod
+    def _final_do_log(log_path, limite=400):
+        """
+        Ultimas linhas do log da rodada, para o erro DIZER o que aconteceu.
+
+        Sem isto o operador recebe "o cenario nao subiu" e precisa entrar no
+        host para descobrir por que. Com o final do log, a mensagem na tela ja
+        traz o erro de sintaxe, o pacote que faltou ou a permissao negada.
+        """
+        try:
+            with open(log_path, "r", errors="replace") as fh:
+                texto = fh.read().strip()
+        except OSError as exc:
+            return "log ilegivel (%s)" % exc
+        if not texto:
+            return "log vazio (o script nao chegou a escrever nada)"
+        return texto[-limite:].replace("\n", " | ")
+
+    # Quantos logs de rodada guardar. Servem para o operador entender depois o
+    # que aconteceu; guardar todos encheria /tmp num host que roda cenario com
+    # frequencia.
+    CHAOS_LOGS_MANTIDOS = 10
+
+    def _limpar_logs_de_chaos_antigos(self):
+        """Mantem apenas os logs de rodada mais recentes."""
+        import glob
+        try:
+            logs = sorted(glob.glob("/tmp/si_chaos_*.log"),
+                          key=os.path.getmtime)
+            for velho in logs[:-self.CHAOS_LOGS_MANTIDOS]:
+                try:
+                    os.unlink(velho)
+                except OSError:
+                    pass
+        except Exception as exc:
+            self.logger.debug("[CMD] Could not rotate chaos logs: %s", exc)
+
+    def _esperar_chaos_pronto(self, log_path, timeout, processo=None):
         """
         Espera o chaos_maker imprimir o marcador de pronto, com teto de tempo.
 
         Le o arquivo de log em vez de consumir o stdout do processo, para nao
-        arriscar um SIGPIPE que interromperia o cenario. Retorna True se o
-        marcador apareceu, False no timeout (a captura ainda ocorre, para o
-        comando nunca ficar sem desfecho).
+        arriscar um SIGPIPE que interromperia o cenario.
+
+        PARAMETER processo: o Popen do chaos, quando disponivel. Serve para
+                  DESISTIR CEDO: um script que morre no primeiro segundo (erro
+                  de sintaxe, dependencia ausente, permissao) nunca vai imprimir
+                  o marcador, e esperar o timeout inteiro por ele apenas atrasa
+                  a ma noticia. Ainda assim o log e relido depois que o processo
+                  morre, porque um cenario pode montar tudo, imprimir o marcador
+                  e so entao terminar: sem essa releitura, uma rodada boa e curta
+                  seria declarada falha.
         """
         import time
 
@@ -363,14 +475,20 @@ class DaemonController:
         while time.time() < fim:
             if self.shutdown_event.is_set():
                 return False
-            try:
-                with open(log_path, "r", errors="replace") as fh:
-                    if self.CHAOS_READY_MARK in fh.read():
-                        return True
-            except OSError:
-                pass
+            if self._log_tem_marcador(log_path):
+                return True
+            if processo is not None and processo.poll() is not None:
+                return self._log_tem_marcador(log_path)
             time.sleep(0.5)
-        return False
+        return self._log_tem_marcador(log_path)
+
+    def _log_tem_marcador(self, log_path):
+        """Se o marcador de cenario pronto ja apareceu no log da rodada."""
+        try:
+            with open(log_path, "r", errors="replace") as fh:
+                return self.CHAOS_READY_MARK in fh.read()
+        except OSError:
+            return False
 
     def collect_and_store(self, engine, cycle_id):
         """
@@ -415,9 +533,18 @@ class DaemonController:
         full_data['mode'] = 'daemon'
         full_data['agent_uuid'] = self.agent_uuid
         full_data['cycle'] = cycle_id
+        # O TIPO da captura vem do motivo que a disparou, que o chamador ja
+        # informa em cycle_id. Fica DENTRO do payload (para o laudo poder dize-lo)
+        # e tambem em coluna propria, em claro, porque a limpeza precisa
+        # distinguir o descartavel do probatorio sem abrir a captura.
+        # Uma captura feita logo apos plantar o cenario nasce marcada como tal:
+        # ela mede a ferramenta, nao o host em uso, e misturar as duas na mesma
+        # serie historica distorce a comparacao entre capturas.
+        tipo = CAPTURE_CHAOS if cycle_id == "chaos" else CAPTURE_FULL
+        full_data['capture_type'] = tipo
 
         # Achados estaticos (persistencia), mesmo conjunto dos demais modos.
-        findings = collect_findings(full_data['processes'])
+        findings = collect_findings(full_data['processes'], self.config)
         serialized = [f.to_dict() for f in findings]
         # Liga o achado estatico ao runtime, como no modo snapshot: sem isso a
         # captura do agente nunca oferece o atalho do achado para o processo
@@ -439,12 +566,19 @@ class DaemonController:
         # em campo precisa ser tao defensavel quanto uma feita a mao.
         custody = build_for_capture(self.db, self.config, full_data)
 
+        # O TIPO da captura vem do motivo que a disparou, que o chamador ja
+        # informa em cycle_id. Gravar isso e o que separa, mais tarde, o que a
+        # limpeza automatica pode descartar do que e evidencia. Uma captura feita
+        # logo apos plantar o cenario nasce marcada como tal: ela mede a
+        # ferramenta, nao o host em uso, e misturar as duas na mesma serie
+        # historica distorce qualquer comparacao entre capturas.
         success = self.db.insert_snapshot(
             encrypted_bundle,
             agent_uuid=self.agent_uuid,
             metrics=metrics,
             custody=custody,
-            findings_summary=full_data.get('findings_summary')
+            findings_summary=full_data.get('findings_summary'),
+            capture_type=tipo
         )
 
         if success:

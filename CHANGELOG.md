@@ -5,6 +5,84 @@ All notable changes to the **Sys-Inspector** project will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-20
+
+Minor release with **breaking configuration changes**. The tool now has a single
+execution path (agent plus server), HTTPS is the only transport, and the report
+interface was reworked from what the process tree actually needs.
+
+### Migration required
+
+- **`mode: snapshot`, `mode: live` and `mode: local-live` no longer exist.** Use
+  `mode: daemon` for the collector and `mode: server` for the dashboard; for a
+  single machine, install both on the same host. A one-off capture that used to
+  be `--mode snapshot --interval 20` is now `--mode daemon --once`.
+- **`tls_enabled` and `use_tls` were REMOVED from the configuration**, not turned
+  on by default. A configuration file carrying them keeps working (they are
+  ignored), but plaintext is no longer reachable: the server refuses to start if
+  TLS cannot be enabled, and the agent always speaks HTTPS.
+
+### Added
+
+- **Directed acquisition.** A suspect file or memory region is hashed, excerpted
+  and, when it fits the declared byte budget, copied - with the hash SCOPE
+  recorded, so a partial hash is never read as identifying the whole object.
+- **Referral to bench analysis.** Every finding can state which analysis
+  concludes what it cannot, why, and on which object. The tool collects enough to
+  identify and direct, never the mass that proves (D-032), and that is only
+  honest when it also says who finishes the job.
+- **Rootkit hunting**, crossing the three module lists and the kernel taint, plus
+  judgement of every library listed in `/etc/ld.so.preload` by package provenance.
+- **SNI, `mount` and `pivot_root` probes**, completing "who with" where DNS does
+  not reach (cache, fixed IP, DoH) and the container-escape step that follows a
+  namespace change.
+- **`--once`** on the agent: one capture cycle and exit, so a first run still
+  fits on one line.
+- **Report interface**: the inventory block collapses to give the tree the
+  screen, columns are resizable by dragging the divider in the header, and the
+  tree scrolls in both axes with the header staying in place.
+- **Standards compliance document** (`docs/pt-BR/conformidade-normas.md` and
+  `docs/en/standards-compliance.md`), stating what the tool covers of RFC 3227,
+  NIST SP 800-86, NIST SP 800-92 and ISO/IEC 27037 - and what it does not.
+
+### Fixed
+
+- **The chaos generator did not run at all.** `chaos_maker.sh` carried CRLF line
+  endings; bash reads a carriage return as part of the token and the script died
+  on its first brace, so every scenario round measured an empty host. Worse, the
+  daemon reported "capturing anyway" instead of failing, so a capture with
+  nothing in it looked like the tool failing to detect. The command now fails
+  loudly, with the reason and the tail of the log.
+- **Two signals shared one icon.** `UNSAFE` and `KEXEC_LOAD` were both drawn as a
+  radioactive symbol, which made a correct filter look broken.
+- **Detail blocks that vanished.** Process Ancestry, Executable Provenance,
+  Security Forensics and the probe-signal fields disappeared when they had no
+  value. They now always render, in one of three states: a value, "looked and
+  found nothing", or "not collected by this capture".
+- **A hostile `/etc/ld.so.preload` could hang the agent.** Acquisition opened any
+  path it was given; a named pipe planted there blocks forever. Non-regular files
+  are refused, and opening is non-blocking.
+- **Server protections.** HTTP Basic auth and the identifier allowlist, plus the
+  legacy `/upload` route which was the only ingestion path with no token check.
+
+### Changed
+
+- **One execution path.** Three parallel implementations of the act of collecting
+  became one; the two defective callers that silently skipped memory forensics
+  stopped existing rather than being repaired.
+- **Fleet screen**: severities in a single cell, every FQDN and address shown,
+  the agent's status named as such with its last contact, and Last Seen, Next,
+  Uptime and Status grouped under one label because they answer one question.
+- **Flake8 runs on the whole repository**, not only `src/`.
+
+### Known gaps
+
+Recorded so their absence is not read as oversight: the report exists as a served
+page and not yet as a downloadable file; the finding-to-process shortcut appears
+only where the denounced path is currently executing; a filter that matches
+nothing gives no feedback; and the user manual describing the new controls is
+still pending.
+
 ## [1.0.1] - 2026-08-17
 
 Patch release: forensic file-ownership now works on dpkg-based systems, plus repository and CI housekeeping.

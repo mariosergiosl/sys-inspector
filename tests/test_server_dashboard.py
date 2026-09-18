@@ -41,12 +41,23 @@ def test_fleet_is_ordered_by_risk(codigo):
     assert "_risk" in codigo
 
 
-def test_every_severity_has_a_column(codigo):
-    """As quatro severidades acionaveis aparecem na tabela."""
+def test_every_severity_is_shown(codigo):
+    """
+    As quatro severidades acionaveis continuam VISIVEIS, inclusive em zero
+    (D-020). O que mudou em 2026-08-20 (F-224) foi a forma: em vez de quatro
+    colunas largas para quatro numeros de um digito, uma celula so com os
+    quatro lado a lado. A premissa antiga do teste ("cada severidade tem uma
+    COLUNA") era sobre o desenho, e o desenho e que mudou; a exigencia real,
+    que e nenhuma severidade sumir, esta preservada abaixo.
+    """
     for level in ("Critical", "High", "Medium", "Low"):
         assert level in codigo, level
-    for header in (">Crit<", ">High<", ">Med<", ">Low<"):
-        assert header in codigo, header
+    assert "class='sev-bloco'" in codigo, (
+        "o bloco unico de severidades sumiu do fonte")
+    assert "sev-cel" in codigo, "as celulas de severidade sumiram"
+    # O zero continua desenhado, apenas apagado: um contador que some deixa o
+    # operador sem saber se e zero ou se a tela parou de reportar.
+    assert 'background:#2a2a2a; color:#555' in codigo
 
 
 def test_row_is_marked_by_the_worst_severity(codigo):
@@ -60,8 +71,12 @@ def test_report_offers_a_way_back_to_the_fleet(codigo):
     analista fica preso na pagina.
     """
     inicio = codigo.index("back = (")
-    bloco = codigo[inicio:inicio + 700]
-    assert "Fleet</a>" in bloco
+    bloco = codigo[inicio:inicio + 1200]
+    # [F-232, 2026-08-20] O botao passou a se chamar "Manager", e nao "Fleet":
+    # ele volta para a tela Manager, e e o nome do DESTINO que o operador
+    # procura. O teste continua exigindo o retorno, que e o requisito; so o
+    # rotulo mudou.
+    assert "Manager</a>" in bloco
     # Aponta para a raiz, independente de como as aspas aparecem no fonte.
     assert "href=" in bloco and "/" in bloco
 

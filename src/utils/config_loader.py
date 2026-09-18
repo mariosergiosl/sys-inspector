@@ -27,8 +27,7 @@ DEFAULT_CONFIG = {
     },
     "network": {
         "bind_address": "0.0.0.0",
-        "bind_port": 8080,
-        "target_url": "http://127.0.0.1:8080"
+        "bind_port": 8080
     },
     "collection": {
         "interval": 30

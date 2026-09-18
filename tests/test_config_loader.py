@@ -75,12 +75,20 @@ def test_merge_fills_only_what_is_missing():
     assert merged["b"] == 3
 
 
-def test_defaults_keep_security_options_off():
+def test_o_transporte_nao_e_uma_opcao_dos_padroes():
     """
-    Autenticacao e TLS vem desligados por padrao, e essa e uma decisao
-    consciente: ligar sem o operador saber quebraria instalacoes existentes.
-    O teste registra a escolha para que uma mudanca seja deliberada.
+    [2026-08-20, D-033] Este teste afirmava que "autenticacao e TLS vem
+    desligados por padrao", como escolha consciente para nao quebrar
+    instalacoes existentes.
+
+    A metade do TLS caiu: nao existe mais chave de configuracao para o
+    transporte, porque nao existe mais transporte em claro no codigo. Uma chave
+    ausente aqui nao e esquecimento, e a garantia de que ninguem pode
+    desligar por engano.
+
+    A metade da autenticacao continua valendo e segue cobrada abaixo.
     """
     net = DEFAULT_CONFIG.get("network", {})
-    assert net.get("tls_enabled", False) is False
+    assert "tls_enabled" not in net, (
+        "voltou a existir chave para desligar o transporte cifrado")
     assert (net.get("auth", {}) or {}).get("enabled", False) is False

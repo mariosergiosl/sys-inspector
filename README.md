@@ -20,7 +20,12 @@
 
 Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks directly into the Linux Kernel to capture events (process execution, file I/O, network connections) in real-time.
 
-## Features (v1.0.0)
+## Features (v1.1.0)
+
+* **New in v1.1.0 - Directed acquisition and referral:** A suspect file or memory region is hashed, excerpted and, when it fits the declared byte budget, copied - always recording the hash SCOPE, so a partial hash is never read as identifying the whole object. Every finding can also state which bench analysis concludes what it cannot, why, and on which object: the tool collects enough to identify and direct, never the mass that proves, and that is only honest when it says who finishes the job.
+* **New in v1.1.0 - Rootkit hunting and container escape:** Crosses the three kernel module lists with the taint flags, judges every library in `/etc/ld.so.preload` by package provenance, and follows `mount` and `pivot_root` - the step that turns a broken namespace into host access. TLS SNI completes "who with" where DNS does not reach (cache, fixed IP, DoH).
+* **New in v1.1.0 - A single execution path:** Agent and server, nothing else. For one machine, install both on the same host. HTTPS is the only transport; the plaintext path was removed from the code rather than switched off.
+* **New in v1.1.0 - A report built for the tree:** The inventory block collapses to give the process tree the screen, columns resize by dragging the divider in the header, and the tree scrolls in both axes with the header staying put. Every detail block is always present, in one of three states: a value, "looked and found nothing", or "not collected by this capture".
 
 * **New in v1.0.0 - Answer contract per finding:** Every finding declares its **confidence** (confirmed / probable / heuristic), so a heuristic is never shown as a fact, and its **custody** (what was preserved of the artifact). The forensic report reads as an investigation: a "how to read" strip (Findings -> Processes -> ATT&CK), a severity legend with the operator action, tooltips on every evidence field, and clickable pivots in both directions between a finding and its ATT&CK technique.
 * **New in v1.0.0 - Distributed fleet:** Pull-model agents forward encrypted captures to a central server (store-and-forward outbox, prioritized ingestion, audited command queue, per-agent capabilities, HTTPS). The Manager shows each command's progress as a live stepper.
@@ -102,25 +107,39 @@ Once installed, the command is available globally:
 
 Sys-Inspector is orchestrated via the `main.py` entry point (or globally as `sys-inspector`). It supports multiple execution modes.
 
-### 1. Local Live Mode (Recommended)
+The tool has a single path: an **agent** that collects and a **server** that
+receives and renders. For a single machine, install both on the same host.
 
-Starts the background collector daemon and the Fleet Web Dashboard simultaneously.
+### 1. Server (dashboard)
 
-```bash
-    sudo sys-inspector --mode local-live
-    # Access the dashboard at http://localhost:8080
-```
-
-### 2. Snapshot Mode (Static Report)
-
-Captures activity for a specific duration and generates a standalone HTML report.
+Receives captures from the agents and serves the Fleet dashboard.
 
 ```bash
-    sudo sys-inspector --mode snapshot --interval 20
-    # Output Example: report/sys-inspector_hostname_20260316_100000.html
+    sudo sys-inspector --mode server
+    # Access the dashboard at https://localhost:8080
+    # TLS is on by default; a self-signed pair is generated on first start,
+    # so the browser will warn about the unknown issuer.
 ```
 
-### 3. Custom Logo
+### 2. Agent (collector)
+
+Collects, encrypts, stores and forwards to the server configured in
+`daemon.server_ip`.
+
+```bash
+    sudo sys-inspector --mode daemon
+```
+
+### 3. One-off run (no server)
+
+A single capture cycle, kept locally. This is the shortest way to try the tool:
+no keys to exchange, no token, no second process.
+
+```bash
+    sudo sys-inspector --mode daemon --once
+```
+
+### 4. Custom Logo
 
 To include your company logo in the report header, simply place a PNG file at the following path:
 

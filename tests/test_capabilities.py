@@ -16,7 +16,6 @@
 import io
 import os
 
-import pytest
 
 from src.core.capabilities import (describe_host, detection_capabilities,
                                    generation_capabilities, missing_for_scenarios,

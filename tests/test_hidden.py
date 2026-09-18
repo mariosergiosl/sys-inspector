@@ -13,7 +13,6 @@
 
 import errno
 
-import pytest
 
 from src.collectors import hidden
 from src.core.findings import SEV_HIGH, SEV_MEDIUM

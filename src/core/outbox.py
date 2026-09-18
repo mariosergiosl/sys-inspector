@@ -69,10 +69,20 @@ class Outbox(object):
         self.token = daemon_cfg.get("auth_token", "")
         self.batch_size = int(daemon_cfg.get("batch_size", 10) or 10)
         self.timeout = int(daemon_cfg.get("timeout", 15) or 15)
-        # TLS ligado por padrao na porta 443; em laboratorio o operador pode
-        # apontar para uma porta HTTP explicitamente.
-        self.use_tls = bool(daemon_cfg.get("use_tls", self.server_port == 443))
+        # HTTPS e o UNICO transporte. Nao ha opcao de texto claro: ver D-033.
+        #
+        # A verificacao do certificado continua sendo uma escolha, porque ela
+        # depende de infraestrutura que nem todo ambiente tem (uma CA que assine
+        # o certificado do servidor). Desligar a verificacao protege contra
+        # escuta passiva e NAO contra um interceptador ativo, e essa diferenca
+        # muda o quanto o laudo daquele agente vale -- por isso ela aparece no
+        # log, sempre, em vez de ficar so no arquivo de configuracao.
         self.verify_tls = bool(daemon_cfg.get("verify_tls", True))
+        if self.server_ip and not self.verify_tls:
+            LOG.warning("[OUTBOX] TLS sem verificacao de certificado: protege "
+                        "contra escuta passiva, NAO contra um interceptador "
+                        "ativo no caminho ate %s:%s",
+                        self.server_ip, self.server_port)
 
         self._failures = 0
         self._next_attempt = 0.0
@@ -96,16 +106,14 @@ class Outbox(object):
         return bool(self.server_ip and self.token and self.token != "CHANGE_ME")
 
     def _base_url(self):
-        scheme = "https" if self.use_tls else "http"
-        return "%s://%s:%s" % (scheme, self.server_ip, self.server_port)
+        # Sem ramo: o esquema nao e uma escolha (D-033).
+        return "https://%s:%s" % (self.server_ip, self.server_port)
 
     def _ssl_context(self):
-        if not self.use_tls:
-            return None
         if self.verify_tls:
             return ssl.create_default_context()
-        # Certificado autoassinado em laboratorio: a verificacao e desligada
-        # apenas quando o operador pede explicitamente.
+        # Certificado autoassinado em laboratorio: a VERIFICACAO e desligada
+        # apenas quando o operador pede explicitamente. A cifra permanece.
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
@@ -181,6 +189,34 @@ class Outbox(object):
             fqdn = socket.getfqdn()
         except Exception:
             fqdn = ""
+
+        # [F-227] TODOS os nomes e TODOS os enderecos, e nao apenas o principal.
+        # Um host aparece com nomes diferentes em sistemas diferentes (alias de
+        # /etc/hosts, reverso de DNS, nome curto), e numa peca forense e
+        # justamente isso que amarra a maquina ao laudo: mostrar so um nome
+        # esconde metade da identidade. O coletor JA reunia todos
+        # (collect_host_names); o que faltava era transportar.
+        nomes = []
+        enderecos = []
+        try:
+            from src.collectors.system_inventory import (collect_host_names,
+                                                         get_net_info)
+            _, nomes = collect_host_names()
+            nomes = list(nomes or [])
+            for iface in (get_net_info() or {}).get("interfaces", []) or []:
+                addr = iface.get("ip") or iface.get("address")
+                if addr and addr not in enderecos:
+                    enderecos.append(addr)
+        except Exception:
+            # Identidade estendida e um PLUS: sem ela a frota continua listando
+            # o host pelo nome e endereco principais, que nunca dependeram disto.
+            pass
+        # O endereco da rota de saida vem PRIMEIRO: e o que o servidor de fato
+        # ve, e o que o operador usa para alcancar o host.
+        if address and address in enderecos:
+            enderecos.remove(address)
+        if address:
+            enderecos.insert(0, address)
         # Capacidades: o que ESTE host consegue fazer, nas duas pontas. Sem
         # isso, "o agente X nao acusou o cenario Y" fica ambiguo entre falha da
         # deteccao e incapacidade do host, e foi essa ambiguidade que atrasou um
@@ -223,6 +259,7 @@ class Outbox(object):
 
         return {"hostname": hostname, "ip_address": address,
                 "os_info": os_info, "fqdn": fqdn, "cycle_seconds": ciclo,
+                "hostnames": nomes, "ip_addresses": enderecos,
                 "capabilities": capacidades,
                 "host_uptime": host_uptime, "agent_uptime": agent_uptime,
                 "clock_offset": clock.get("offset", 0.0),
@@ -376,6 +413,10 @@ class Outbox(object):
                     "metrics": item.get("metrics") or {},
                     "custody": item.get("custody") or {},
                     "findings_summary": item.get("findings_summary") or {},
+                    # Em claro, ao lado do payload cifrado: o servidor precisa
+                    # saber que TIPO de captura recebeu para aplicar a limpeza
+                    # certa, e nao pode abrir o conteudo para descobrir.
+                    "capture_type": item.get("capture_type") or "full",
                 })
             except Exception as exc:
                 LOG.debug("[OUTBOX] Delivery of snapshot %s failed: %s",
