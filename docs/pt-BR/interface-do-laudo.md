@@ -167,6 +167,16 @@ tirada da ausência. Por isso todo campo aparece, em um de três estados:
 
 ### 2.6 Filtros e badges
 
+**O badge de falha de rede conta a subárvore.** O número ao lado do ❌ soma
+retransmissões TCP e pacotes descartados **deste processo e de todos os
+descendentes dele**, inclusive os ramos que ainda não foram expandidos. Por isso
+o badge de um pai pode ser maior que a soma dos filhos visíveis na tela.
+
+O painel de detalhe mostra as duas leituras lado a lado, "Deste processo" e "Com
+os descendentes", e declara qual é o total que o badge exibe. Sem esses rótulos,
+um pai com badge 7 e detalhe 0 parecia erro de contagem, quando era apenas o pai
+não ter descarte próprio.
+
 Cada sinal detectado vira um badge com ícone próprio na árvore, e a barra de
 FILTROS tem um botão por sinal. **Cada sinal tem um ícone exclusivo** e isso é
 verificado por teste: dois sinais com o mesmo desenho são um sinal só aos olhos
@@ -195,8 +205,9 @@ histórico de limitações apagado não serve a quem lê um laudo antigo.
 
 **Em aberto:**
 
-- a contagem do badge de descarte de pacote (DROP) não fecha entre processo pai
-  e filho: o número do pai não é explicado pela soma dos filhos mais o descarte
-  próprio visível. Sob investigação;
 - a comparação entre duas capturas mostra os processos que **apareceram** e não
-  os que **desapareceram**, que são frequentemente os mais interessantes.
+  os que **desapareceram**, que são frequentemente os mais interessantes;
+- a **custódia da captura inteira** não aparece no laudo. O laudo mostra a
+  custódia por achado, o que foi preservado daquele objeto, mas o registro da
+  captura, com digest, elo com a captura anterior, assinatura e a impressão
+  digital da chave que assinou, vive só no banco. Quem lê a peça não o vê.

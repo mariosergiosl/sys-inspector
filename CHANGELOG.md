@@ -37,6 +37,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The new fields are inside the signed area: a tamperable custody field would be
   worse than no field.
 
+- **The network badge arithmetic now adds up on screen** (`F-243`).
+  Investigated and closed: it was **not** a counting error. The badge always
+  summed the **subtree** (the process plus every descendant), while the detail
+  panel always showed the process's **own** counters. Both numbers were right in
+  their own scope, and they read as a contradiction because the scope was
+  written nowhere.
+
+  The fix writes the scope rather than changing the count: the panel shows both
+  readings, labelled, including the total the badge displays; the badge tooltip
+  breaks the number into drops plus retransmits and separates the process's own
+  from its descendants'; and the badge legend, which said "network failures of
+  the process", now states that it covers descendants too.
+
 ### Known gap opened by this change
 
 - The **capture-level** custody record is still not shown in the report
