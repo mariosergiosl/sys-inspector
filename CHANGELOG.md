@@ -5,6 +5,87 @@ All notable changes to the **Sys-Inspector** project will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-09-18
+
+Chain of custody that survives a redeploy, an agent that can be idle, and
+two screen numbers that finally explain themselves.
+
+### Fixed
+
+- **The signing identity now survives a redeploy, and a change is declared**
+  (`C-158`). The key that signs captures was resolved from the analyst key's
+  directory, that is, from **configuration**, and configuration gets recreated.
+  Observed during the lab cleanup on 2026-08-20: a plain change of deployment
+  directory silently moved one agent's public key from `13e2eb55...` to
+  `dcab6e89...`.
+
+  The asymmetry was the defect. The UUID lives next to the database and
+  survived; the key did not. Anyone verifying the chain would see the **same
+  agent signing with two different keys**, with nothing explaining the change,
+  which in a forensic exhibit is exactly the signal the opposing side looks for,
+  and we were producing it ourselves.
+
+  - The identity is **state**, and now lives where state lives: next to the
+    database, alongside `.agent_id`. An explicitly configured path still wins.
+  - The key is **inherited** from the previous location when the new one is
+    empty. Without this, the fix itself would have changed the key across the
+    whole fleet at once. It is a copy, not a move, so an older process still
+    pointing at the old path keeps signing with the same key.
+  - Every custody record now carries `agent_key_fingerprint` (SHA-256 of the
+    SubjectPublicKeyInfo) and `agent_key_event` (`existing`, `migrated` or
+    `created`). The fingerprint is present on **every** capture, not only when
+    it changes: a field that shows up only on the bad day is a field nobody
+    knows how to read. A new key is legitimate; being born silently is not.
+
+  The new fields are inside the signed area: a tamperable custody field would be
+  worse than no field.
+
+- **The network badge arithmetic now adds up on screen** (`F-243`).
+  Investigated and closed: it was **not** a counting error. The badge always
+  summed the **subtree** (the process plus every descendant), while the detail
+  panel always showed the process's **own** counters. Both numbers were right in
+  their own scope, and they read as a contradiction because the scope was
+  written nowhere.
+
+  The fix writes the scope rather than changing the count: the panel shows both
+  readings, labelled, including the total the badge displays; the badge tooltip
+  breaks the number into drops plus retransmits and separates the process's own
+  from its descendants'; and the badge legend, which said "network failures of
+  the process", now states that it covers descendants too.
+
+### Added
+
+- **Idle mode for the agent** (`C-105`), off by default. Until now the daemon
+  was not idle at all: it ran the heavy capture (eBPF, inventory, findings,
+  encryption) on **every** cycle and only then talked to the server. Across a
+  real estate that means paying the cost of a forensic capture all the time on
+  machines where nothing happened.
+
+  With `daemon.idle_mode` on, the cycle only talks to the server, and the heavy
+  capture happens for a **reason**: the first cycle after start, the cadence in
+  `daemon.capture_every`, or a command from the analyst. A cycle that does not
+  capture writes **why**, with the time remaining: an idle agent and a stuck
+  agent must not look alike to whoever reads the log at three in the morning.
+
+  A commanded capture also resets the cadence, so an on-demand capture is not
+  followed seconds later by a scheduled one.
+
+  Turning it on changes what an agent does in the field, which is a decision for
+  whoever operates it, not a side effect of an upgrade.
+
+  **Stated limit, so the gain is not overstated:** this does not make the cycle
+  cheap on its own. The check-in still forks `chronyc` and probes the host every
+  round; that is item `C-106`, still open. What is solved here is the heavy
+  capture no longer being mandatory every cycle. The cost reduction itself has
+  **not** been measured on real hardware yet.
+
+### Known gap opened by this change
+
+- The **capture-level** custody record is still not shown in the report
+  (`C-160`). The report shows custody per finding. The fields above are
+  therefore visible to whoever queries the database, and not to whoever reads
+  the exhibit, which is precisely who needs them.
+
 ## [1.2.0] - 2026-09-18
 
 The report stops being only a screen and becomes an **exhibit**: it can be

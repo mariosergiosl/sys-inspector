@@ -169,6 +169,16 @@ states:
 
 ### 2.6 Filters and badges
 
+**The network failure badge counts the subtree.** The number next to ❌ sums TCP
+retransmits and dropped packets **for this process and every descendant of it**,
+including branches that have not been expanded. That is why a parent's badge can
+be larger than the sum of the children visible on screen.
+
+The detail panel shows both readings side by side, "Deste processo" (this
+process) and "Com os descendentes" (with descendants), and states the total the
+badge displays. Without those labels, a parent with badge 7 and detail 0 looked
+like a counting error, when it was simply the parent having no drops of its own.
+
 Each detected signal becomes a badge with its own icon in the tree, and the
 FILTERS bar has one button per signal. **Every signal has a unique icon** and a
 test enforces it: two signals drawn the same way are one signal to whoever reads
@@ -197,8 +207,10 @@ of limitations is no use to anyone reading an older report.
 
 **Still open:**
 
-- the packet DROP badge count does not add up between parent and child process:
-  the parent's number is not explained by the sum of its children plus its own
-  visible drops. Under investigation;
 - the comparison between two captures shows processes that **appeared** and not
-  those that **disappeared**, which are often the more interesting ones.
+  those that **disappeared**, which are often the more interesting ones;
+- the **capture-level custody record** is not shown in the report. The report
+  shows custody per finding, what was preserved of that object, but the record
+  for the capture itself, with its digest, its link to the previous capture, the
+  signature and the fingerprint of the signing key, lives only in the database.
+  Whoever reads the exhibit does not see it.

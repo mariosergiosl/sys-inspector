@@ -95,7 +95,8 @@ def _machine_id():
 
 
 def build_record(payload, agent_uuid, collector_version, previous_digest=None,
-                 case_id="", operator="", signer=None):
+                 case_id="", operator="", signer=None,
+                 key_fingerprint=None, key_event=None):
     """
     Monta o registro de custodia de uma captura.
 
@@ -108,6 +109,10 @@ def build_record(payload, agent_uuid, collector_version, previous_digest=None,
     PARAMETER operator: quem conduziu a coleta.
     PARAMETER signer: funcao que recebe bytes e devolve assinatura em bytes;
         None produz um registro sem assinatura (ainda com digest e cadeia).
+    PARAMETER key_fingerprint: [C-158] impressao digital da chave que assina.
+    PARAMETER key_event: [C-158] como essa chave chegou aqui nesta execucao:
+        "existing", "migrated" ou "created". "created" e o unico que significa
+        descontinuidade da identidade, e por isso precisa estar escrito.
     """
     digest = compute_digest(payload)
     prev = previous_digest or GENESIS
@@ -125,6 +130,19 @@ def build_record(payload, agent_uuid, collector_version, previous_digest=None,
         "hostname": platform.node(),
         "case_id": case_id or "",
         "operator": operator or "",
+        # [C-158] Quem assinou, e por que e esta a chave.
+        #
+        # A impressao digital vai em TODA captura, e nao so quando muda: assim a
+        # troca aparece na propria peca, em vez de so aparecer para quem
+        # comparar assinaturas de capturas distintas, que e o trabalho que a
+        # parte contraria faz e nos nao.
+        #
+        # O evento explica a descontinuidade quando ela existe. Uma chave nova
+        # nascendo e um fato legitimo (agente novo, primeira execucao); o que
+        # nao pode e nascer CALADA, porque ai o mesmo agente aparece assinando
+        # com duas chaves sem nada dizendo por que.
+        "agent_key_fingerprint": key_fingerprint or None,
+        "agent_key_event": key_event or None,
         "timestamp_authority": None,  # reservado para carimbo RFC 3161
     }
 
@@ -163,19 +181,53 @@ def build_for_capture(db, config, payload, collector_version=None):
         collector_version = __version__
 
     # Importado aqui para manter este modulo utilizavel sem o backend de cripto.
-    from src.core.crypto import (ensure_agent_identity, load_private_key,
-                                 sign_bytes)
+    from src.core.crypto import (ensure_agent_identity, agent_key_fingerprint,
+                                 load_private_key, sign_bytes,
+                                 IDENTITY_CREATED)
 
     sec = config.get("security", {}) or {}
-    base = os.path.dirname(sec.get("private_key_path", "") or "") or "."
+
+    # [C-158] A identidade do agente e ESTADO, e mora onde o estado mora: ao
+    # lado do banco, junto do `.agent_id`. Antes ela era derivada do diretorio
+    # da chave do analista, que e CONFIGURACAO, e configuracao se recria: numa
+    # troca de diretorio de implantacao a chave desaparecia e uma nova nascia em
+    # silencio, enquanto o UUID, que mora ao lado do banco, sobrevivia.
+    #
+    # Era essa assimetria o defeito. O numero da identidade durava mais que a
+    # identidade, e quem fosse verificar a cadeia via o mesmo agente assinando
+    # com duas chaves diferentes, sem explicacao.
+    #
+    # Um caminho declarado na configuracao continua mandando: quem escolheu onde
+    # a chave fica escolheu por algum motivo, e nao cabe a uma atualizacao mudar
+    # isso por conta propria.
+    base_conf = os.path.dirname(sec.get("private_key_path", "") or "") or "."
+    base_estado = os.path.dirname(getattr(db, "db_path", "") or "") or base_conf
+
     agent_priv = sec.get("agent_private_key_path",
-                         os.path.join(base, "agent_private_key.pem"))
+                         os.path.join(base_estado, "agent_private_key.pem"))
     agent_pub = sec.get("agent_public_key_path",
-                        os.path.join(base, "agent_public_key.pem"))
+                        os.path.join(base_estado, "agent_public_key.pem"))
+
+    # De onde herdar, quando o destino ainda nao existe: o local antigo, dentro
+    # do diretorio de configuracao. Herdar e o que impede que a PROPRIA correcao
+    # produza a troca de chave que ela existe para evitar.
+    legado = (os.path.join(base_conf, "agent_private_key.pem"),
+              os.path.join(base_conf, "agent_public_key.pem"))
 
     signer = None
+    key_event = None
+    key_fp = None
     try:
-        ensure_agent_identity(agent_priv, agent_pub)
+        key_event = ensure_agent_identity(agent_priv, agent_pub,
+                                          legacy_paths=legado)
+        key_fp = agent_key_fingerprint(agent_pub)
+        if key_event == IDENTITY_CREATED:
+            # Alto por escolha: uma identidade nova rompe a continuidade das
+            # assinaturas deste agente. Legitimo na primeira execucao, e sinal
+            # de que algo se perdeu em qualquer outra.
+            LOG.warning("New agent identity created (%s). Signatures before "
+                        "this point were made with a different key; the "
+                        "custody record states the change.", key_fp)
         agent_key = load_private_key(agent_priv)
 
         def _sign(data):
@@ -199,6 +251,8 @@ def build_for_capture(db, config, payload, collector_version=None):
         case_id=forensic.get("case_id", ""),
         operator=forensic.get("operator", ""),
         signer=signer,
+        key_fingerprint=key_fp,
+        key_event=key_event,
     )
 
 

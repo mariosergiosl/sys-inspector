@@ -76,6 +76,36 @@ class DaemonController:
         self.interval = config['daemon'].get('interval', 15)
         self.capture_duration = config['daemon'].get('capture_duration', 15)
 
+        # [C-105] MODO OCIOSO.
+        #
+        # Ate aqui o daemon nao era ocioso coisa nenhuma: rodava a captura
+        # pesada (eBPF, inventario, achados, cifra) a TODO ciclo e so depois
+        # conversava com o servidor. Num parque real isso significa pagar o
+        # custo da pericia o tempo inteiro em maquinas onde nada aconteceu.
+        #
+        # Com o modo ligado, o ciclo passa a fazer so a conversa com o servidor,
+        # e a captura pesada acontece quando ha MOTIVO:
+        #   - cadencia declarada (capture_every), para a serie historica nao
+        #     morrer;
+        #   - comando do analista, que e o caso "aconteceu alguma coisa";
+        #   - sempre a primeira, para o agente nao ficar invisivel ate a
+        #     primeira cadencia vencer.
+        #
+        # DESLIGADO POR PADRAO, e de proposito. Ligar muda o que um agente em
+        # campo faz, e essa e decisao de quem opera, nao efeito colateral de
+        # atualizar a ferramenta. O mesmo criterio usado na aquisicao dirigida.
+        #
+        # LIMITE HONESTO: isto NAO torna o ciclo barato sozinho. O check-in
+        # atual ainda forka `chronyc` e sonda o host a cada volta, e isso e o
+        # C-106. O que esta resolvido aqui e a captura pesada deixar de ser
+        # obrigatoria em todo ciclo; o custo do proprio heartbeat e outro item.
+        self.idle_mode = bool(config['daemon'].get('idle_mode', False))
+        self.capture_every = int(config['daemon'].get('capture_every', 3600) or 0)
+        # Instante da ultima captura pesada. None significa "nenhuma ainda", que
+        # e diferente de "faz muito tempo": a primeira captura sai no primeiro
+        # ciclo, e nao depois de esperar a cadencia inteira.
+        self._ultima_captura = None
+
         # Store-and-forward: coleta local primeiro, entrega ao servidor quando
         # possivel. Fica inativo enquanto nao houver destino e token
         # configurados, preservando o comportamento puramente local.
@@ -185,12 +215,24 @@ class DaemonController:
             # roda com o valor novo.
             self.reload_config_if_changed()
 
-            try:
-                # Delegate collection logic, passing the persistent engine
-                self.collect_and_store(engine, cycle_count)
-            except Exception as e:
-                self.logger.error(f"[CYCLE #{cycle_count}] Critical Failure: {e}", exc_info=True)
-                time.sleep(5)  # Backoff on error
+            # [C-105] A captura pesada deixou de ser obrigatoria em todo
+            # ciclo. Quando o modo ocioso esta ligado, ela acontece por MOTIVO,
+            # e o motivo fica registrado no log: um agente que nao captura
+            # precisa dizer por que, senao "ocioso" e "quebrado" viram a mesma
+            # coisa vistos de fora, que e o mesmo defeito do filtro sem
+            # resultado na tela (F-244).
+            motivo = self._motivo_para_capturar()
+            if motivo:
+                try:
+                    # Delegate collection logic, passing the persistent engine
+                    self.collect_and_store(engine, cycle_count)
+                    self._ultima_captura = time.time()
+                except Exception as e:
+                    self.logger.error(f"[CYCLE #{cycle_count}] Critical Failure: {e}", exc_info=True)
+                    time.sleep(5)  # Backoff on error
+            else:
+                self.logger.info("[IDLE] Ciclo #%s sem captura pesada: %s",
+                                 cycle_count, self._porque_nao_capturou())
 
             # 3. Entrega o que estiver pendente. Falha aqui nunca interrompe a
             # coleta: a captura ja esta salva e sera reenviada no proximo ciclo.
@@ -218,6 +260,54 @@ class DaemonController:
         # Cleanup on exit
         # engine.cleanup()  # on future
         self.logger.info("[DAEMON] Shutdown complete.")
+
+    # --------------------------------------------------------------------------
+    # [C-105] QUANDO A CAPTURA PESADA ACONTECE
+    # --------------------------------------------------------------------------
+    def _motivo_para_capturar(self):
+        """
+        Devolve o motivo da captura pesada deste ciclo, ou None para pular.
+
+        Tres motivos, e a ordem entre eles importa menos que o fato de todos
+        ficarem escritos:
+
+        - `mode-off`: o modo ocioso esta desligado, que e o padrao. O
+          comportamento e exatamente o de antes deste item, captura a todo
+          ciclo. Nada muda para quem nao pediu para mudar.
+        - `first`: ainda nao houve captura nenhuma. Sai no primeiro ciclo, e
+          nao depois de esperar a cadencia inteira, senao um agente recem
+          instalado ficaria invisivel no painel por uma hora e quem instalou
+          concluiria que a instalacao falhou.
+        - `schedule`: a cadencia declarada venceu. E o que mantem a serie
+          historica viva num host onde nada acontece.
+
+        O comando do analista NAO passa por aqui: ele chama collect_and_store
+        diretamente em _handle_commands, que e o caminho "sob demanda" e
+        continua valendo com o modo ocioso ligado.
+        """
+        if not self.idle_mode:
+            return "mode-off"
+        if self._ultima_captura is None:
+            return "first"
+        if self.capture_every > 0:
+            if (time.time() - self._ultima_captura) >= self.capture_every:
+                return "schedule"
+        return None
+
+    def _porque_nao_capturou(self):
+        """
+        Frase para o log explicando a AUSENCIA de captura neste ciclo.
+
+        Ausencia e resposta, e resposta se escreve (D-020). Um agente ocioso que
+        simplesmente nao registra nada e indistinguivel de um agente travado,
+        e quem olha o log as tres da manha nao tem como saber a diferenca.
+        """
+        if self.capture_every <= 0:
+            return ("cadencia desligada (capture_every=0); a proxima captura "
+                    "sai por comando do analista")
+        falta = self.capture_every - (time.time() - (self._ultima_captura or 0))
+        return ("proxima captura agendada em ~%ds (cadencia de %ds)"
+                % (max(0, int(falta)), self.capture_every))
 
     def _handle_commands(self, engine, comandos):
         """
@@ -249,6 +339,13 @@ class DaemonController:
             try:
                 if nome == CMD_COLLECT:
                     self.collect_and_store(engine, "on-demand")
+                    # [C-105] A captura sob demanda tambem reinicia a cadencia.
+                    # Sem isto, uma captura pedida pelo analista seria seguida,
+                    # segundos depois, de outra por agendamento: duas capturas
+                    # quase identicas na serie, e o custo que o modo ocioso
+                    # existe para evitar pago em dobro justamente no momento em
+                    # que alguem esta olhando.
+                    self._ultima_captura = time.time()
                     self.outbox.deliver_once()
                     self._concluir(ident, nome,
                                    "captura de %ss concluida e entregue"
@@ -257,6 +354,7 @@ class DaemonController:
                 elif nome == CMD_CHAOS_COLLECT:
                     saida = self._run_chaos(cmd.get("params") or {})
                     self.collect_and_store(engine, "chaos")
+                    self._ultima_captura = time.time()
                     self.outbox.deliver_once()
                     self._concluir(ident, nome,
                                    "%s; captura de %ss entregue"

@@ -183,6 +183,32 @@ daemon:
   capture_duration: 15 # Time collecting (Engine ON) - Active state
   interval: 15 # Time sleeping (Engine OFF) - Idle state
 
+  # [C-105] IDLE MODE. Off by default, and deliberately so.
+  #
+  # With idle_mode off (the default), the agent runs the heavy capture on EVERY
+  # cycle: eBPF, inventory, findings and encryption. That is the historical
+  # behaviour and it is right for a lab or for a host under investigation.
+  #
+  # With idle_mode on, the cycle only talks to the server, and the heavy
+  # capture happens when there is a REASON: the declared cadence below, a
+  # command from the analyst, or the very first cycle after the agent starts
+  # (so a freshly installed agent is never invisible while the first cadence
+  # elapses). A cycle that does not capture SAYS SO in the log, with the reason
+  # and the time left: an idle agent and a stuck agent must not look alike.
+  #
+  # Turning this on changes what an agent does in the field, which is a
+  # decision for whoever operates it, not a side effect of an upgrade.
+  #
+  # NOTE, so the gain is not overstated: this does not make the cycle cheap on
+  # its own. The check-in still probes the host every round (item C-106). What
+  # is solved here is the heavy capture no longer being mandatory every cycle.
+  idle_mode: false
+
+  # Seconds between scheduled heavy captures while idle_mode is on. Ignored
+  # when idle_mode is off. Set to 0 to disable the cadence entirely, leaving
+  # captures to analyst commands only.
+  capture_every: 3600
+
   # [FUTURE] Remote Server Config (Store-and-Forward)
   server_ip: "10.0.0.1"
   server_port: 443

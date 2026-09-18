@@ -371,12 +371,38 @@ def _render_badges(node, tree=None):
             badges.append(f'<span class="tag {cls}" data-filter="{tag}" title="{_esc(tooltip)}">{icon}<span class="visually-hidden">{tag}</span></span>')
             seen.add(tag)
 
+    # [F-243] A conta do badge de rede tem que FECHAR na tela.
+    #
+    # O Mario observou um processo pai com 7, um filho com 6, e nenhum descarte
+    # proprio visivel no pai. Nao era erro de contagem: o badge sempre somou a
+    # SUBARVORE (o processo mais todos os descendentes), enquanto o painel de
+    # detalhe mostrava apenas o contador PROPRIO do processo. Dois numeros
+    # respondendo perguntas diferentes, sem nada dizendo qual era qual.
+    #
+    # E a mesma familia da copia silenciosa: duas leituras do mesmo fato, cada
+    # uma correta no seu escopo, que se leem como contradicao porque o escopo
+    # nao esta escrito. A correcao e escrever o escopo, nao mudar a conta.
     tree_drops = getattr(node, 'tree_tcp_drops', 0)
     tree_retrans = getattr(node, 'tree_tcp_retrans', 0)
     net_issues = tree_drops + tree_retrans
     if net_issues > 0:
-        tooltip = f"Network Issues: {tree_drops} Drops, {tree_retrans} Retransmits"
-        badges.append(f'<span class="tag t-err" data-filter="NET ERR" title="{tooltip}">❌ {format_number(net_issues)}<span class="visually-hidden">NET ERR</span></span>')
+        proprios_d = getattr(node, 'tcp_drops', 0) or 0
+        proprios_r = getattr(node, 'tcp_retrans', 0) or 0
+        # Nunca negativo: uma thread de kernel tem contador proprio e subarvore
+        # zerada de proposito (ela nao possui socket), e a subtracao crua daria
+        # um numero impossivel no lugar mais sensivel da tela.
+        desc_d = max(0, tree_drops - proprios_d)
+        desc_r = max(0, tree_retrans - proprios_r)
+        tooltip = (
+            f"Network Issues: {net_issues} = {tree_drops} drops + "
+            f"{tree_retrans} retransmits.\n"
+            f"O numero cobre este processo E todos os descendentes dele.\n"
+            f"Deste processo: {proprios_d} drops, {proprios_r} retransmits.\n"
+            f"Dos descendentes: {desc_d} drops, {desc_r} retransmits.\n"
+            f"Por isso o badge do pai pode ser maior que a soma visivel dos "
+            f"filhos que estao expandidos: os que ainda nao foram abertos "
+            f"tambem entram na conta.")
+        badges.append(f'<span class="tag t-err" data-filter="NET ERR" title="{_esc(tooltip)}">❌ {format_number(net_issues)}<span class="visually-hidden">NET ERR</span></span>')
 
     score_to_show = getattr(node, 'tree_max_score', node.anomaly_score)
     severity = _severity_label(score_to_show)
@@ -708,9 +734,33 @@ def _get_details_html(node, mounts, tree=None):
 
     # [UPDATED] Network Section: Separated Active from Blocked
     html += "<div><span class='det-title'>Network Resilience</span>"
+    # [F-243] O escopo de cada numero fica ESCRITO.
+    #
+    # Este painel sempre mostrou o contador PROPRIO do processo, e o badge da
+    # arvore sempre mostrou a SUBARVORE. Os dois estavam certos, e liam-se como
+    # contradicao: um pai com badge 7 e detalhe 0 parece defeito de contagem
+    # quando e so o pai nao ter descarte proprio, com os 7 vindo dos filhos.
+    #
+    # Agora as duas leituras aparecem lado a lado, rotuladas, e a conta fecha
+    # sem ninguem precisar deduzir qual numero responde a que pergunta (D-020:
+    # o campo aparece mesmo quando o valor e zero, porque zero aqui e resposta).
     retr_style = "color:var(--red);font-weight:bold" if node.tcp_retrans > 0 else "color:#888"
     drop_style = "color:var(--red);font-weight:bold" if node.tcp_drops > 0 else "color:#888"
-    html += f"<div style='margin-bottom:8px'>Retransmits: <span style='{retr_style}'>{node.tcp_retrans}</span> | Drops: <span style='{drop_style}'>{node.tcp_drops}</span></div>"
+    html += (f"<div style='margin-bottom:4px'>"
+             f"<span title='Contadores deste processo, sem os filhos.'>"
+             f"Deste processo &mdash; Retransmits: "
+             f"<span style='{retr_style}'>{node.tcp_retrans}</span> | Drops: "
+             f"<span style='{drop_style}'>{node.tcp_drops}</span></span></div>")
+
+    tree_r = getattr(node, 'tree_tcp_retrans', node.tcp_retrans)
+    tree_d = getattr(node, 'tree_tcp_drops', node.tcp_drops)
+    html += (f"<div style='margin-bottom:8px; color:#888; font-size:11px'>"
+             f"<span title='Este processo mais TODOS os descendentes. E este o "
+             f"numero que o badge da arvore exibe, somado.'>"
+             f"Com os descendentes &mdash; Retransmits: {tree_r} | "
+             f"Drops: {tree_d} "
+             f"<b style='color:#aaa'>(badge: {tree_r + tree_d})</b>"
+             f"</span></div>")
 
     # [NEW] Active Connections Label
     html += "<div style='font-size:10px; font-weight:bold; color:#777; margin-bottom:2px; text-transform:uppercase'>Active Connections:</div>"

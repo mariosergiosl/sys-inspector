@@ -83,6 +83,17 @@ def _controlador(run_once, ciclos_registrados):
     ctrl.logger = __import__("logging").getLogger("TesteDaemon")
     ctrl.config = {}
 
+    # [C-105] Estado do modo ocioso, montado a mao como o resto.
+    #
+    # Este controlador nasce por __new__, sem passar pelo __init__, entao todo
+    # campo que o laco usa precisa ser declarado AQUI. Vem desligado de
+    # proposito: o que este arquivo afere e quando o laco TERMINA, e o modo
+    # ocioso mexe em quando ele CAPTURA. Misturar as duas coisas faria um teste
+    # falhar por causa do outro assunto.
+    ctrl.idle_mode = False
+    ctrl.capture_every = 0
+    ctrl._ultima_captura = None
+
     def coleta(engine, ciclo):
         ciclos_registrados.append(ciclo)
         # Sem o --once, o laco so para por fora: o proprio teste sinaliza a

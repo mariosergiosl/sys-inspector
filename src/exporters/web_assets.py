@@ -89,10 +89,14 @@ _BADGES_FORA_DO_MAPA = (
      "caminho gravavel, ou novo direto sob PID 1 sem passar por um "
      "gerenciador de servico conhecido, pesa mais que o badge isolado."),
     ("NET ERR", "❌",
-     "Falhas de rede do processo (retransmissoes TCP + pacotes descartados), somadas.",
+     "Falhas de rede: retransmissoes TCP mais pacotes descartados, somadas, deste processo E DE TODOS OS DESCENDENTES dele.",
      "Pode ser so problema de infraestrutura (link instavel, MTU errado). "
      "Tambem e a assinatura de C2 mal configurado ou de exfiltracao para "
-     "um destino que bloqueia/reseta a conexao repetidamente."),
+     "um destino que bloqueia/reseta a conexao repetidamente. O badge do "
+     "pai pode ser MAIOR que a soma dos filhos visiveis: ele conta a "
+     "subarvore inteira, inclusive os ramos ainda nao expandidos. O painel "
+     "de detalhe mostra as duas leituras, deste processo e com os "
+     "descendentes."),
 )
 
 
