@@ -66,7 +66,42 @@ redimensionamento.
 ### 2.1 Barra superior
 
 Botão **Manager** (volta para a frota), o carimbo de quando a captura foi feita e
-a idade dela, e os mesmos comandos da tela anterior para aquele agente.
+a idade dela, a navegação entre capturas, o botão de baixar o laudo e os mesmos
+comandos da tela anterior para aquele agente.
+
+**Navegação entre capturas.** Quatro controles: captura anterior (mais antiga),
+próxima (mais recente), ir para a mais recente, e a posição atual no formato
+"captura N de M". A contagem é cronológica, da mais antiga para a mais recente,
+que é como se lê uma linha do tempo; o banco devolve na ordem inversa.
+
+Uma seta sem destino fica **visível e apagada**, e não some. O limite da coleção
+é informação: uma seta que desaparece muda a largura da barra e deixa quem lê sem
+saber se chegou ao fim ou se a tela quebrou. Com uma única captura não há setas,
+mas a contagem continua sendo dita, porque "captura 1 de 1" também é resposta.
+
+**Baixar o laudo.** O ícone de disquete entrega o laudo como **arquivo**, com
+nome no formato `sys-inspector_<host>_<AAAAMMDD-HHMMSS>.html`. O instante no nome
+é o da **coleta**, não o do download: quem recebe a peça precisa saber a que
+momento ela se refere sem abrir o arquivo.
+
+Três propriedades importam:
+
+- **É sempre a versão completa.** Uma peça que mudasse de conteúdo conforme quem
+  clicou não se anexa a processo nenhum.
+- **É a mesma montagem que a tela.** Arquivo e página saem do mesmo código, para
+  que a peça anexada seja a peça lida.
+- **Não leva a barra de navegação.** Ela aponta para um servidor que quem lê o
+  processo não alcança, e botão morto num documento pericial é pior que botão
+  nenhum.
+
+O download também está na tela de **Histórico**, em coluna própria, para baixar
+qualquer captura sem precisar abri-la antes.
+
+O laudo fica no **servidor**, e não no agente. Não é conveniência: o agente
+escrever no host inspecionado contaminaria o alvo, o agente cifra com a chave
+pública e não consegue ler o que coletou, e o agente não tem servidor web, só
+chamadas de saída, de modo que um download abriria porta no processo mais
+privilegiado da frota.
 
 ### 2.2 Mostrar / ocultar inventário
 
@@ -83,8 +118,18 @@ ficava espremida. O estado é lembrado pelo navegador, então quem trabalha na
 **Findings** (o que está errado), **Processes** (quem executa) e **ATT&CK** (que
 técnica é). A faixa "COMO LER" sugere essa ordem.
 
-Um achado cujo caminho está sendo executado agora traz o botão **Ver processo**,
-que pula para ele na árvore e o destaca.
+Um achado que diz respeito a um processo traz o botão **Ver processo**, que pula
+para ele na árvore e o destaca. Isso acontece em dois casos: quando o achado
+**nomeia o PID** (memória gravável-e-executável, processo oculto, divergência de
+threads) e quando o **caminho denunciado** está sendo executado por algum
+processo capturado.
+
+Se o processo já não estiver na captura, a tela **diz isso** e sugere procurar no
+histórico do agente, em vez de simplesmente não reagir. Ausência é resposta.
+
+Um achado que não é sobre processo (um módulo de kernel, um arquivo, um padrão
+de frota) continua **sem** o botão, e essa ausência também informa: não há
+processo a que ir.
 
 ### 2.4 Árvore de processos
 
@@ -128,17 +173,30 @@ verificado por teste: dois sinais com o mesmo desenho são um sinal só aos olho
 de quem lê, e num laudo forense dois fatos diferentes não podem ter a mesma
 aparência.
 
-**Limitação conhecida:** um filtro que não casa com nenhum processo apenas
-esvazia a árvore, sem dizer que não houve resultado. Da tela, "nenhum resultado"
-e "quebrado" são indistinguíveis. Está registrado como pendência.
+**Filtro sem resultado responde.** Um filtro que não casa com nenhum processo
+escreve na tela quantos processos foram examinados e que a ausência é a resposta,
+em vez de apenas esvaziar a árvore. Da tela, "nenhum resultado" e "quebrado"
+eram indistinguíveis, e foi essa ambiguidade que fez um filtro correto ser
+reportado como defeito.
+
+O aviso fica no fluxo do documento e permanece até o filtro mudar, porque
+descreve o **estado atual** da tela e não um evento passageiro.
 
 ## 3. Limitações conhecidas da interface
 
-Registradas para que a ausência não seja lida como esquecimento:
+Registradas para que a ausência não seja lida como esquecimento.
 
-- o laudo existe como página servida, **não como arquivo para download**;
-- o botão **Ver processo** aparece apenas nos achados cujo caminho está sendo
-  executado no momento da captura, e não em todos os que citam um processo;
-- não há navegação entre capturas dentro do laudo (anterior, próxima, mais
-  recente): isso hoje se faz pela tela de Histórico;
-- filtro sem resultado não avisa.
+**Resolvidas na 1.2.0.** As quatro limitações listadas aqui até a 1.1.0 deixaram
+de existir: o laudo voltou a ter download, o botão **Ver processo** passou a
+aparecer em todo achado que diz respeito a um processo, a navegação entre
+capturas entrou na barra do laudo, e filtro sem resultado passou a avisar. O
+registro fica aqui porque ele dizia a verdade sobre a versão anterior, e um
+histórico de limitações apagado não serve a quem lê um laudo antigo.
+
+**Em aberto:**
+
+- a contagem do badge de descarte de pacote (DROP) não fecha entre processo pai
+  e filho: o número do pai não é explicado pela soma dos filhos mais o descarte
+  próprio visível. Sob investigação;
+- a comparação entre duas capturas mostra os processos que **apareceram** e não
+  os que **desapareceram**, que são frequentemente os mais interessantes.

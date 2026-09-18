@@ -39,6 +39,7 @@ def _pid_nomeado_pelo_achado(finding):
     from src.exporters.html_report import _pid_nomeado_pelo_achado as impl
     return impl(finding)
 
+
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

@@ -5,6 +5,74 @@ All notable changes to the **Sys-Inspector** project will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-18
+
+The report stops being only a screen and becomes an **exhibit**: it can be
+downloaded, navigated across captures, and it answers when it has nothing to
+show.
+
+### Added
+
+- **The report as a file again** (`C-149`). New route
+  `GET /download/<uuid>?capture=<id>`, with `Content-Disposition`, reachable from
+  the report bar and from a column of its own on the History screen. The file is
+  named `sys-inspector_<host>_<YYYYMMDD-HHMMSS>.html`, carrying the **collection**
+  time rather than the download time.
+
+  Removing the execution modes in 1.1.0 had silently taken this away: obtaining
+  the report came to depend on the browser's "save as", which produces an
+  artefact with no origin stamp. In a forensic tool the report is the exhibit
+  attached to the case.
+
+  It lives on the server, not on the agent: an agent writing to the inspected
+  host contaminates the target, the agent encrypts with the public key and cannot
+  read what it collected, and the agent has no web server, so a download would
+  mean opening a port on the most privileged process in the fleet.
+
+- **Navigation between captures in the report bar** (`F-234`). Previous, next,
+  jump to latest, and "capture N of M". The count is chronological, oldest to
+  newest. An arrow with nowhere to go stays visible and dimmed instead of
+  disappearing, because the edge of the collection is information. A single
+  capture still states "capture 1 of 1".
+
+- **A filter with no results now answers** (`F-244`). It states how many
+  processes were examined and that the absence is the answer. Previously the
+  tree simply emptied, and from the screen "no results" and "broken" were
+  indistinguishable; that ambiguity had a correct filter reported as a defect.
+
+### Changed
+
+- **The pivot to the process now appears on every finding that concerns one**
+  (`F-242`). It used to come only from the correlation, which fills in when the
+  *reported path* is being executed; findings that name a PID directly
+  (writable-and-executable memory, hidden process, thread divergence) were left
+  without the shortcut, which were precisely the most specific ones. Measured
+  before: 5 pivots across 33 cards.
+
+  A finding that is not about a process still carries no button, and that
+  absence keeps informing.
+
+- **The screen and the file are built by one code path.** Two builds would be
+  the silent-copy defect this project has already paid for, and here the cost
+  would be higher: the attached exhibit would stop being the exhibit that was
+  read.
+
+### Documentation
+
+- `docs/internal/architecture.md` and `docs/internal/diagrams.md` brought up to
+  the current code (`C-148`): the real module map, the 33 eBPF probes and the two
+  remaining controllers. Probes and score bits are now cited by **name** instead
+  of by `file:line`, because every line citation from the previous revision had
+  already expired.
+- `docs/internal/cobertura-ameacas.md`: detection surface revised against 1.1.0,
+  from 30 to 33 probes and from 9 to 25 `anomaly_score` bits, plus the rootkit
+  collector and directed acquisition.
+- `ROADMAP.md` records the 1.1.0 delivery and corrects the RBAC note: HTTPS and
+  authentication are no longer optional.
+- `F-216` closed without work: searched across the whole repository and the whole
+  git history, there are no UML PNGs and there never were. The project's diagrams
+  have always been Mermaid, which is text.
+
 ## [1.1.0] - 2026-08-20
 
 Minor release with **breaking configuration changes**. The tool now has a single

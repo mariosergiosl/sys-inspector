@@ -23,7 +23,7 @@
 # AUTHOR: Mario Luz (Sys-Inspector Project)
 # ==============================================================================
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 # Papeis de instalacao. O mesmo codigo-fonte serve aos tres; o que muda e o que
 # cada maquina precisa ter instalado junto.
