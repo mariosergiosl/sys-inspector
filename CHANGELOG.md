@@ -50,6 +50,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from its descendants'; and the badge legend, which said "network failures of
   the process", now states that it covers descendants too.
 
+### Added
+
+- **Idle mode for the agent** (`C-105`), off by default. Until now the daemon
+  was not idle at all: it ran the heavy capture (eBPF, inventory, findings,
+  encryption) on **every** cycle and only then talked to the server. Across a
+  real estate that means paying the cost of a forensic capture all the time on
+  machines where nothing happened.
+
+  With `daemon.idle_mode` on, the cycle only talks to the server, and the heavy
+  capture happens for a **reason**: the first cycle after start, the cadence in
+  `daemon.capture_every`, or a command from the analyst. A cycle that does not
+  capture writes **why**, with the time remaining: an idle agent and a stuck
+  agent must not look alike to whoever reads the log at three in the morning.
+
+  A commanded capture also resets the cadence, so an on-demand capture is not
+  followed seconds later by a scheduled one.
+
+  Turning it on changes what an agent does in the field, which is a decision for
+  whoever operates it, not a side effect of an upgrade.
+
+  **Stated limit, so the gain is not overstated:** this does not make the cycle
+  cheap on its own. The check-in still forks `chronyc` and probes the host every
+  round; that is item `C-106`, still open. What is solved here is the heavy
+  capture no longer being mandatory every cycle. The cost reduction itself has
+  **not** been measured on real hardware yet.
+
 ### Known gap opened by this change
 
 - The **capture-level** custody record is still not shown in the report
