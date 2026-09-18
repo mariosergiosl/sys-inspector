@@ -2,6 +2,33 @@
 
 This document outlines the development trajectory of **Sys-Inspector**.
 
+## ✅ Completed (v1.1.0)
+
+- [x] **One execution path** (breaking change). The `snapshot`, `live` and
+  `local-live` modes were removed. A single machine now runs the agent and the
+  server side by side; a one-off capture is `--mode daemon --once`.
+- [x] **HTTPS as the only transport.** The plaintext path was removed from the
+  code, not merely disabled. The server refuses to start if TLS cannot be
+  enabled, and the agent always speaks HTTPS.
+- [x] **Report interface rebuilt around the process tree.** Real table header,
+  resizable columns in both the report and the manager panel, column geometry
+  coming from a single source, scrolling confined to the tree.
+- [x] **Every field always visible.** A field with no value is shown in one of
+  three states, so "looked and found nothing" is never confused with "did not
+  look".
+- [x] **Rootkit indicators**, from the kernel and from user space, alongside the
+  existing hidden-process detection.
+- [x] **Directed evidence acquisition**, bounded so that the agent collects
+  enough to identify and direct the analyst, never the bulk that proves.
+- [x] **Network event formatting extracted from the eBPF loop**, so address and
+  protocol rendering can be tested without a kernel.
+- [x] **Single badge registry**, replacing three divergent copies of the same
+  map.
+- [x] **Test scenario repaired and instrumented.** The scenario script was not
+  running at all on the target, and the agent reported "capturing anyway",
+  which made the failure invisible. Both were fixed and both are now covered by
+  tests.
+
 ## ✅ Completed (v1.0.0 - first stable release)
 
 - [x] **Answer contract per finding** (confidence: confirmed/probable/heuristic; custody: what was preserved).
@@ -110,4 +137,6 @@ This document outlines the development trajectory of **Sys-Inspector**.
   - Attach to NVIDIA driver tracepoints to detect unauthorized crypto-mining.
 - [ ] **Role-Based Access Control (RBAC)**
   - Add authentication and authorization to the Fleet View Dashboard.
-  - v0.90.16: optional HTTP Basic Auth and HTTPS landed as a first step (single credential; full role-based authorization is still pending).
+  - v0.90.16 landed optional HTTP Basic Auth and HTTPS as a first step. As of
+    v1.1.0 HTTPS is mandatory and authentication is always on, but there is
+    still a single credential: role-based authorization remains pending.
