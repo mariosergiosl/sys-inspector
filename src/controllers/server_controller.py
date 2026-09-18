@@ -527,6 +527,132 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             tree.nodes[int(pid)] = node
         return tree
 
+    def _laudo_de(self, controller, agent_uuid, captura_pedida=None):
+        """
+        Monta o laudo de um agente e devolve (html, captura, historico).
+
+        FONTE UNICA das duas rotas que entregam laudo: a tela (`/agent/`) e o
+        arquivo (`/download/`). Manter duas montagens seria a mesma classe de
+        defeito que este projeto ja pagou caro: duas representacoes do mesmo
+        fato, mantidas em lugares distintos, que se afastam sem nada denunciar.
+        Aqui o custo seria maior que o normal, porque a peca que se anexa ao
+        processo deixaria de ser a peca que o perito leu na tela.
+
+        PARAMETER controller: o ServerController, de onde saem o banco e a chave.
+        PARAMETER agent_uuid: identificador do agente, ja validado pelo chamador.
+        PARAMETER captura_pedida: id de uma captura especifica, ou None para a
+                  mais recente.
+
+        Devolve (None, None, []) quando nao ha captura ou a decifragem falha.
+        """
+        historico = controller.db.get_history(0, time.time(),
+                                              agent_filter=agent_uuid)
+        if not historico:
+            return None, None, []
+
+        escolhido = None
+        if captura_pedida:
+            escolhido = next((s for s in historico
+                              if str(s.get("id")) == str(captura_pedida)), None)
+        escolhido = escolhido or historico[0]
+
+        # get_snapshot_details devolve o bundle cifrado; descriptografa.
+        data = controller.decrypt(
+            controller.db.get_snapshot_details(escolhido["id"]))
+        if not data:
+            return None, None, historico
+
+        tree = self._rehydrate_tree(data)
+        tmp_filename = "/tmp/sys_server_%s.html" % threading.get_ident()
+        # A versao do laudo e a do codigo que o produziu, lida da fonte unica.
+        # Estava fixa em "0.61.00", entao todo laudo aberto pelo servidor se
+        # declarava produzido por uma versao que nao existe mais: para quem for
+        # reproduzir a analise depois, e informacao errada no lugar mais
+        # sensivel.
+        generate_report(data, tree, tmp_filename, __version__)
+        try:
+            with open(tmp_filename, "r", encoding="utf-8") as fh:
+                html_content = fh.read()
+        finally:
+            try:
+                os.remove(tmp_filename)
+            except OSError:
+                pass
+
+        return html_content, escolhido, historico
+
+    def _navegacao_de_capturas(self, agent_uuid, escolhido, historico):
+        """
+        [F-234] Barra de navegacao entre as capturas do mesmo agente.
+
+        Responde quatro perguntas que a tela nao respondia: quantas capturas
+        existem, qual esta sendo vista, como chegar a anterior e como voltar a
+        mais recente. Sem isso, ler a captura de ontem exigia sair do laudo,
+        entrar no historico e escolher na lista, e comparar duas exigia
+        refazer o caminho inteiro a cada troca.
+
+        O historico chega do banco em ordem decrescente, ou seja, a mais
+        recente primeiro. "Anterior" e a mais VELHA (indice maior) e "proxima"
+        e a mais NOVA (indice menor), que e a leitura cronologica e nao a
+        leitura da lista.
+
+        PARAMETER agent_uuid: identificador do agente.
+        PARAMETER escolhido: a captura sendo exibida.
+        PARAMETER historico: todas as capturas do agente, mais recente primeiro.
+        """
+        total = len(historico)
+        if total <= 1:
+            # Uma captura so nao tem navegacao, mas a contagem continua sendo
+            # dita: "1 de 1" e resposta, e responde por que nao ha setas (D-020).
+            return ("<span style=\"margin-left:12px; font-size:11px; "
+                    "font-family:sans-serif; color:#666\" title=\"Este agente "
+                    "tem uma unica captura armazenada, entao nao ha o que "
+                    "navegar.\">captura 1 de 1</span>")
+
+        ids = [str(s.get("id")) for s in historico]
+        try:
+            pos = ids.index(str(escolhido.get("id")))
+        except ValueError:
+            pos = 0
+
+        def _seta(indice, simbolo, titulo, ativo):
+            if not ativo:
+                # Desabilitado continua VISIVEL, e nao some: o limite da
+                # colecao e informacao. Uma seta que desaparece faz a barra
+                # mudar de largura e deixa o leitor sem saber se chegou ao fim
+                # ou se a tela quebrou.
+                return ("<span style=\"color:#444; padding:4px 6px; "
+                        "font-size:15px; cursor:default\" title=\"%s\">%s</span>"
+                        % (titulo, simbolo))
+            return ("<a href=\"/agent/%s?capture=%s\" title=\"%s\" "
+                    "style=\"color:#4ec9b0; padding:4px 6px; font-size:15px; "
+                    "text-decoration:none\">%s</a>"
+                    % (agent_uuid, ids[indice], titulo, simbolo))
+
+        mais_velha = pos + 1
+        mais_nova = pos - 1
+        # A posicao humana conta do mais ANTIGO para o mais recente, que e como
+        # se le uma linha do tempo. A lista vem ao contrario.
+        humana = total - pos
+
+        partes = [
+            _seta(mais_velha, "&#9664;",
+                  "Captura anterior, mais antiga que esta",
+                  mais_velha < total),
+            ("<span style=\"font-size:11px; font-family:sans-serif; "
+             "color:#888\" title=\"Posicao desta captura na linha do tempo "
+             "deste agente, da mais antiga para a mais recente.\">"
+             "captura %d de %d</span>" % (humana, total)),
+            _seta(mais_nova, "&#9654;",
+                  "Proxima captura, mais recente que esta",
+                  mais_nova >= 0),
+            _seta(0, "&#9193;",
+                  "Ir para a captura mais recente deste agente",
+                  pos != 0),
+        ]
+        return ("<span style=\"margin-left:12px; display:inline-flex; "
+                "align-items:center; gap:2px\">" + "".join(partes) + "</span>")
+
     def do_GET(self):
         controller = self.server.controller
 
@@ -648,6 +774,67 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
+        elif self.path.startswith('/download/'):
+            # --- [C-149] O LAUDO COMO ARQUIVO ---
+            #
+            # Fica no SERVIDOR, e nao no agente, por tres razoes que nao sao de
+            # conveniencia:
+            #   1. o agente escrever no host inspecionado contamina o alvo, que
+            #      e a mesma regra ja fixada para o cenario de caos (D-025);
+            #   2. o agente cifra com a chave publica e NAO consegue ler o que
+            #      coletou, logo nao teria como montar o laudo;
+            #   3. o agente nao tem servidor web, so chamadas de saida, e dar a
+            #      ele um download significaria abrir porta no processo mais
+            #      privilegiado da frota.
+            #
+            # O arquivo vem SEM a barra de navegacao: ela e ferramenta de tela,
+            # e uma peca anexada a processo nao pode carregar controles que
+            # apontam para um servidor que quem le o processo nao alcanca.
+            caminho, _, consulta = self.path.partition("?")
+            agent_uuid = caminho.split('/')[-1]
+            if not id_valido(agent_uuid):
+                self._recusa_id(agent_uuid)
+                return
+            args = urlparse.parse_qs(consulta or "")
+            captura_pedida = (args.get("capture") or [None])[0]
+            html_content, escolhido, _hist = self._laudo_de(
+                controller, agent_uuid, captura_pedida)
+
+            if not html_content or not escolhido:
+                self._set_headers(status=404)
+                self.wfile.write(b"Agent not found or no data received yet.")
+                return
+
+            # Nome do arquivo: host e instante da COLETA, nao do download. Quem
+            # recebe a peca precisa saber a que momento ela se refere sem abrir.
+            # get_history so devolve colunas quentes e NAO traz o hostname;
+            # ele vive na tabela de agentes. Sem esta busca o arquivo sairia
+            # nomeado pelo UUID, que nao diz a ninguem de que maquina e a peca.
+            host = ""
+            for agente in (controller.db.get_agents() or []):
+                if str(agente.get("uuid")) == agent_uuid:
+                    host = str(agente.get("hostname") or "")
+                    break
+            host = host or agent_uuid
+            # O hostname vem do host analisado: so o que e seguro em nome de
+            # arquivo sobrevive, para nao haver travessia de caminho nem quebra
+            # do cabecalho Content-Disposition.
+            host = re.sub(r"[^A-Za-z0-9._-]", "_", host)[:64] or "host"
+            momento = datetime.datetime.fromtimestamp(
+                float(escolhido.get("timestamp") or 0)
+            ).strftime("%Y%m%d-%H%M%S")
+            nome = "sys-inspector_%s_%s.html" % (host, momento)
+
+            corpo = html_content.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Disposition",
+                             'attachment; filename="%s"' % nome)
+            self.send_header("Content-Length", str(len(corpo)))
+            self.end_headers()
+            self.wfile.write(corpo)
+            return
+
         elif self.path.startswith('/agent/'):
             # --- VIEW AGENT SNAPSHOT ---
             caminho, _, consulta = self.path.partition("?")
@@ -664,119 +851,112 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # ultima fazia o pivo cair em "nao esta nesta captura" quase sempre.
             # Abrindo a captura de origem, o processo esta la.
             captura_pedida = (args.get("capture") or [None])[0]
-            snaps = controller.db.get_history(0, time.time(), agent_filter=agent_uuid)
+            # Fonte unica com a rota de download (C-149): a peca que se anexa
+            # ao processo tem que ser a mesma peca que o perito leu na tela.
+            html_content, escolhido, historico = self._laudo_de(
+                controller, agent_uuid, captura_pedida)
 
-            escolhido = None
-            if snaps:
-                if captura_pedida:
-                    escolhido = next((s for s in snaps
-                                      if str(s.get("id")) == str(captura_pedida)),
-                                     None)
-                escolhido = escolhido or snaps[0]
+            if html_content and escolhido:
+                snaps = [escolhido]  # o carimbo e a idade usam este
 
-            if escolhido:
-                # get_snapshot_details devolve o bundle cifrado; descriptografa.
-                data = controller.decrypt(
-                    controller.db.get_snapshot_details(escolhido['id']))
-                if data:
-                    snaps = [escolhido]  # o carimbo e a idade usam este
-                    tree = self._rehydrate_tree(data)
+                # Retorno para a frota: sem isso o analista entra no
+                # relatorio de um host e fica sem caminho de volta.
+                # Barra propria acima do relatorio, no fluxo do documento.
+                # Com position:fixed o botao flutuava sobre o titulo e
+                # cobria o nome da ferramenta; ocupando espaco real ele
+                # apenas empurra o conteudo para baixo.
+                # Barra de acoes do host: as mesmas acoes do gerente,
+                # ao alcance de quem ja esta lendo o laudo daquele agente.
+                def _acao(caminho, icone, titulo, extra=""):
+                    # [F-232] Sem borda: os icones seguem a mesma linguagem
+                    # da barra de filtros da aba Processes e da tabela da
+                    # Manager. A caixa em volta de cada emoji criava seis
+                    # retangulos concorrendo com o laudo por atencao.
+                    return ("<a href=\"/cmd/%s/%s\" title=\"%s\" "
+                            "style=\"color:#4ec9b0; padding:4px 6px; "
+                            "margin-left:6px; opacity:0.75; "
+                            "text-decoration:none; font-size:17px;%s\">%s</a>"
+                            % (caminho, agent_uuid, titulo, extra, icone))
 
-                    # Generate HTML
-                    tmp_filename = f"/tmp/sys_server_{threading.get_ident()}.html"
-                    # A versao do laudo e a do codigo que o produziu, lida da
-                    # fonte unica. Estava fixa em "0.61.00", entao todo laudo
-                    # aberto pelo servidor se declarava produzido por uma versao
-                    # que nao existe mais: para quem for reproduzir a analise
-                    # depois, e uma informacao errada no lugar mais sensivel.
-                    generate_report(data, tree, tmp_filename, __version__)
+                # IDADE DA CAPTURA, em destaque.
+                #
+                # O laudo aberto aqui e sempre o mais recente que chegou, e
+                # nada na tela dizia de quando ele e. Um laudo de meia hora
+                # atras e indistinguivel de um recem-coletado, e a leitura
+                # que isso produziu em campo foi de que a captura pedida
+                # falhara, quando o que estava na tela era simplesmente a
+                # anterior. Amarelo a partir de 15 minutos, vermelho a partir
+                # de uma hora: nao e alarme, e a informacao de que o que se
+                # esta lendo pode nao descrever o estado atual do host.
+                idade_seg = time.time() - float(snaps[0].get('timestamp') or 0)
+                cor_idade = ("#ff4d4d" if idade_seg > 3600
+                             else "#ffd166" if idade_seg > 900 else "#6a9955")
+                carimbo = (
+                    "<span title=\"Momento em que o agente coletou estes "
+                    "dados. O laudo descreve o host NAQUELE instante, e nao "
+                    "agora.\" style=\"margin-left:16px; font-size:11px; "
+                    "font-family:sans-serif; color:#888\">"
+                    "coletado em %s <b style=\"color:%s\">(%s)</b></span>"
+                    % (datetime.datetime.fromtimestamp(
+                        float(snaps[0].get('timestamp') or 0)
+                    ).strftime("%Y-%m-%d %H:%M:%S"), cor_idade,
+                       _human_age(idade_seg)))
 
-                    with open(tmp_filename, 'r', encoding='utf-8') as f:
-                        html_content = f.read()
+                back = (
+                    # [F-231] Barra mais baixa: 8px em cima e embaixo eram
+                    # altura tirada da arvore, que e onde se trabalha.
+                    # [F-232] "Fleet" virou "Manager": o botao volta para a
+                    # tela Manager, e e o nome do DESTINO que o operador
+                    # procura, nao um sinonimo do conceito.
+                    "<div style=\"background:#1a1a1a; border-bottom:1px solid #333; "
+                    "padding:4px 16px; display:flex; align-items:center\">"
+                    "<a href=\"/\" title=\"Voltar para a tela Manager\" "
+                    "style=\"color:#4ec9b0; padding:4px 10px; font-size:12px; "
+                    "font-family:sans-serif; text-decoration:none\">"
+                    "&larr; Manager</a>"
+                    + carimbo
+                    # [F-234] Navegacao entre as capturas deste agente. A barra
+                    # do laudo e o lugar dela: quem esta lendo uma captura quer
+                    # ver a anterior sem sair para o historico e voltar.
+                    + self._navegacao_de_capturas(agent_uuid, escolhido,
+                                                  historico)
+                    # [C-149] O laudo como ARQUIVO. Antes da remocao dos modos,
+                    # a captura gravava report/sys-inspector_<host>_<ts>.html;
+                    # depois dela so restou o "salvar como" do navegador, que
+                    # produz artefato sem carimbo de origem. Numa ferramenta
+                    # forense o laudo e a peca que se anexa ao processo.
+                    + ("<a href=\"/download/%s?capture=%s\" "
+                       "title=\"Baixar este laudo como arquivo, para anexar. "
+                       "Vem sempre completo e identico ao que esta na tela, "
+                       "sem a barra de navegacao.\" "
+                       "style=\"color:#4ec9b0; padding:4px 6px; "
+                       "margin-left:12px; opacity:0.75; "
+                       "text-decoration:none; font-size:17px\">&#128190;</a>"
+                       % (agent_uuid, escolhido.get("id")))
+                    + ("<a href=\"/history/%s\" title=\"Capturas anteriores "
+                       "deste agente e comparacao entre duas\" "
+                       "style=\"color:#4ec9b0; padding:4px 6px; "
+                       "margin-left:12px; opacity:0.75; "
+                       "text-decoration:none; font-size:17px\">&#128337;</a>"
+                       % agent_uuid)
+                    + _acao("collect", "&#128248;",
+                            "Solicitar captura agora: entra na fila, o agente "
+                            "executa no proximo check-in (ate ~1 ciclo)")
+                    + _acao("chaos", "&#9760;",
+                            "APENAS LAB: cenario de teste por 300s, depois captura")
+                    + _acao("restart", "&#128260;", "Restart the agent (queued)")
+                    + "</div>")
+                # Ancora o link no primeiro elemento do corpo, e nao na
+                # string "<body>": essa sequencia tambem aparece DENTRO do
+                # JavaScript do relatorio (win.document.write('</head><body>')),
+                # e injetar ali quebrava a sintaxe do script inteiro,
+                # derrubando as abas e todos os controles da arvore.
+                anchor = '<div class="sticky-wrapper">'
+                html_content = html_content.replace(anchor, back + anchor, 1)
 
-                    # Retorno para a frota: sem isso o analista entra no
-                    # relatorio de um host e fica sem caminho de volta.
-                    # Barra propria acima do relatorio, no fluxo do documento.
-                    # Com position:fixed o botao flutuava sobre o titulo e
-                    # cobria o nome da ferramenta; ocupando espaco real ele
-                    # apenas empurra o conteudo para baixo.
-                    # Barra de acoes do host: as mesmas acoes do gerente,
-                    # ao alcance de quem ja esta lendo o laudo daquele agente.
-                    def _acao(caminho, icone, titulo, extra=""):
-                        # [F-232] Sem borda: os icones seguem a mesma linguagem
-                        # da barra de filtros da aba Processes e da tabela da
-                        # Manager. A caixa em volta de cada emoji criava seis
-                        # retangulos concorrendo com o laudo por atencao.
-                        return ("<a href=\"/cmd/%s/%s\" title=\"%s\" "
-                                "style=\"color:#4ec9b0; padding:4px 6px; "
-                                "margin-left:6px; opacity:0.75; "
-                                "text-decoration:none; font-size:17px;%s\">%s</a>"
-                                % (caminho, agent_uuid, titulo, extra, icone))
-
-                    # IDADE DA CAPTURA, em destaque.
-                    #
-                    # O laudo aberto aqui e sempre o mais recente que chegou, e
-                    # nada na tela dizia de quando ele e. Um laudo de meia hora
-                    # atras e indistinguivel de um recem-coletado, e a leitura
-                    # que isso produziu em campo foi de que a captura pedida
-                    # falhara, quando o que estava na tela era simplesmente a
-                    # anterior. Amarelo a partir de 15 minutos, vermelho a partir
-                    # de uma hora: nao e alarme, e a informacao de que o que se
-                    # esta lendo pode nao descrever o estado atual do host.
-                    idade_seg = time.time() - float(snaps[0].get('timestamp') or 0)
-                    cor_idade = ("#ff4d4d" if idade_seg > 3600
-                                 else "#ffd166" if idade_seg > 900 else "#6a9955")
-                    carimbo = (
-                        "<span title=\"Momento em que o agente coletou estes "
-                        "dados. O laudo descreve o host NAQUELE instante, e nao "
-                        "agora.\" style=\"margin-left:16px; font-size:11px; "
-                        "font-family:sans-serif; color:#888\">"
-                        "coletado em %s <b style=\"color:%s\">(%s)</b></span>"
-                        % (datetime.datetime.fromtimestamp(
-                            float(snaps[0].get('timestamp') or 0)
-                        ).strftime("%Y-%m-%d %H:%M:%S"), cor_idade,
-                           _human_age(idade_seg)))
-
-                    back = (
-                        # [F-231] Barra mais baixa: 8px em cima e embaixo eram
-                        # altura tirada da arvore, que e onde se trabalha.
-                        # [F-232] "Fleet" virou "Manager": o botao volta para a
-                        # tela Manager, e e o nome do DESTINO que o operador
-                        # procura, nao um sinonimo do conceito.
-                        "<div style=\"background:#1a1a1a; border-bottom:1px solid #333; "
-                        "padding:4px 16px; display:flex; align-items:center\">"
-                        "<a href=\"/\" title=\"Voltar para a tela Manager\" "
-                        "style=\"color:#4ec9b0; padding:4px 10px; font-size:12px; "
-                        "font-family:sans-serif; text-decoration:none\">"
-                        "&larr; Manager</a>"
-                        + carimbo
-                        + ("<a href=\"/history/%s\" title=\"Capturas anteriores "
-                           "deste agente e comparacao entre duas\" "
-                           "style=\"color:#4ec9b0; padding:4px 6px; "
-                           "margin-left:12px; opacity:0.75; "
-                           "text-decoration:none; font-size:17px\">&#128337;</a>"
-                           % agent_uuid)
-                        + _acao("collect", "&#128248;",
-                                "Solicitar captura agora: entra na fila, o agente "
-                                "executa no proximo check-in (ate ~1 ciclo)")
-                        + _acao("chaos", "&#9760;",
-                                "APENAS LAB: cenario de teste por 300s, depois captura")
-                        + _acao("restart", "&#128260;", "Restart the agent (queued)")
-                        + "</div>")
-                    # Ancora o link no primeiro elemento do corpo, e nao na
-                    # string "<body>": essa sequencia tambem aparece DENTRO do
-                    # JavaScript do relatorio (win.document.write('</head><body>')),
-                    # e injetar ali quebrava a sintaxe do script inteiro,
-                    # derrubando as abas e todos os controles da arvore.
-                    anchor = '<div class="sticky-wrapper">'
-                    html_content = html_content.replace(anchor, back + anchor, 1)
-
-                    self._set_headers()
-                    self.wfile.write(html_content.encode('utf-8'))
-
-                    try: os.remove(tmp_filename)
-                    except: pass
-                    return
+                self._set_headers()
+                self.wfile.write(html_content.encode('utf-8'))
+                return
 
             self._set_headers(status=404)
             self.wfile.write(b"Agent not found or no data received yet.")
@@ -1146,20 +1326,30 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             idade = ("<span style='color:#666;font-size:10px'>%s</span>"
                      % _human_age(time.time() - float(c["timestamp"] or 0)))
 
+            # [C-149] O laudo como arquivo, por captura. E aqui que se escolhe
+            # QUAL captura vira peca: a tela do laudo baixa a que esta aberta,
+            # e esta lista baixa qualquer uma sem precisar abrir antes.
+            baixar = ("<a class='btn' title='Baixar o laudo desta captura como "
+                      "arquivo, para anexar. Vem sempre completo.' "
+                      "href='/download/%s?capture=%s'>&#128190;</a>"
+                      % (agent_uuid, c["id"]))
+
             linhas += ("<tr class='item'><td style='color:#777;width:60px'>%s</td>"
                        "<td>%s<br>%s</td><td style='color:#888;width:70px'>%s%%</td>"
                        "<td style='width:170px'>%s</td>"
+                       "<td style='width:70px'>%s</td>"
                        "<td style='width:70px'>%s</td></tr>"
                        % (c["id"], _fmt_ts(c["timestamp"]), idade,
                           round(c.get("cpu_avg") or 0, 1),
-                          _selo_risco(c.get("alert_score")), botao))
+                          _selo_risco(c.get("alert_score")), botao, baixar))
 
         tabela = ("<p style='color:#777;font-size:12px'>%d capturas. "
                   "A comparacao roda no servidor: o laudo completo passa de "
                   "10MB e nao caberia no navegador.</p>"
                   "<table><thead><tr><th>Captura</th>"
                   "<th>Momento da coleta</th><th>CPU media</th>"
-                  "<th>Risco (pior processo)</th><th>Comparar</th></tr></thead>"
+                  "<th>Risco (pior processo)</th><th>Comparar</th>"
+                  "<th>Baixar</th></tr></thead>"
                   "<tbody>%s</tbody></table>" % (len(capturas), linhas))
 
         barra = ("<div class='controles'>"

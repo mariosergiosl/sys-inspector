@@ -1281,6 +1281,38 @@ def _evidence_key_html(key):
     return "<span class='fnd-ev-k'>%s</span>" % _esc(key)
 
 
+# [F-242] Alvo de achado que aponta um processo: "pid:1234". Espelha
+# _ALVO_PID de src/collectors/manager.py de proposito: la ele serve a
+# correlacao, aqui serve ao desenho do laudo, e o laudo precisa desenhar o
+# atalho mesmo quando a correlacao nao rodou.
+_ALVO_PID_LAUDO = re.compile(r'^pid:(\d+)$')
+
+
+def _pid_nomeado_pelo_achado(finding):
+    """
+    O PID que o proprio achado nomeia, quando ele nomeia algum.
+
+    Duas fontes, na mesma ordem usada pela correlacao: o campo `target` no
+    formato "pid:NNNN", que e como os coletores de runtime identificam o
+    objeto, e `evidence["pid"]`.
+
+    Devolve None quando o achado simplesmente nao e sobre um processo. Um
+    achado de kernel, de arquivo ou de frota nao tem PID, e isso nao e ausencia
+    de dado: e a resposta certa para aquele achado.
+
+    PARAMETER finding: dict de Finding.to_dict.
+    """
+    alvo = str(finding.get("target") or "")
+    encontrado = _ALVO_PID_LAUDO.match(alvo)
+    if encontrado:
+        return int(encontrado.group(1))
+    pid = (finding.get("evidence") or {}).get("pid")
+    try:
+        return int(pid) if pid is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def render_findings_panel(findings):
     """
     Monta a aba Findings: resumo por severidade e a lista ranqueada de achados.
@@ -1337,8 +1369,11 @@ def render_findings_panel(findings):
         "confirmacao antes de conclusao.<br><br>"
         "Os selos coloridos no topo sao <b>legenda E filtros</b>: clique para ver "
         "so aquela severidade; 'Ver todos os niveis' limpa o filtro.<br><br>"
-        "Quando o caminho denunciado esta sendo executado agora, aparece "
-        "'Ver processo', que leva ao processo na arvore.</div>", 420)
+        "Quando o achado diz respeito a um processo, aparece "
+        "'Ver processo', que leva a ele na arvore. Isso acontece em dois "
+        "casos: o achado nomeia o PID, ou o caminho que ele denuncia esta "
+        "sendo executado por alguem. Se o processo ja nao estiver nesta "
+        "captura, a tela diz isso: e resposta, nao falha.</div>", 420)
 
     # Legenda dos selos de prioridade, explicando que sao clicaveis (filtros).
     legenda = ("<div style='color:#777;font-size:11px;margin:0 0 8px'>"
@@ -1374,16 +1409,35 @@ def render_findings_panel(findings):
                          f"onclick=\"pivotToAttack('{_esc(technique)}'); event.stopPropagation();\">"
                          f"{_esc(technique)}</span>")
 
-        # Pivo para o runtime: so aparece quando o caminho denunciado pelo
-        # achado esta de fato sendo executado por algum processo capturado.
+        # Pivo para o runtime. DUAS origens, e a segunda foi o F-242.
+        #
+        # 1. related_pids, preenchido pela correlacao quando o CAMINHO
+        #    denunciado pelo achado esta sendo executado por algum processo
+        #    capturado. Responde "a persistencia plantada esta rodando?".
+        #
+        # 2. O PID que o proprio achado NOMEIA. Medido em 2026-08-20: o laudo
+        #    servido tinha 5 pivos em 33 cards, e a maioria dos que faltavam
+        #    era justamente a dos achados mais precisos (memoria gravavel-e-
+        #    executavel, processo oculto, divergencia de threads), que dizem o
+        #    PID no proprio alvo. Eles ficavam sem atalho quando a correlacao
+        #    nao rodava ou quando o processo ja nao estava na arvore, que sao
+        #    exatamente os casos em que o perito mais precisa do atalho.
+        #
+        # O pivo nunca mente: quando o PID nao esta na captura, o JS avisa em
+        # tela que o processo nao esta ali e manda procurar no historico. Isso
+        # e resposta, e nao falha, e e a mesma D-020 aplicada ao atalho.
         pivot_html = ""
-        related = f.get("related_pids") or []
+        related = list(f.get("related_pids") or [])
+        if not related:
+            nomeado = _pid_nomeado_pelo_achado(f)
+            if nomeado is not None:
+                related = [nomeado]
         if related:
             pid_list = ",".join(str(p) for p in related)
             label = ("Ver processo" if len(related) == 1
                      else f"Ver {len(related)} processos")
             pivot_html = (f"<span class='fnd-pivot' onclick=\"pivotToProcess('{_esc(pid_list)}'); event.stopPropagation();\" "
-                          f"title='Este caminho esta sendo executado agora (PID {_esc(pid_list)}). Pula para ele na arvore de processos.'>"
+                          f"title='Leva ao processo na arvore (PID {_esc(pid_list)}). Se ele nao estiver nesta captura, a tela diz isso em vez de falhar em silencio.'>"
                           f"&#9654; {label}</span>")
 
         # Evidencia bruta, exibida sob demanda (chave: valor).

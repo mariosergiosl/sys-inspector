@@ -20,8 +20,10 @@
 
 Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks directly into the Linux Kernel to capture events (process execution, file I/O, network connections) in real-time.
 
-## Features (v1.1.0)
+## Features (v1.2.0)
 
+* **New in v1.2.0 - The report as an exhibit:** It downloads as a file named after the host and the moment of COLLECTION, always complete, built by the same code path that draws the screen, and without the navigation bar, because a dead button in a forensic document is worse than no button. The bar itself now moves between captures (previous, next, latest, "capture N of M"), and an arrow with nowhere to go stays visible and dimmed rather than vanishing: the edge of the collection is information.
+* **New in v1.2.0 - Absence answers, on screen:** A filter matching nothing says how many processes it examined instead of just emptying the tree, and the jump to the process now appears on every finding that concerns one, not only on those whose reported path happens to be running. When the process is gone from the capture, the screen says so.
 * **New in v1.1.0 - Directed acquisition and referral:** A suspect file or memory region is hashed, excerpted and, when it fits the declared byte budget, copied - always recording the hash SCOPE, so a partial hash is never read as identifying the whole object. Every finding can also state which bench analysis concludes what it cannot, why, and on which object: the tool collects enough to identify and direct, never the mass that proves, and that is only honest when it says who finishes the job.
 * **New in v1.1.0 - Rootkit hunting and container escape:** Crosses the three kernel module lists with the taint flags, judges every library in `/etc/ld.so.preload` by package provenance, and follows `mount` and `pivot_root` - the step that turns a broken namespace into host access. TLS SNI completes "who with" where DNS does not reach (cache, fixed IP, DoH).
 * **New in v1.1.0 - A single execution path:** Agent and server, nothing else. For one machine, install both on the same host. HTTPS is the only transport; the plaintext path was removed from the code rather than switched off.

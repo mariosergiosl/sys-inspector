@@ -691,6 +691,22 @@ tr.det-row { display:none; } tr.det-row.show { display:table-row; }
     max-width: 70%; box-shadow: 0 8px 24px rgba(0,0,0,0.6);
 }
 
+/* [F-244] Filtro que nao casa com nada.
+   A arvore ficava simplesmente VAZIA, e da tela "nenhum resultado" e
+   "quebrado" sao indistinguiveis. Foi essa ambiguidade que fez um filtro
+   correto (KEXEC_LOAD) ser reportado como defeito. Mesma familia da D-020:
+   ausencia e resposta, e resposta se escreve.
+   Fica no FLUXO do documento, e nao flutuando: nao e aviso passageiro, e o
+   estado atual da tela, e some so quando o filtro muda. */
+.filtro-vazio {
+    display: none; margin: 10px 0; padding: 12px 16px; border-radius: 4px;
+    background: #2a2a1a; border: 1px solid var(--yel); border-left-width: 4px;
+    color: var(--yel); font-size: 13px; line-height: 1.6;
+}
+.filtro-vazio .fv-titulo { font-weight: bold; display: block; margin-bottom: 4px; }
+.filtro-vazio .fv-termo { font-family: monospace; color: #fff; }
+.filtro-vazio .fv-dica { color: #bbb; font-size: 12px; }
+
 /* --- ATT&CK REFERENCE --- */
 .atk-intro { color: #bbb; font-size: 13px; margin-bottom: 14px; max-width: 1000px; line-height: 1.6; }
 .atk-tac-badge { display:inline-block; background:#2a2a1a; border:1px solid var(--yel); color:var(--yel); font-size:10px; padding:1px 7px; border-radius:10px; margin-right:5px; }
@@ -803,6 +819,8 @@ function alternarInventario(){
         state.currentFilter = v;
 
         var isFiltering = v !== "";
+        // [F-244] Conta o que casou, para a tela poder DIZER que nao casou nada.
+        var casaram = 0;
         document.querySelectorAll(".proc-row").forEach(r => {
             // Include hidden text (badge names) in search
             var txt = r.innerText.toUpperCase();
@@ -817,7 +835,7 @@ function alternarInventario(){
 
             if(isFiltering) {
                 if(btn) btn.classList.add('disabled');
-                if(match) { r.style.display=""; r.classList.remove('hidden'); }
+                if(match) { r.style.display=""; r.classList.remove('hidden'); casaram++; }
                 else r.style.display="none";
             } else {
                 if(btn) btn.classList.remove('disabled');
@@ -830,6 +848,40 @@ function alternarInventario(){
 
         if(isFiltering) document.querySelectorAll('.det-row').forEach(d => d.classList.remove('show'));
         else restoreTreeState();
+
+        avisaFiltroVazio(v, casaram, isFiltering);
+    }
+
+    // [F-244] Filtro sem resultado precisa DIZER que nao ha resultado.
+    //
+    // Sem isto, a arvore apenas esvazia, e da tela e impossivel distinguir
+    // "nenhum processo tem este sinal nesta captura" de "o filtro quebrou".
+    // Foi exatamente essa ambiguidade que levou o filtro KEXEC_LOAD a ser
+    // reportado como defeito quando ele estava correto: nao havia processo
+    // com o sinal, e a tela nao disse.
+    //
+    // O aviso NAO e passageiro. Ele descreve o estado atual da tela, entao
+    // fica ate o filtro mudar.
+    function avisaFiltroVazio(termo, casaram, filtrando) {
+        var caixa = document.getElementById('filtro-vazio');
+        if (!caixa) { return; }
+        if (!filtrando || casaram > 0) {
+            caixa.style.display = 'none';
+            caixa.innerHTML = '';
+            return;
+        }
+        var total = document.querySelectorAll('.proc-row').length;
+        caixa.innerHTML =
+            '<span class="fv-titulo">Nenhum processo desta captura casa com o filtro.</span>' +
+            'Filtro aplicado: <span class="fv-termo"></span>. ' +
+            'Foram examinados ' + total + ' processos.<br>' +
+            '<span class="fv-dica">Isto e uma resposta, e nao uma falha: o sinal ' +
+            'procurado nao esta presente nesta captura. Use CLEAR para voltar a ' +
+            'arvore inteira.</span>';
+        // O termo vem da caixa de busca, ou seja, de quem opera. Entra como
+        // TEXTO, nunca concatenado em HTML.
+        caixa.querySelector('.fv-termo').textContent = termo;
+        caixa.style.display = 'block';
     }
 
     function setFilter(val, el) {
@@ -1274,6 +1326,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
 
     <div class="table-container panel-hidden" data-panel="processes">
+        <div id="filtro-vazio" class="filtro-vazio"></div>
         <div class="tabela-rolagem">
         <table>
             <colgroup>

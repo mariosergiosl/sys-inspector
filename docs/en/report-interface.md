@@ -65,7 +65,43 @@ highlights on hover and the cursor changes to the resize cursor.
 ### 2.1 Top bar
 
 **Manager** button (back to the fleet), the stamp of when the capture was taken
-and how old it is, and the same commands as the previous screen for that agent.
+and how old it is, navigation between captures, the download button, and the
+same commands as the previous screen for that agent.
+
+**Navigation between captures.** Four controls: previous capture (older), next
+(more recent), jump to the latest, and the current position as "capture N of M".
+The count is chronological, oldest to newest, which is how a timeline reads; the
+database returns them the other way round.
+
+An arrow with nowhere to go stays **visible and dimmed** rather than
+disappearing. The edge of the collection is information: an arrow that vanishes
+changes the width of the bar and leaves the reader unsure whether they reached
+the end or the screen broke. With a single capture there are no arrows, but the
+count is still stated, because "capture 1 of 1" is also an answer.
+
+**Downloading the report.** The floppy icon delivers the report as a **file**,
+named `sys-inspector_<host>_<YYYYMMDD-HHMMSS>.html`. The timestamp in the name is
+the **collection** time, not the download time: whoever receives the exhibit
+needs to know which moment it describes without opening it.
+
+Three properties matter:
+
+- **It is always the complete version.** An exhibit whose content changed
+  depending on who clicked could not be attached to any case.
+- **It is the same build as the screen.** File and page come from one code path,
+  so the attached exhibit is the exhibit that was read.
+- **It carries no navigation bar.** That bar points at a server the reader of the
+  case file cannot reach, and a dead button in a forensic document is worse than
+  no button.
+
+The download is also on the **History** screen, in its own column, so any
+capture can be downloaded without opening it first.
+
+The report lives on the **server**, not on the agent. This is not convenience:
+an agent writing to the inspected host would contaminate the target, the agent
+encrypts with the public key and **cannot read** what it collected, and the agent
+has no web server, only outbound calls, so a download would mean opening a port
+on the most privileged process in the fleet.
 
 ### 2.2 Show / hide inventory
 
@@ -82,8 +118,19 @@ does not have to collapse it on every report they open.
 **Findings** (what is wrong), **Processes** (who executes) and **ATT&CK** (which
 technique). The "HOW TO READ" strip suggests that order.
 
-A finding whose path is currently executing carries a **View process** button,
-which jumps to it in the tree and highlights it.
+A finding that concerns a process carries a **View process** button, which jumps
+to it in the tree and highlights it. This happens in two cases: when the finding
+**names the PID** (writable-and-executable memory, hidden process, thread count
+divergence) and when the **reported path** is being executed by some captured
+process.
+
+If the process is no longer in the capture, the screen **says so** and suggests
+looking in the agent's history, instead of simply not reacting. Absence is an
+answer.
+
+A finding that is not about a process (a kernel module, a file, a fleet-wide
+pattern) still carries **no** button, and that absence informs as well: there is
+no process to go to.
 
 ### 2.4 Process tree
 
@@ -128,17 +175,30 @@ test enforces it: two signals drawn the same way are one signal to whoever reads
 the screen, and a forensic report cannot have two different facts looking
 identical.
 
-**Known limitation:** a filter that matches no process simply empties the tree
-without saying there were no results. From the screen, "no results" and "broken"
-are indistinguishable. It is recorded as a pending item.
+**A filter with no results answers.** A filter matching no process writes on
+screen how many processes were examined and that the absence is the answer,
+instead of just emptying the tree. From the screen, "no results" and "broken"
+used to be indistinguishable, and it was that ambiguity that got a correct
+filter reported as a defect.
+
+The notice sits in the document flow and stays until the filter changes, because
+it describes the **current state** of the screen and not a passing event.
 
 ## 3. Known interface limitations
 
-Recorded so their absence is not read as oversight:
+Recorded so their absence is not read as oversight.
 
-- the report exists as a served page, **not as a downloadable file**;
-- the **View process** button appears only on findings whose path is executing at
-  capture time, not on every finding that names a process;
-- there is no navigation between captures inside the report (previous, next,
-  latest): that is done from the History screen today;
-- a filter with no results gives no feedback.
+**Resolved in 1.2.0.** The four limitations listed here up to 1.1.0 are gone: the
+report has a download again, the **View process** button now appears on every
+finding that concerns a process, navigation between captures moved into the
+report bar, and a filter with no results now gives feedback. The record stays
+here because it told the truth about the previous version, and an erased history
+of limitations is no use to anyone reading an older report.
+
+**Still open:**
+
+- the packet DROP badge count does not add up between parent and child process:
+  the parent's number is not explained by the sum of its children plus its own
+  visible drops. Under investigation;
+- the comparison between two captures shows processes that **appeared** and not
+  those that **disappeared**, which are often the more interesting ones.

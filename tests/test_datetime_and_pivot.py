@@ -126,10 +126,24 @@ def test_o_pivo_leva_a_captura_de_origem(codigo):
 
 
 def test_o_laudo_aceita_captura_especifica(codigo):
-    """O /agent tem de saber renderizar a captura pedida, nao so a ultima."""
+    """
+    O /agent tem de saber renderizar a captura pedida, nao so a ultima.
+
+    ATUALIZADO em 2026-09-18 (C-149): a leitura do banco saiu da rota e foi para
+    `_laudo_de()`, fonte unica compartilhada com a rota de download, para que a
+    peca anexada ao processo seja a mesma peca lida na tela. O comportamento sob
+    teste nao mudou; o que mudou foi ONDE ele mora, entao o teste passou a
+    afirmar as duas metades: a rota LE o parametro e ENTREGA para quem busca, e
+    quem busca usa o parametro para escolher a captura.
+    """
     bloco = codigo.split("elif self.path.startswith('/agent/')")[1][:2500]
-    assert "capture" in bloco
-    assert "get_snapshot_details" in bloco
+    assert "captura_pedida" in bloco, "a rota parou de ler o parametro ?capture="
+    assert "self._laudo_de(" in bloco, "a rota nao monta mais o laudo"
+
+    montagem = codigo.split("def _laudo_de(")[1].split("def _navegacao_de_capturas(")[0]
+    assert "get_snapshot_details" in montagem
+    assert "captura_pedida" in montagem, (
+        "a montagem ignora a captura pedida e sempre abriria a mais recente")
 
 
 # ------------------------------------------------------------------------------
