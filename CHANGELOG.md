@@ -5,7 +5,10 @@ All notable changes to the **Sys-Inspector** project will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] - 2026-09-18
+
+Chain of custody that survives a redeploy, an agent that can be idle, and
+two screen numbers that finally explain themselves.
 
 ### Fixed
 

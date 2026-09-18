@@ -35,7 +35,7 @@
 # BUGS: ---
 # NOTES: US-ASCII only. Compatible with the lab SLES/Leap hosts.
 # AUTHOR: Mario Luz (Sys-Inspector Project)
-# VERSION: 1.2.0
+# VERSION: 1.3.0
 # CREATED: 2026-08-07
 # REVISION: 2026-08-07 isolate the unsafe-library signal to a single process
 # ======================================================================================
