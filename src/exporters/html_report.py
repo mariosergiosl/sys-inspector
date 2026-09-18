@@ -1369,8 +1369,11 @@ def render_findings_panel(findings):
         "confirmacao antes de conclusao.<br><br>"
         "Os selos coloridos no topo sao <b>legenda E filtros</b>: clique para ver "
         "so aquela severidade; 'Ver todos os niveis' limpa o filtro.<br><br>"
-        "Quando o caminho denunciado esta sendo executado agora, aparece "
-        "'Ver processo', que leva ao processo na arvore.</div>", 420)
+        "Quando o achado diz respeito a um processo, aparece "
+        "'Ver processo', que leva a ele na arvore. Isso acontece em dois "
+        "casos: o achado nomeia o PID, ou o caminho que ele denuncia esta "
+        "sendo executado por alguem. Se o processo ja nao estiver nesta "
+        "captura, a tela diz isso: e resposta, nao falha.</div>", 420)
 
     # Legenda dos selos de prioridade, explicando que sao clicaveis (filtros).
     legenda = ("<div style='color:#777;font-size:11px;margin:0 0 8px'>"
