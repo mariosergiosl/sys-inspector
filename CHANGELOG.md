@@ -5,6 +5,45 @@ All notable changes to the **Sys-Inspector** project will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The signing identity now survives a redeploy, and a change is declared**
+  (`C-158`). The key that signs captures was resolved from the analyst key's
+  directory, that is, from **configuration**, and configuration gets recreated.
+  Observed during the lab cleanup on 2026-08-20: a plain change of deployment
+  directory silently moved one agent's public key from `13e2eb55...` to
+  `dcab6e89...`.
+
+  The asymmetry was the defect. The UUID lives next to the database and
+  survived; the key did not. Anyone verifying the chain would see the **same
+  agent signing with two different keys**, with nothing explaining the change,
+  which in a forensic exhibit is exactly the signal the opposing side looks for,
+  and we were producing it ourselves.
+
+  - The identity is **state**, and now lives where state lives: next to the
+    database, alongside `.agent_id`. An explicitly configured path still wins.
+  - The key is **inherited** from the previous location when the new one is
+    empty. Without this, the fix itself would have changed the key across the
+    whole fleet at once. It is a copy, not a move, so an older process still
+    pointing at the old path keeps signing with the same key.
+  - Every custody record now carries `agent_key_fingerprint` (SHA-256 of the
+    SubjectPublicKeyInfo) and `agent_key_event` (`existing`, `migrated` or
+    `created`). The fingerprint is present on **every** capture, not only when
+    it changes: a field that shows up only on the bad day is a field nobody
+    knows how to read. A new key is legitimate; being born silently is not.
+
+  The new fields are inside the signed area: a tamperable custody field would be
+  worse than no field.
+
+### Known gap opened by this change
+
+- The **capture-level** custody record is still not shown in the report
+  (`C-160`). The report shows custody per finding. The fields above are
+  therefore visible to whoever queries the database, and not to whoever reads
+  the exhibit, which is precisely who needs them.
+
 ## [1.2.0] - 2026-09-18
 
 The report stops being only a screen and becomes an **exhibit**: it can be

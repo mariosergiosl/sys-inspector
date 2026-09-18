@@ -87,6 +87,7 @@ mais do que já existe sem aumentar o que se guarda.
 | Identificação do dispositivo | **Coberto** | UUID do agente, hostname, todos os FQDNs e endereços (`collect_host_names`) |
 | Aquisição com integridade verificável | **Coberto** | SHA-256 do objeto, com **escopo do hash declarado** (`full` ou `excerpt`), para que hash parcial nunca seja lido como identificação do objeto inteiro |
 | Preservação e cadeia de custódia | **Coberto** | `src/core/custody.py`: digest do conteúdo em claro, assinatura do agente e elo com a captura anterior |
+| Continuidade da identidade que assina | **Coberto** | A chave do agente mora onde mora o estado, ao lado do banco, e não no diretório de configuração, que se recria num redeploy. Toda captura carrega a impressão digital da chave que a assinou, e uma chave nova nunca nasce em silêncio: o registro declara se ela já existia, foi herdada de um caminho anterior ou foi criada (`C-158`) |
 | Registro de quem, quando e como | **Parcial** | A captura registra o agente, o instante e a versão do coletor. Falta o **duplo tempo** (quando ocorreu × quando foi observado), item `C-157` |
 | Documentar limitações da aquisição | **Coberto** | Quando o orçamento de bytes se esgota, ou o objeto não é arquivo comum, a custódia registra o motivo em vez de omitir |
 | Minimizar alteração do alvo | **Coberto** | O agente não escreve laudo no host inspecionado, e o gerador de cenário planta artefatos discretos sem alterar o comportamento do resto do host (decisão D-025) |

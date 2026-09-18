@@ -89,6 +89,7 @@ extracting more from what already exists without storing more.
 | Device identification | **Covered** | Agent UUID, hostname, every FQDN and address (`collect_host_names`) |
 | Acquisition with verifiable integrity | **Covered** | SHA-256 of the object with the **hash scope declared** (`full` or `excerpt`), so a partial hash is never read as identifying the whole object |
 | Preservation and chain of custody | **Covered** | `src/core/custody.py`: digest of the cleartext content, agent signature, and a link to the previous capture |
+| Continuity of the signing identity | **Covered** | The agent key lives where state lives, next to the database, not in the configuration directory, which is recreated on redeploy. Every capture carries the fingerprint of the key that signed it, and a new key is never born in silence: the record states whether it already existed, was inherited from an earlier path, or was created (`C-158`) |
 | Record of who, when and how | **Partial** | The capture records the agent, the instant and the collector version. Missing the **dual time** (when it happened vs when it was observed), item `C-157` |
 | Document acquisition limitations | **Covered** | When the byte budget runs out, or the object is not a regular file, the custody record states the reason instead of omitting it |
 | Minimise alteration of the target | **Covered** | The agent writes no report on the inspected host, and the scenario generator plants discrete artefacts without altering the behaviour of the rest of the host (decision D-025) |
