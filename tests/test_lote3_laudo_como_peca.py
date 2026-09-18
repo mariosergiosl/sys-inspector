@@ -21,6 +21,8 @@
 import io
 import os
 
+import pytest
+
 from src.exporters.html_report import render_findings_panel
 
 
@@ -239,3 +241,208 @@ def test_f242_pivo_para_pid_ausente_avisa_em_vez_de_falhar_calado():
     assert "avisaPivo(" in corpo, (
         "pivotToProcess voltou a sair em silencio quando o PID nao existe")
     assert "nao esta nesta captura" in corpo
+
+
+# ==============================================================================
+# F-234: navegacao entre capturas na barra do laudo
+# ==============================================================================
+# Decidido em 2026-08-14 e nunca implementado. Sem isso, ler a captura de ontem
+# exigia sair do laudo, entrar no historico, escolher na lista, e comparar duas
+# exigia refazer o caminho inteiro a cada troca.
+# ==============================================================================
+
+def _nav(escolhido_id, ids):
+    """
+    Chama _navegacao_de_capturas sem subir a pilha HTTP.
+
+    O metodo so usa `self` para alcancar a si mesmo, entao um objeto qualquer
+    serve de portador. Subir um BaseHTTPRequestHandler de verdade exigiria
+    socket, e o que esta sob teste e a aritmetica da posicao, nao o transporte.
+    """
+    mod = pytest.importorskip(
+        "src.controllers.server_controller",
+        reason="o controlador importa process_tree, que exige pwd (Linux)")
+
+    class _Portador(object):
+        _navegacao_de_capturas = mod.ServerHTTPHandler._navegacao_de_capturas
+
+    historico = [{"id": i} for i in ids]
+    escolhido = {"id": escolhido_id}
+    return _Portador()._navegacao_de_capturas("uuid-x", escolhido, historico)
+
+
+def test_f234_a_rota_de_navegacao_existe():
+    """
+    REPROVA A VERSAO COM DEFEITO: antes do F-234 nao havia funcao nenhuma de
+    navegacao, e a barra do laudo so oferecia voltar para a Manager.
+    """
+    src = _fonte("src/controllers/server_controller.py")
+    assert "_navegacao_de_capturas" in src, (
+        "a navegacao entre capturas sumiu da barra do laudo (F-234)")
+
+
+def test_f234_a_barra_do_laudo_chama_a_navegacao():
+    """Existir a funcao nao basta: a barra tem que usa-la."""
+    src = _fonte("src/controllers/server_controller.py")
+    inicio = src.index("back = (")
+    bloco = src[inicio:inicio + 2500]
+    assert "self._navegacao_de_capturas(" in bloco, (
+        "a barra do laudo parou de montar a navegacao entre capturas (F-234)")
+
+
+def test_f234_conta_capturas_do_mais_antigo_para_o_mais_recente():
+    """
+    O banco devolve a mais recente primeiro; a linha do tempo se le ao
+    contrario. A captura mais nova de cinco e a 5 de 5, nao a 1 de 5.
+    """
+    html = _nav(10, [10, 9, 8, 7, 6])
+    assert "captura 5 de 5" in html
+    html = _nav(6, [10, 9, 8, 7, 6])
+    assert "captura 1 de 5" in html
+
+
+def test_f234_anterior_aponta_para_a_mais_antiga():
+    """A seta para tras e cronologica, nao posicional na lista."""
+    html = _nav(9, [10, 9, 8])
+    assert "capture=8" in html
+
+
+def test_f234_proxima_aponta_para_a_mais_nova():
+    """A seta para frente leva a captura mais recente que a atual."""
+    html = _nav(9, [10, 9, 8])
+    assert "capture=10" in html
+
+
+def test_f234_seta_sem_destino_fica_visivel_e_apagada():
+    """
+    Uma seta que SOME muda a largura da barra e deixa o leitor sem saber se
+    chegou ao fim da colecao ou se a tela quebrou. O limite da colecao e
+    informacao, e informacao se mostra.
+    """
+    html = _nav(10, [10, 9, 8])  # ja e a mais recente: nao ha proxima
+    assert "#9654;" in html, "a seta de proxima sumiu em vez de ficar apagada"
+    assert "color:#444" in html, (
+        "a seta sem destino nao esta marcada como inativa")
+
+
+def test_f234_captura_unica_ainda_declara_a_contagem():
+    """
+    D-020 aplicada a navegacao: sem setas, mas com resposta. "1 de 1" explica
+    por que nao ha para onde ir.
+    """
+    html = _nav(1, [1])
+    assert "captura 1 de 1" in html
+    assert "capture=" not in html, (
+        "um agente com uma captura nao tem para onde navegar")
+
+
+def test_f234_captura_fora_do_historico_nao_quebra_o_laudo():
+    """
+    CENARIO ADVERSO: a captura pedida pode ter sido apagada pela retencao entre
+    a montagem do link e o clique. O laudo abre a mais recente, e a barra nao
+    pode estourar por causa disso.
+    """
+    html = _nav(999, [10, 9, 8])
+    assert "captura 3 de 3" in html
+
+
+# ==============================================================================
+# C-149: o laudo como ARQUIVO
+# ==============================================================================
+# Antes da remocao dos modos, a captura gravava
+# report/sys-inspector_<host>_<ts>.html. Depois dela nao havia rota de download
+# nem Content-Disposition, e obter a peca dependia do salvar-como do navegador,
+# que produz artefato sem carimbo de origem.
+# ==============================================================================
+
+def test_c149_existe_a_rota_de_download():
+    """
+    REPROVA A VERSAO COM DEFEITO: a string /download/ nao existia em ponto
+    nenhum do codigo.
+    """
+    src = _fonte("src/controllers/server_controller.py")
+    assert "elif self.path.startswith('/download/'):" in src, (
+        "a rota de download do laudo sumiu (C-149)")
+
+
+def test_c149_o_download_declara_anexo_e_nome_de_arquivo():
+    """
+    Sem Content-Disposition o navegador ABRE o laudo em vez de salvar, e a peca
+    continua dependendo do salvar-como.
+    """
+    src = _fonte("src/controllers/server_controller.py")
+    inicio = src.index("elif self.path.startswith('/download/'):")
+    bloco = src[inicio:inicio + 3200]
+    assert "Content-Disposition" in bloco
+    assert "attachment; filename=" in bloco
+    assert "sys-inspector_%s_%s.html" in bloco, (
+        "o nome do arquivo deixou de carregar host e instante da coleta (C-149)")
+
+
+def test_c149_o_nome_do_arquivo_filtra_o_que_vem_do_host():
+    """
+    O hostname vem do host analisado. Sem filtro ele injeta travessia de
+    caminho e quebra o cabecalho Content-Disposition com aspas.
+    """
+    src = _fonte("src/controllers/server_controller.py")
+    inicio = src.index("elif self.path.startswith('/download/'):")
+    bloco = src[inicio:inicio + 3200]
+    assert '[^A-Za-z0-9._-]' in bloco, (
+        "o hostname voltou a entrar cru no nome do arquivo (C-149)")
+
+
+def test_c149_o_download_valida_o_identificador_como_as_demais_rotas():
+    """
+    COLISAO com a allowlist do painel: uma rota nova nao pode nascer sem a
+    guarda que todas as outras tem.
+    """
+    src = _fonte("src/controllers/server_controller.py")
+    inicio = src.index("elif self.path.startswith('/download/'):")
+    bloco = src[inicio:inicio + 3200]
+    assert "id_valido(agent_uuid)" in bloco
+    assert "self._recusa_id(agent_uuid)" in bloco
+
+
+def test_c149_tela_e_arquivo_saem_da_mesma_montagem():
+    """
+    A peca que se anexa ao processo tem que ser a peca que o perito leu na
+    tela. Duas montagens seriam a classe de defeito da copia silenciosa: duas
+    representacoes do mesmo fato que se afastam sem nada denunciar.
+    """
+    src = _fonte("src/controllers/server_controller.py")
+    assert src.count("self._laudo_de(") == 2, (
+        "a tela e o download deixaram de compartilhar a montagem do laudo "
+        "(C-149)")
+    assert src.count("generate_report(") == 1, (
+        "voltou a existir mais de um ponto que monta o laudo (C-149)")
+
+
+def test_c149_o_historico_oferece_download_por_captura():
+    """
+    A tela do laudo baixa a captura aberta; a lista do historico precisa baixar
+    QUALQUER uma sem obrigar a abrir antes.
+    """
+    src = _fonte("src/controllers/server_controller.py")
+    inicio = src.index("def _serve_history(")
+    bloco = src[inicio:src.index("def _serve_diff(")]
+    assert "/download/%s?capture=%s" in bloco, (
+        "a coluna de download por captura sumiu do historico (C-149)")
+    assert "<th>Baixar</th>" in bloco, (
+        "a coluna de download perdeu o cabecalho (C-149)")
+
+
+def test_c149_o_arquivo_nao_leva_a_barra_de_navegacao():
+    """
+    PERDA DE FUNCIONALIDADE ao contrario: o arquivo NAO pode herdar a barra.
+    Ela aponta para um servidor que quem le o processo nao alcanca, e uma peca
+    pericial com botoes mortos e pior que uma sem botao nenhum.
+
+    A barra e injetada depois de _laudo_de, e so na rota da tela: o download
+    escreve o corpo sem passar pela ancora.
+    """
+    src = _fonte("src/controllers/server_controller.py")
+    inicio = src.index("elif self.path.startswith('/download/'):")
+    bloco = src[inicio:src.index("elif self.path.startswith('/agent/'):")]
+    assert "sticky-wrapper" not in bloco, (
+        "o download voltou a injetar a barra de navegacao no arquivo (C-149)")
+    assert "back = (" not in bloco
