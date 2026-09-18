@@ -18,6 +18,7 @@ import os
 import json
 import zlib
 import base64
+import hashlib
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives import serialization
@@ -32,21 +33,105 @@ from cryptography.hazmat.backends import default_backend
 # mas nao consegue assinar com uma chave que nao possui. Para atestar a origem
 # da captura o agente precisa de identidade propria, que e este par de chaves,
 # separado do par usado para confidencialidade.
-def ensure_agent_identity(private_path, public_path):
+
+# Resultados possiveis de ensure_agent_identity. Sao dados de custodia, nao
+# mensagens de log: cada um responde POR QUE a chave que assinou esta captura e
+# a que esta.
+IDENTITY_EXISTING = "existing"    # o par ja estava no lugar
+IDENTITY_MIGRATED = "migrated"    # veio de um caminho antigo, mesma chave
+IDENTITY_CREATED = "created"      # par NOVO, e a cadeia muda de chave aqui
+
+
+def agent_key_fingerprint(public_path):
+    """
+    Impressao digital da chave publica do agente: sha256 do SubjectPublicKeyInfo.
+
+    Vai no registro de custodia de TODA captura. Sem ela, uma troca de chave so
+    aparece para quem comparar assinaturas de capturas distintas, que e
+    exatamente o trabalho que a parte contraria faz e nos nao. Com ela, a troca
+    fica visivel na propria peca.
+
+    PARAMETER public_path: caminho do PEM da chave publica do agente.
+    Devolve None quando a chave nao pode ser lida: e campo ausente, nao erro.
+    """
+    try:
+        with open(public_path, "rb") as handle:
+            pub = serialization.load_pem_public_key(handle.read(),
+                                                    backend=default_backend())
+        der = pub.public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo)
+        return "sha256:" + hashlib.sha256(der).hexdigest()
+    except Exception:
+        return None
+
+
+def ensure_agent_identity(private_path, public_path, legacy_paths=None):
     """
     Garante o par de chaves de identidade do agente, criando na primeira
     execucao. A chave privada fica legivel apenas pelo dono (0600).
+
+    [C-158] Devolve QUAL dos tres casos ocorreu, e aceita um caminho antigo de
+    onde herdar o par. As duas coisas existem pelo mesmo motivo.
+
+    O defeito observado em 2026-08-20: a chave morava dentro do diretorio de
+    implantacao e sumia com ele. Numa simples troca de diretorio o agente da
+    161 passou a assinar com outra chave, de `13e2eb55...` para `dcab6e89...`,
+    em silencio. O UUID sobrevive, porque fica ao lado do banco; a chave nao
+    sobrevivia. Quem fosse verificar a cadeia veria o MESMO agente assinando com
+    DUAS chaves diferentes, sem nada explicando, que e precisamente o sinal que
+    a parte contraria procura, e produzido por nos.
+
+    A assimetria era o defeito: o numero da identidade durava mais que a
+    identidade. Herdar do caminho antigo corrige isso sem exigir nada de quem
+    opera, e quando ainda assim nascer chave nova, o chamador REGISTRA o evento
+    na cadeia em vez de trocar calado.
+
+    PARAMETER private_path: destino da chave privada.
+    PARAMETER public_path: destino da chave publica.
+    PARAMETER legacy_paths: par (privada, publica) de um local anterior, de onde
+              herdar o par quando o destino ainda nao existe.
     """
     if os.path.exists(private_path) and os.path.exists(public_path):
-        return
-
-    key = rsa.generate_private_key(public_exponent=65537, key_size=3072,
-                                   backend=default_backend())
+        return IDENTITY_EXISTING
 
     for path in (private_path, public_path):
         directory = os.path.dirname(path)
         if directory and not os.path.exists(directory):
             os.makedirs(directory, exist_ok=True)
+
+    # Heranca antes de geracao: gerar quando havia o que herdar seria criar a
+    # descontinuidade que este item existe para evitar.
+    if legacy_paths:
+        velha_priv, velha_pub = legacy_paths
+        if (velha_priv and velha_pub
+                and os.path.abspath(velha_priv) != os.path.abspath(private_path)
+                and os.path.exists(velha_priv) and os.path.exists(velha_pub)):
+            try:
+                with open(velha_priv, "rb") as origem:
+                    conteudo = origem.read()
+                with open(private_path, "wb") as destino:
+                    destino.write(conteudo)
+                try:
+                    os.chmod(private_path, 0o600)
+                except Exception:
+                    pass
+                with open(velha_pub, "rb") as origem:
+                    conteudo = origem.read()
+                with open(public_path, "wb") as destino:
+                    destino.write(conteudo)
+                # COPIA, e nao mudanca de lugar: um processo antigo ainda
+                # apontado para o caminho velho continua assinando com a MESMA
+                # chave, em vez de gerar outra por nao encontrar nada.
+                return IDENTITY_MIGRATED
+            except Exception:
+                # Heranca falhou: segue para a geracao, e o chamador registra
+                # que nasceu chave nova. Falhar calado aqui seria repetir o
+                # defeito.
+                pass
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=3072,
+                                   backend=default_backend())
 
     with open(private_path, "wb") as handle:
         handle.write(key.private_bytes(
@@ -62,6 +147,8 @@ def ensure_agent_identity(private_path, public_path):
         handle.write(key.public_key().public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo))
+
+    return IDENTITY_CREATED
 
 
 def sign_bytes(data, private_key):
