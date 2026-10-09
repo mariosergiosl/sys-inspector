@@ -270,7 +270,7 @@ def rule_fleet_campaign(eventos):
             recommendation=(
                 "Procurar o que os hosts afetados tem em comum: imagem de "
                 "origem, credencial compartilhada, rede, janela de manutencao. "
-                "Verificar a frota inteira antes de limpar qualquer um.")))
+                "Verificar todos os hosts antes de limpar qualquer um.")))
     return achados
 
 

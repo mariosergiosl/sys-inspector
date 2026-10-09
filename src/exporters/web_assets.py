@@ -1269,7 +1269,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             </div>
         </div>
 
-        <div class="read-guide" title="Ordem sugerida para ler este laudo">
+        <div class="read-guide" title="Ordem sugerida para ler este relatorio">
             <span class="rg-lbl">Como ler:</span>
             <span class="rg-step" onclick="showTab('findings', document.querySelector('.tab[data-tab=findings]'))"><b>1</b> Achados <em>o que esta errado</em></span>
             <span class="rg-arrow">&rarr;</span>
