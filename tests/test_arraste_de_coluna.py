@@ -94,15 +94,29 @@ def test_ultima_coluna_absorve_o_encolhimento():
     corpo = _corpo_do_mousemove()
     assert "gravar(ultima" in corpo, (
         "a ultima coluna deixou de absorver a diferenca ao encolher")
-    assert "Math.max(0, iniW - largura)" in corpo, (
+    assert "Math.max(0, iniW - largura - folga)" in corpo, (
         "a compensacao da ultima coluna mudou de regra")
+
+
+def test_compensacao_desconta_a_folga_da_tabela():
+    """Quando a tabela ja passa da caixa, encolher uma coluna nao abre vao.
+
+    Medido no Chrome em 2026-10-09: tabela com 2939px numa caixa de 2839px;
+    encolher "Command Tree" 150px fazia Alerts crescer 150px sem necessidade,
+    e Alerts nao encolhia mesmo com 220px de folga.
+    """
+    assert "folga = Math.max(0, tabela.offsetWidth - caixa)" in _JS_COLUNAS_CORE, (
+        "o clique deixou de medir quanto a tabela ja passa da caixa")
+    corpo = _corpo_do_mousemove()
+    assert "ultimaIni - folga" in corpo, (
+        "a ultima coluna deixou de poder usar a folga ao encolher")
 
 
 def test_ultima_coluna_nao_encolhe_abaixo_do_que_ocupa():
     """Encolher a propria ultima coluna abriria um vao que o navegador
     redistribuiria entre as outras, reproduzindo o pulo."""
     corpo = _corpo_do_mousemove()
-    assert "alvo === ultima" in corpo and "largura < ultimaIni" in corpo, (
+    assert "alvo === ultima" in corpo and "largura < ultimaIni - folga" in corpo, (
         "a ultima coluna voltou a poder encolher abaixo da largura da caixa")
 
 

@@ -1404,7 +1404,7 @@ _JS_COLUNAS_CORE = r"""
     // acima sobre "cabecalho em divs" e "largura no proprio <th>" descreve o
     // desenho anterior.
     var iniX = 0, iniW = 0, arrastando = false;
-    var ultima = null, ultimaIni = 0;
+    var ultima = null, ultimaIni = 0, folga = 0;
     // Variavel de largura de cada coluna, lida do <colgroup>, que e a fonte
     // unica das larguras nas duas telas. Nao serve ler so o data-col da alca:
     // a ultima coluna da Manager (Action) nao tem alca, e e justamente ela que
@@ -1447,6 +1447,14 @@ _JS_COLUNAS_CORE = r"""
       for (var i = 0; i < linha.children.length; i++){
         medidas.push(linha.children[i].offsetWidth);
       }
+      // Quanto a tabela ja passa da caixa. Enquanto houver folga, encolher nao
+      // abre vao e nao precisa de compensacao; so o que passar dela sim.
+      var tabela = alvo.closest('table'), pai = tabela ? tabela.parentElement : null;
+      if (pai){
+        var est = getComputedStyle(pai);
+        var caixa = pai.clientWidth - parseFloat(est.paddingLeft) - parseFloat(est.paddingRight);
+        folga = Math.max(0, tabela.offsetWidth - caixa);
+      }
       for (var j = 0; j < linha.children.length; j++){
         gravar(linha.children[j], medidas[j]);
       }
@@ -1460,14 +1468,15 @@ _JS_COLUNAS_CORE = r"""
       var largura = iniW + (e.pageX - iniX);
       if (largura <= 40) return;
       if (alvo === ultima){
-        // Encolher a ultima abriria um vao que o navegador redistribuiria de
-        // novo entre as outras: ela so cresce a partir do que ocupa.
-        if (largura < ultimaIni) largura = ultimaIni;
+        // Encolher a ultima alem da folga abriria um vao que o navegador
+        // redistribuiria de novo entre as outras.
+        if (largura < ultimaIni - folga) largura = ultimaIni - folga;
       } else {
-        // Ao encolher uma coluna, a ultima absorve a diferenca e a tabela
-        // continua ocupando a caixa sem redistribuir: a coluna arrastada segue
-        // o cursor pixel a pixel. Ao crescer, a tabela cresce e a caixa rola.
-        gravar(ultima, ultimaIni + Math.max(0, iniW - largura));
+        // Ao encolher uma coluna alem da folga, a ultima absorve so o que
+        // faltaria para a tabela ocupar a caixa, sem redistribuir: a coluna
+        // arrastada segue o cursor pixel a pixel. Ao crescer, a tabela cresce
+        // e a caixa rola.
+        gravar(ultima, ultimaIni + Math.max(0, iniW - largura - folga));
       }
       gravar(alvo, largura);
     });
