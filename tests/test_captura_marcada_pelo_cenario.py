@@ -72,3 +72,28 @@ def test_o_tipo_da_captura_considera_a_observacao():
     assert "cenario_observado(full_data.get('processes'))" in corpo
     assert 'cycle_id == "chaos" or observado' in corpo
     assert "full_data['scenario_observed'] = observado" in corpo
+
+
+ABERTO = ("/opt/sys-inspector-test/tools/chaos_maker.sh [root:root 664] "
+          "(FS:ext4 DEV:/dev/system-root)")
+
+
+def test_shell_nascido_na_janela_com_o_script_aberto():
+    """REPROVA A PRIMEIRA VERSAO DESTA CORRECAO: o processo que nasce durante
+    a captura chega com cmd so '/bin/bash'; o script esta nos arquivos abertos.
+    Forma exata medida na captura 263 da .161 (18:21:50, 394 processos)."""
+    arvore = {"5952": {"pid": 5952, "cmd": "/bin/bash",
+                       "open_files": [ABERTO]}}
+    assert dc.cenario_observado(arvore)
+
+
+def test_editor_com_o_script_aberto_nao_e_o_cenario():
+    arvore = {"7000": {"pid": 7000, "cmd": "vim",
+                       "open_files": [ABERTO]}}
+    assert not dc.cenario_observado(arvore)
+
+
+def test_shell_comum_sem_o_script_nao_e_o_cenario():
+    arvore = {"7001": {"pid": 7001, "cmd": "/bin/bash",
+                       "open_files": ["/etc/profile [root:root 644]"]}}
+    assert not dc.cenario_observado(arvore)
