@@ -22,6 +22,8 @@ import json
 import logging
 from contextlib import closing
 
+from src.core import risk
+
 # DEFAULT_DB_PATH = "data/sys_inspector.db"
 DEFAULT_DB_PATH = "/var/lib/sys-inspector/sys_inspector.db"
 DEFAULT_RETENTION_COUNT = 100
@@ -35,6 +37,35 @@ CAPTURE_IDLE = "idle"      # heartbeat do estado ocioso, custo e tamanho fixos
 CAPTURE_FULL = "full"      # captura completa: eBPF, inventario, achados
 CAPTURE_CHAOS = "chaos"    # captura logo apos plantar o cenario de teste
 CAPTURE_TYPES = (CAPTURE_IDLE, CAPTURE_FULL, CAPTURE_CHAOS)
+
+
+def eh_alerta(score, findings_summary):
+    """
+    [F-261] Se uma captura e alerta: achado OU sinal de nivel Medio ou acima.
+
+    Ate 2026-10-09 bastava qualquer bit de sinal (`score > 0`), inclusive os de
+    nivel Info e Low que todo host ativo levanta o tempo todo: resolucao de DNS,
+    troca de credencial do sshd, arquivo renomeado, porta de escuta efemera.
+    Medido nas tres VMs do laboratorio: 45 de 45 capturas marcadas como alerta,
+    e uma marca que sempre acende nao separa nada. Decisao do Mario no mesmo
+    dia: achado comum nao gera alerta, e a separacao e pela NATUREZA (Info e
+    inventario, Low e atividade rotineira), nunca pela frequencia, porque uma
+    persistencia plantada que esta em toda captura nao pode virar "comum".
+
+    Usa o resumo de achados que ja viaja com a captura, entao vale igual no
+    agente, no servidor e para capturas de agentes anteriores a esta regra.
+
+    PARAMETER score: anomaly_score usado como alert_score (bits de risk.SINAIS).
+    PARAMETER findings_summary: {"Info": n, "Low": n, "Medium": n, ...} ou None.
+    """
+    resumo = findings_summary or {}
+    for nivel in (risk.SEV_MEDIUM, risk.SEV_HIGH, risk.SEV_CRITICAL):
+        try:
+            if int(resumo.get(nivel) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return risk.rank(score) >= risk.SEVERITY_ORDER[risk.SEV_MEDIUM]
 
 
 class DatabaseManager:
@@ -259,7 +290,7 @@ class DatabaseManager:
                     metrics.get('mem', 0),
                     metrics.get('pids', 0),
                     metrics.get('score', 0),
-                    1 if metrics.get('score', 0) > 0 else 0,
+                    1 if eh_alerta(metrics.get('score', 0), findings_summary) else 0,
                     blob_json,
                     (custody or {}).get('digest'),
                     (custody or {}).get('previous_digest'),
