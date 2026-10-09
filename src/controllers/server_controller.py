@@ -2752,9 +2752,9 @@ class ServerController:
                 "com tools/gen_password.py.")
         elif not self.auth_enabled:
             self.logger.warning(
-                "[AUTH] Painel SEM autenticacao: quem alcancar a porta le a "
-                "coleta inteira da frota. Ligue network.auth para exigir "
-                "credencial.")
+                "[AUTH] Painel SEM autenticacao: quem alcancar a porta le "
+                "tudo o que foi coletado de todos os hosts. Ligue network.auth "
+                "para exigir credencial.")
 
         self.ingest_token = (config.get('server', {}) or {}).get('auth_token', '') or ''
         if not self.ingest_token:

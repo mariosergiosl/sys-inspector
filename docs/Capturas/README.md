@@ -4,16 +4,16 @@ Capturas do lab (openSUSE/161 sob chaos_maker), organizadas por tela, com nomes
 autoidentificaveis. Acompanha `GUIA-elementos.md` (texto de todo tooltip, menu e
 acao clicavel de cada tela).
 
-## Telas de nivel de frota (Manager)
+## Telas de nivel de hosts (Manager)
 
-- `01_manager_frota/frota_overview.png` — dashboard da frota.
+- `01_manager_frota/frota_overview.png` — dashboard dos hosts.
 - `02_linha_do_tempo/` — `timeline_overview`, janelas `timeline_janela_15min/6h/24h`,
   filtros `timeline_filtro_achado/persistencia/processo_inicio/captura`, `timeline_ajuda`.
 - `03_fila/fila_overview.png` — fila de comandos.
 - `04_comandos/comandos_overview.png` — log de comandos.
 - `05_capacidades/capacidades_overview.png` — capacidades por agente (eBPF/BTF/root/cgroup2).
 
-## Laudo do agente
+## Relatorio do agente
 
 - `06_laudo_findings/` — `findings_overview`, filtros `findings_filtro_critical/high/low/info`,
   `findings_expandido_persistencia`, `findings_expandido_wx_memoria`, `findings_ajuda`.

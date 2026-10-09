@@ -1,12 +1,12 @@
-# Interface do laudo e da tela Manager
+# Interface do relatório e da tela Manager
 
 > Como operar as duas telas da ferramenta, e por que cada controle existe.
 >
 > Este documento cobre o que a versão 1.1.0 mudou na interface. Ele não repete o
-> que cada achado significa (isso está no próprio laudo, em tooltip) nem a
+> que cada achado significa (isso está no próprio relatório, em tooltip) nem a
 > arquitetura (ver `docs/pt-BR/`).
 
-## 1. Tela Manager (a frota)
+## 1. Tela Manager (os hosts)
 
 É a primeira tela: uma linha por agente.
 
@@ -24,7 +24,7 @@ adicionais.
 
 **Por que isso importa:** o mesmo host aparece com nomes diferentes em sistemas
 diferentes (inventário, chamado, firewall). Mostrar um nome só esconde metade do
-que amarra a máquina ao laudo.
+que amarra a máquina ao relatório.
 
 ### 1.2 Severidade
 
@@ -40,7 +40,7 @@ Quatro colunas sob um rótulo comum, porque respondem à mesma pergunta:
 |---|---|
 | **Last Seen** | quando chegou a última captura, hora local e UTC |
 | **Next / cadência** | quando a próxima é esperada, a partir do ciclo do agente |
-| **Uptime** | há quanto tempo o host está ligado, e há quanto tempo o agente coleta |
+| **Uptime** | há quanto tempo o host está ligado, e há quanto tempo o agente captura |
 | **Status do agente** | se o agente falou com o servidor dentro do esperado, e há quanto tempo |
 
 O status é **do agente**, não do host. Um host pode estar de pé com o agente
@@ -49,7 +49,7 @@ mudo, e essa é justamente a situação que interessa: por isso a coluna diz
 
 ### 1.4 Coluna Action
 
-Cinco ícones: abrir o laudo, capturas anteriores, pedir captura agora, cenário de
+Cinco ícones: abrir o relatório, capturas anteriores, pedir captura agora, cenário de
 teste (apenas laboratório) e reiniciar o agente. Ao lado, o número da fila de
 comandos daquele agente, clicável.
 
@@ -61,12 +61,12 @@ Todas as colunas têm uma **divisa arrastável** na borda direita do título. O
 traço fica destacado ao passar o mouse, e o cursor muda para o de
 redimensionamento.
 
-## 2. Laudo (por agente)
+## 2. Relatório (por agente)
 
 ### 2.1 Barra superior
 
-Botão **Manager** (volta para a frota), o carimbo de quando a captura foi feita e
-a idade dela, a navegação entre capturas, o botão de baixar o laudo e os mesmos
+Botão **Manager** (volta para os hosts), o carimbo de quando a captura foi feita e
+a idade dela, a navegação entre capturas, o botão de baixar o relatório e os mesmos
 comandos da tela anterior para aquele agente.
 
 **Navegação entre capturas.** Quatro controles: captura anterior (mais antiga),
@@ -79,9 +79,18 @@ Uma seta sem destino fica **visível e apagada**, e não some. O limite da cole�
 saber se chegou ao fim ou se a tela quebrou. Com uma única captura não há setas,
 mas a contagem continua sendo dita, porque "captura 1 de 1" também é resposta.
 
-**Baixar o laudo.** O ícone de disquete entrega o laudo como **arquivo**, com
+**Tipo da captura.** Ao lado da contagem, um selo diz que captura está na tela:
+"completa" (ciclo normal do agente), "cenário de teste" (em amarelo) ou "ociosa"
+(heartbeat do modo ocioso). A dica de cada seta diz o tipo da captura para onde
+ela leva, para decidir antes de clicar. Uma captura é "cenário de teste" quando o
+agente viu o `chaos_maker.sh` rodando durante ela, tenha o cenário sido disparado
+pelo botão ou à mão: os achados dela foram plantados de propósito. Captura
+gravada antes de o tipo existir aparece como "tipo não registrado", e não é
+presumida completa.
+
+**Baixar o relatório.** O ícone de disquete entrega o relatório como **arquivo**, com
 nome no formato `sys-inspector_<host>_<AAAAMMDD-HHMMSS>.html`. O instante no nome
-é o da **coleta**, não o do download: quem recebe a peça precisa saber a que
+é o da **captura**, não o do download: quem recebe a peça precisa saber a que
 momento ela se refere sem abrir o arquivo.
 
 Três propriedades importam:
@@ -97,11 +106,11 @@ Três propriedades importam:
 O download também está na tela de **Histórico**, em coluna própria, para baixar
 qualquer captura sem precisar abri-la antes.
 
-O laudo fica no **servidor**, e não no agente. Não é conveniência: o agente
+O relatório fica no **servidor**, e não no agente. Não é conveniência: o agente
 escrever no host inspecionado contaminaria o alvo, o agente cifra com a chave
 pública e não consegue ler o que coletou, e o agente não tem servidor web, só
 chamadas de saída, de modo que um download abriria porta no processo mais
-privilegiado da frota.
+privilegiado entre os hosts.
 
 ### 2.2 Mostrar / ocultar inventário
 
@@ -111,7 +120,7 @@ controle **MOSTRAR INVENTÁRIO / OCULTAR INVENTÁRIO**.
 **Por que existe:** esses blocos ocupam metade da altura útil e quase nunca mudam
 durante uma análise, enquanto a árvore de processos, que é onde se trabalha,
 ficava espremida. O estado é lembrado pelo navegador, então quem trabalha na
-árvore não precisa recolher o bloco a cada laudo que abre.
+árvore não precisa recolher o bloco a cada relatório que abre.
 
 ### 2.3 Abas
 
@@ -128,7 +137,7 @@ Se o processo já não estiver na captura, a tela **diz isso** e sugere procurar
 histórico do agente, em vez de simplesmente não reagir. Ausência é resposta.
 
 Um achado que não é sobre processo (um módulo de kernel, um arquivo, um padrão
-de frota) continua **sem** o botão, e essa ausência também informa: não há
+de todos os hosts) continua **sem** o botão, e essa ausência também informa: não há
 processo a que ir.
 
 ### 2.4 Árvore de processos
@@ -150,7 +159,7 @@ dado:
 |---|---|
 | Executable Provenance | "sem binário em disco (processo de kernel, ou caminho ilegível)" |
 | Process Ancestry | "sem ancestral capturado nesta janela" |
-| Probe Signals | cada campo com um travessão, ou "não coletado" |
+| Probe Signals | cada campo com um travessão, ou "não capturado" |
 | Security Forensics | "nenhum motivo de segurança disparou para este processo" |
 
 **Por que a ferramenta insiste nisso (decisão D-020):** um campo omitido faz o
@@ -158,11 +167,11 @@ leitor deduzir, e as duas deduções possíveis levam a lugares opostos: "o host
 tinha" contra "a ferramenta não olhou". A segunda invalida qualquer conclusão
 tirada da ausência. Por isso todo campo aparece, em um de três estados:
 
-- **um valor**: a coleta olhou e havia;
+- **um valor**: a captura olhou e havia;
 - **um travessão** (`—`): olhou e não havia. A ausência aqui é observação, não
   falha;
-- **"não coletado"**: esta captura não produziu o campo, o que costuma acontecer
-  com laudo gerado por agente anterior à versão que passou a coletar aquilo.
+- **"não capturado"**: esta captura não produziu o campo, o que costuma acontecer
+  com relatório gerado por agente anterior à versão que passou a capturar aquilo.
   Nada se pode concluir dessa ausência.
 
 ### 2.6 Filtros e badges
@@ -180,7 +189,7 @@ não ter descarte próprio.
 Cada sinal detectado vira um badge com ícone próprio na árvore, e a barra de
 FILTROS tem um botão por sinal. **Cada sinal tem um ícone exclusivo** e isso é
 verificado por teste: dois sinais com o mesmo desenho são um sinal só aos olhos
-de quem lê, e num laudo forense dois fatos diferentes não podem ter a mesma
+de quem lê, e num relatório forense dois fatos diferentes não podem ter a mesma
 aparência.
 
 **Filtro sem resultado responde.** Um filtro que não casa com nenhum processo
@@ -197,17 +206,17 @@ descreve o **estado atual** da tela e não um evento passageiro.
 Registradas para que a ausência não seja lida como esquecimento.
 
 **Resolvidas na 1.2.0.** As quatro limitações listadas aqui até a 1.1.0 deixaram
-de existir: o laudo voltou a ter download, o botão **Ver processo** passou a
+de existir: o relatório voltou a ter download, o botão **Ver processo** passou a
 aparecer em todo achado que diz respeito a um processo, a navegação entre
-capturas entrou na barra do laudo, e filtro sem resultado passou a avisar. O
+capturas entrou na barra do relatório, e filtro sem resultado passou a avisar. O
 registro fica aqui porque ele dizia a verdade sobre a versão anterior, e um
-histórico de limitações apagado não serve a quem lê um laudo antigo.
+histórico de limitações apagado não serve a quem lê um relatório antigo.
 
 **Em aberto:**
 
 - a comparação entre duas capturas mostra os processos que **apareceram** e não
   os que **desapareceram**, que são frequentemente os mais interessantes;
-- a **custódia da captura inteira** não aparece no laudo. O laudo mostra a
+- a **custódia da captura inteira** não aparece no relatório. O relatório mostra a
   custódia por achado, o que foi preservado daquele objeto, mas o registro da
   captura, com digest, elo com a captura anterior, assinatura e a impressão
   digital da chave que assinou, vive só no banco. Quem lê a peça não o vê.

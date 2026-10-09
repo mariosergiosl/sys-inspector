@@ -7,15 +7,15 @@ Tooltips nativos (`title=`) nao aparecem em captura headless; o texto deles esta
 
 ---
 
-## Manager / Frota  (`/`)
+## Manager / Hosts  (`/`)
 
 
 ### Tooltips (passar o mouse)
 
-- AGENDADOR: proxima coleta esperada, a partir do ciclo do agente (capture_duration + interval). O agente coleta sozinho nessa cadencia; o icone de captura na acao pede uma coleta agora, fora do ciclo.
+- AGENDADOR: proxima captura esperada, a partir do ciclo do agente (capture_duration + interval). O agente captura sozinho nessa cadencia; o icone de captura na acao pede uma captura agora, fora do ciclo.
 - APENAS LAB: gera cenario de teste, ESPERA ficar pronto e captura em seguida. Entra na fila; o agente executa no proximo check-in
-- Abrir laudo, historico, pedir captura agora, cenario de teste (lab), reiniciar
-- Abrir o laudo forense deste agente
+- Abrir relatorio, historico, pedir captura agora, cenario de teste (lab), reiniciar
+- Abrir o relatorio deste agente
 - Achados criticos na ultima captura
 - Achados de severidade alta
 - Achados de severidade baixa
@@ -124,19 +124,19 @@ Uma entrada de cron relanca o payload do atacante em horario marcado, restaurand
 ### Tooltips (passar o mouse)
 
 - APENAS LAB: executa o cenario de teste, que planta artefatos conhecidos para aferir a deteccao.
-- Captura sob demanda: o agente coleta agora, em vez de esperar o proximo ciclo.
+- Captura sob demanda: o agente captura agora, em vez de esperar o proximo ciclo.
 - Capturas deste agente, para achar a que este comando produziu
 - Eventos deste agente na janela que cobre este comando
 - Hijack Execution Flow: Dynamic Linker Hijacking
 Tatica: Persistence, Privilege Escalation, Defense Evasion
 
 Precarregar uma biblioteca pelo ld.so.preload injeta codigo do atacante em todo processo dinamicamente ligado, o classico rootkit de userland.
-- Laudo mais recente deste agente
+- Relatorio mais recente deste agente
 - Reinicia o processo do agente no host inspecionado.
 
 ---
 
-## Capacidades da frota  (`/capabilities`)
+## Capacidades dos hosts  (`/capabilities`)
 
 
 ### Tooltips (passar o mouse)
@@ -144,16 +144,16 @@ Precarregar uma biblioteca pelo ld.so.preload injeta codigo do atacante em todo 
 - BTF no kernel permite o motor CO-RE
 - Muda como conteiner e limite de recurso sao identificados
 - Sem eBPF a captura se reduz ao que /proc mostra
-- Sem privilegio o laudo sai incompleto sem erro aparente
+- Sem privilegio o relatorio sai incompleto sem erro aparente
 
 ---
 
-## Laudo do agente  (`/agent/<uuid>`)
+## Relatorio do agente  (`/agent/<uuid>`)
 
 
 ### Tooltips (passar o mouse)
 
-- A ferramenta olhou e nao havia valor. A ausencia aqui e uma observacao, e nao uma falha de coleta.
+- A ferramenta olhou e nao havia valor. A ausencia aqui e uma observacao, e nao uma falha de captura.
 - A linha literal encontrada no arquivo: a prova crua.
 - APENAS LAB: cenario de teste por 300s, depois captura
 - Accessing GPU Resources
@@ -174,7 +174,7 @@ Name (Mode)
 - Containerized Process
 - Crypto Mining Signature
 - Current Disk I/O (Bytes/sec) - Hot Activity
-- Custodia: o que foi preservado do artefato para a pericia. Hoje a ferramenta coleta metadado; hash e copia do artefato entram no roadmap.
+- Custodia: o que foi preservado do artefato para a pericia. Hoje a ferramenta captura metadado; hash e copia do artefato entram no roadmap.
 - Filtra a aba Findings para os 1 achado(s) que citam esta tecnica
 - Filtra a aba Findings para os 2 achado(s) que citam esta tecnica
 - GPU Activity
@@ -185,7 +185,7 @@ Name (Mode)
 - Linha de comando do processo envolvido.
 - Metadados do arquivo (dono, permissao, datas mtime/ctime/atime): permite datar o artefato e ver quem podia escrever.
 - Mining Signature
-- Momento em que o agente coletou estes dados. O laudo descreve o host NAQUELE instante, e nao agora.
+- Momento em que o agente capturou estes dados. O relatorio descreve o host NAQUELE instante, e nao agora.
 - Network Errors
 - Network Issues: 1 Drops, 0 Retransmits
 - Network Issues: 168 Drops, 0 Retransmits
@@ -204,7 +204,7 @@ Name (Mode)
 - Nome qualificado. Vazio significa que 'hostname -f' nao resolve neste host, o que e comum e legitimo.
 - O alvo real que o mecanismo dispara: o que de fato roda.
 - Objeto afetado: caminho de arquivo, unit, PID ou usuario
-- Ordem sugerida para ler este laudo
+- Ordem sugerida para ler este relatorio
 - PID 1
 - PID 101
 - PID 102

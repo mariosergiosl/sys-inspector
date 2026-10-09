@@ -16,17 +16,18 @@ Diferente das ferramentas tradicionais que consultam o `/proc` periodicamente, o
 ## Funcionalidades (v1.3.1)
 
 * **Corrigido na v1.3.1 - A identidade que assina sobrevive ao deploy no agente bem configurado:** Três defeitos achados na bancada dentro da correção da 1.3.0: a herança falhava no agente que tem só a chave pública do analista, declarar metade do par regerava a outra metade, e o agente sem a chave privada do analista era recusado na partida. A opção `verify_tls` passou a estar documentada no `conf/config.yaml`.
+* **Novo na v1.3.1 - Achar a captura que importa:** A barra de navegação mostra o tipo de cada captura, e a captura feita com o cenário de teste rodando sai marcada como tal, venha de onde vier. Os badges de SSH e de contêiner deixaram de acender em processos do host, e a interface passou a dizer Hosts e Relatório, com captura (agente) distinta de coleta (servidor).
 * **Novo na v1.3.0 - A identidade que assina sobrevive ao deploy:** A chave que assina as capturas passou a morar onde mora o estado, ao lado do banco, e é herdada do lugar antigo em vez de regerada. Toda captura carrega a impressão digital da chave que a assinou e diz como aquela chave chegou ali. Chave nova é legítima; nascer calada não é, porque o mesmo agente assinando com duas chaves sem nada explicando é exatamente o que a parte contrária procura.
 * **Novo na v1.3.0 - Um agente que pode de fato ficar ocioso:** Desligado por padrão. Ligado, a captura pesada deixa de rodar em todo ciclo e passa a acontecer por motivo: a cadência declarada, um comando do analista, ou o primeiro ciclo do agente. Um ciclo que não captura escreve por quê, com o tempo que falta, para que agente ocioso nunca se pareça com agente travado.
-* **Novo na v1.2.0 - O laudo como peça:** Baixa como arquivo nomeado pelo host e pelo instante da COLETA, sempre completo, montado pelo mesmo código que desenha a tela, e sem a barra de navegação, porque botão morto num documento pericial é pior que botão nenhum. A própria barra passou a andar entre as capturas (anterior, próxima, mais recente, "captura N de M"), e uma seta sem destino fica visível e apagada em vez de sumir: o limite da coleção é informação.
+* **Novo na v1.2.0 - O relatório como peça:** Baixa como arquivo nomeado pelo host e pelo instante da CAPTURA, sempre completo, montado pelo mesmo código que desenha a tela, e sem a barra de navegação, porque botão morto num documento pericial é pior que botão nenhum. A própria barra passou a andar entre as capturas (anterior, próxima, mais recente, "captura N de M"), e uma seta sem destino fica visível e apagada em vez de sumir: o limite da coleção é informação.
 * **Novo na v1.2.0 - Ausência responde, na tela:** Um filtro que não casa nada diz quantos processos examinou, em vez de apenas esvaziar a árvore, e o salto para o processo passou a aparecer em todo achado que diz respeito a um, e não só naqueles cujo caminho denunciado por acaso está rodando. Quando o processo já saiu da captura, a tela diz isso.
-* **Novo na v1.1.0 - Aquisição dirigida e encaminhamento:** Um arquivo ou região de memória suspeita é hasheada, recortada e, quando cabe no orçamento de bytes declarado, copiada - sempre registrando o ESCOPO do hash, para que um hash parcial nunca seja lido como identificação do objeto inteiro. Todo achado pode ainda dizer qual análise de bancada conclui o que ele não conclui, por quê e sobre qual objeto: a ferramenta coleta o suficiente para identificar e direcionar, nunca a massa que prova, e isso só é honesto quando ela diz quem termina o serviço.
+* **Novo na v1.1.0 - Aquisição dirigida e encaminhamento:** Um arquivo ou região de memória suspeita é hasheada, recortada e, quando cabe no orçamento de bytes declarado, copiada - sempre registrando o ESCOPO do hash, para que um hash parcial nunca seja lido como identificação do objeto inteiro. Todo achado pode ainda dizer qual análise de bancada conclui o que ele não conclui, por quê e sobre qual objeto: a ferramenta captura o suficiente para identificar e direcionar, nunca a massa que prova, e isso só é honesto quando ela diz quem termina o serviço.
 * **Novo na v1.1.0 - Caça a rootkit e fuga de contêiner:** Cruza as três listas de módulos do kernel com o taint, julga cada biblioteca do `/etc/ld.so.preload` pela procedência de pacote, e acompanha `mount` e `pivot_root` - o passo que transforma isolamento quebrado em acesso ao host. O SNI do TLS completa o "com quem" onde o DNS não alcança (cache, IP fixo, DoH).
 * **Novo na v1.1.0 - Um caminho de execução só:** Agente e servidor, nada além. Para uma máquina, instale os dois no mesmo host. HTTPS é o único transporte; o caminho em texto claro foi removido do código, e não desligado.
-* **Novo na v1.1.0 - Um laudo feito para a árvore:** O bloco de inventário recolhe para dar a tela à árvore de processos, as colunas se redimensionam arrastando a divisa no cabeçalho, e a árvore rola nos dois eixos com o cabeçalho fixo. Todo bloco de detalhe está sempre presente, em um de três estados: um valor, "olhou e não havia", ou "não coletado por esta captura".
+* **Novo na v1.1.0 - Um relatório feito para a árvore:** O bloco de inventário recolhe para dar a tela à árvore de processos, as colunas se redimensionam arrastando a divisa no cabeçalho, e a árvore rola nos dois eixos com o cabeçalho fixo. Todo bloco de detalhe está sempre presente, em um de três estados: um valor, "olhou e não havia", ou "não capturado por esta captura".
 
-* **Novo na v1.0.0 - Contrato de resposta do achado:** Todo achado declara sua **confiança** (confirmado / provável / heurístico), para uma heurística nunca aparecer como fato, e sua **custódia** (o que foi preservado do artefato). O laudo se lê como uma investigação: faixa "como ler" (Findings -> Processes -> ATT&CK), legenda de severidade com a ação do operador, tooltips em cada campo da evidência e pivôs clicáveis nos dois sentidos entre um achado e sua técnica ATT&CK.
-* **Novo na v1.0.0 - Frota distribuída:** Agentes em modelo pull encaminham capturas cifradas a um servidor central (outbox store-and-forward, fila de ingestão priorizada, fila de comandos auditada, capacidades por agente, HTTPS). A Manager mostra o progresso de cada comando como um stepper ao vivo.
+* **Novo na v1.0.0 - Contrato de resposta do achado:** Todo achado declara sua **confiança** (confirmado / provável / heurístico), para uma heurística nunca aparecer como fato, e sua **custódia** (o que foi preservado do artefato). O relatório se lê como uma investigação: faixa "como ler" (Findings -> Processes -> ATT&CK), legenda de severidade com a ação do operador, tooltips em cada campo da evidência e pivôs clicáveis nos dois sentidos entre um achado e sua técnica ATT&CK.
+* **Novo na v1.0.0 - Hosts distribuídos:** Agentes em modelo pull encaminham capturas cifradas a um servidor central (outbox store-and-forward, fila de ingestão priorizada, fila de comandos auditada, capacidades por agente, HTTPS). A Manager mostra o progresso de cada comando como um stepper ao vivo.
 * **Novo na v1.0.0 - Detecção de runtime e anti-forense:** Processos ocultos, divergência de contagem de threads, memória W+X, binário substituído no disco, bibliotecas não confiáveis e arquivos imutáveis em diretórios graváveis.
 * **Achados forenses (Findings):** Todo coletor emite achados normalizados numa escala única de severidade (Info a Crítico), cada um informando a fonte que o produziu, a técnica MITRE ATT&CK, a evidência bruta e a ação recomendada.
 * **Enumeração de persistência:** Responde à primeira pergunta diante de suspeita de comprometimento, como um invasor sobreviveria a um reboot: units systemd, tarefas cron/at, scripts de inicialização e de perfil, `/etc/ld.so.preload`, autoload de módulos de kernel, regras udev, pilhas PAM e `authorized_keys` por usuário. Itens de baseline permanecem informativos; a severidade só sobe diante de indicadores reais, como execução a partir de diretórios graváveis por usuário, arquivos graváveis por todos, nomes ocultos ou alteração recente.
@@ -105,12 +106,12 @@ Uma vez instalado, o comando fica disponível globalmente:
 
 O Sys-Inspector é orquestrado pelo ponto de entrada `main.py` (ou globalmente como `sys-inspector`). Ele suporta vários modos de execução.
 
-A ferramenta tem um caminho só: um **agente** que coleta e um **servidor** que
-recebe e renderiza. Para uma máquina só, instale os dois no mesmo host.
+A ferramenta tem um caminho só: um **agente** que captura e um **servidor** que
+coleta e renderiza. Para uma máquina só, instale os dois no mesmo host.
 
 ### 1. Servidor (dashboard)
 
-Recebe as capturas dos agentes e serve o dashboard da frota.
+Recebe as capturas dos agentes e serve o dashboard dos hosts.
 
 ```bash
     sudo sys-inspector --mode server
@@ -121,7 +122,7 @@ Recebe as capturas dos agentes e serve o dashboard da frota.
 
 ### 2. Agente (coletor)
 
-Coleta, cifra, guarda e entrega ao servidor configurado em `daemon.server_ip`.
+Captura, cifra, guarda e entrega ao servidor configurado em `daemon.server_ip`.
 
 ```bash
     sudo sys-inspector --mode daemon
