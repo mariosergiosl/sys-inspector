@@ -591,6 +591,88 @@ class DatabaseManager:
             self.logger.error(f"Get History Failed: {e}")
             return []
 
+    def get_calendar_rows(self, start_ts, end_ts, agent_filter=None):
+        """
+        [F-259] Capturas da janela, so com o que o calendario usa, em claro.
+
+        Devolve dicts com id, agent_uuid, collected_at (instante em que o
+        SERVIDOR gravou: a coleta), captured_at (instante em que o AGENTE
+        capturou, lido da custodia; None se a captura nao o traz),
+        capture_type e findings_summary. Nao decifra nada.
+
+        Inclui capturas ja limpas pela retencao: a lapide guarda o resumo, e a
+        captura aconteceu. Filtrar por purged_at, alem de errado no merito,
+        falharia em banco novo, onde a coluna ainda nao existe, e o calendario
+        viria vazio sem erro.
+
+        A janela filtra pela coleta, que e a coluna indexavel; o calendario
+        agrupa pela captura. Uma captura entregue com atraso cai no dia em que
+        foi capturada.
+
+        PARAMETER start_ts: inicio da janela (epoch, inclusivo).
+        PARAMETER end_ts: fim da janela (epoch, inclusivo).
+        PARAMETER agent_filter: se informado, restringe a um agent_uuid.
+        """
+        sql = """
+            SELECT id, agent_uuid, timestamp, capture_type,
+                   findings_summary, custody
+            FROM snapshots
+            WHERE timestamp BETWEEN ? AND ?
+        """
+        params = [start_ts, end_ts]
+        if agent_filter:
+            sql += " AND agent_uuid = ?"
+            params.append(agent_filter)
+        linhas = []
+        try:
+            with closing(self._get_conn()) as conn:
+                for sid, uuid, ts, tipo, resumo, custodia in conn.execute(
+                        sql, params):
+                    def _json(bruto):
+                        try:
+                            return json.loads(bruto) if bruto else {}
+                        except Exception:
+                            return {}
+                    capturado = _json(custodia).get("captured_at")
+                    try:
+                        capturado = float(capturado) if capturado else None
+                    except (TypeError, ValueError):
+                        capturado = None
+                    linhas.append({"id": sid, "agent_uuid": uuid,
+                                   "collected_at": ts,
+                                   "captured_at": capturado,
+                                   "capture_type": tipo,
+                                   "findings_summary": _json(resumo)})
+        except Exception as e:
+            self.logger.error(f"Get Calendar Rows Failed: {e}")
+        return linhas
+
+    def get_captured_at(self, snap_id):
+        """
+        [F-259] Instante em que o AGENTE fez a captura, lido da custodia.
+
+        Devolve None quando a captura nao traz a data, para o chamador dizer
+        "coletado em" em vez de apresentar a coleta como captura.
+        """
+        try:
+            with closing(self._get_conn()) as conn:
+                row = conn.execute("SELECT custody FROM snapshots WHERE id = ?",
+                                   (snap_id,)).fetchone()
+            valor = json.loads(row[0]).get("captured_at") if row and row[0] else None
+            return float(valor) if valor else None
+        except Exception:
+            return None
+
+    def get_agent_names(self):
+        """{agent_uuid: hostname} de todos os agentes conhecidos."""
+        try:
+            with closing(self._get_conn()) as conn:
+                return {u: (h or u) for u, h in conn.execute(
+                    "SELECT uuid, hostname FROM agents")}
+        except Exception as e:
+            self.logger.error(f"Get Agent Names Failed: {e}")
+            return {}
+
     def get_snapshot_details(self, snap_id):
         try:
             with closing(self._get_conn()) as conn:

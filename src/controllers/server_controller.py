@@ -72,6 +72,7 @@ from src.core.outbox import PATH_SLOT, PATH_INGEST, PATH_COMMAND_RESULT
 from src.core.snapshot_diff import (diff_snapshots, classify,
                                     summarize_risk, build_timeline)
 from src.exporters.html_report import _esc
+from src.core import calendario
 
 
 def _fmt_ts(valor):
@@ -182,6 +183,7 @@ _CSS_IDENTIDADE = _PALETA + (
 # Barra de navegacao entre as telas do servidor, uma so definicao para todas.
 _NAVEGACAO = (("&#127968;", "/", "Hosts"),
               ("&#128337;", "/timeline", "Linha do tempo"),
+              ("&#128197;", "/calendario", "Calendario"),
               ("&#128203;", "/queue", "Fila"),
               ("&#128220;", "/log", "Comandos"),
               ("&#129513;", "/capacidades", "Capacidades"))
@@ -774,6 +776,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         elif self.path.startswith('/timeline'):
             self._serve_timeline(controller)
 
+        elif self.path.split('?')[0] == '/calendario':
+            self._serve_calendario(controller)
+
         elif self.path == '/capabilities':
             self._serve_capabilities(controller)
 
@@ -949,19 +954,38 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 # anterior. Amarelo a partir de 15 minutos, vermelho a partir
                 # de uma hora: nao e alarme, e a informacao de que o que se
                 # esta lendo pode nao descrever o estado atual do host.
-                idade_seg = time.time() - float(snaps[0].get('timestamp') or 0)
+                # [F-259] Capturado e coletado sao instantes diferentes:
+                # snapshots.timestamp e quando o SERVIDOR gravou (coleta); a
+                # captura feita pelo agente esta na custodia. Ate 2026-10-09 a
+                # barra dizia "capturado em" mostrando a coleta. Sem a data do
+                # agente, a barra diz honestamente "coletado em".
+                coletado = float(snaps[0].get('timestamp') or 0)
+                capturado = controller.db.get_captured_at(snaps[0].get('id'))
+                referencia = capturado if capturado else coletado
+                idade_seg = time.time() - referencia
                 cor_idade = ("#ff4d4d" if idade_seg > 3600
                              else "#ffd166" if idade_seg > 900 else "#6a9955")
+                fmt = "%Y-%m-%d %H:%M:%S"
+                if capturado:
+                    rotulo = "capturado em"
+                    dica = ("Momento em que o agente capturou estes dados. O "
+                            "relatorio descreve o host NAQUELE instante, e nao "
+                            "agora. Coletado pelo servidor em %s (atraso de "
+                            "%s)." % (datetime.datetime.fromtimestamp(
+                                coletado).strftime(fmt),
+                                calendario.fmt_atraso(max(0.0, coletado - capturado))))
+                else:
+                    rotulo = "coletado em"
+                    dica = ("Momento em que o servidor recebeu estes dados. "
+                            "Esta captura nao traz o instante em que o agente "
+                            "a fez.")
                 carimbo = (
-                    "<span title=\"Momento em que o agente capturou estes "
-                    "dados. O relatorio descreve o host NAQUELE instante, e nao "
-                    "agora.\" style=\"margin-left:16px; font-size:11px; "
-                    "font-family:sans-serif; color:#888\">"
-                    "capturado em %s <b style=\"color:%s\">(%s)</b></span>"
-                    % (datetime.datetime.fromtimestamp(
-                        float(snaps[0].get('timestamp') or 0)
-                    ).strftime("%Y-%m-%d %H:%M:%S"), cor_idade,
-                       _human_age(idade_seg)))
+                    "<span title=\"%s\" style=\"margin-left:16px; "
+                    "font-size:11px; font-family:sans-serif; color:#888\">"
+                    "%s %s <b style=\"color:%s\">(%s)</b></span>"
+                    % (dica, rotulo,
+                       datetime.datetime.fromtimestamp(referencia).strftime(fmt),
+                       cor_idade, _human_age(idade_seg)))
 
                 back = (
                     # [F-231] Barra mais baixa: 8px em cima e embaixo eram
@@ -1351,6 +1375,85 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 "<table>%s<tbody>%s</tbody></table>"
                 "<hr style='border:none;border-top:1px solid #2a2a2a;margin:26px 0'>"
                 % (total, cabecalho, linhas))
+
+    _RE_MES = re.compile(r"^(\d{4})-(\d{2})$")
+    _RE_DIA = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+
+    def _serve_calendario(self, controller):
+        """
+        [F-259] Calendario de capturas e coletas, geral ou de um host.
+
+        Parametros da URL, todos validados antes do uso: host (agent_uuid; sem
+        ele, todos os hosts), mes (AAAA-MM; sem ele, o mes corrente) e dia
+        (AAAA-MM-DD; lista as capturas daquele dia abaixo do mes).
+        """
+        qs = urlparse.parse_qs(urlparse.urlparse(self.path).query)
+        host = (qs.get("host") or [""])[0]
+        if host and not id_valido(host):
+            self._recusa_id(host)
+            return
+        hoje = datetime.date.today()
+        ano, mes = hoje.year, hoje.month
+        m = self._RE_MES.match((qs.get("mes") or [""])[0])
+        if m and 1 <= int(m.group(2)) <= 12:
+            ano, mes = int(m.group(1)), int(m.group(2))
+        dia_sel = None
+        m = self._RE_DIA.match((qs.get("dia") or [""])[0])
+        if m:
+            try:
+                dia_sel = datetime.date(int(m.group(1)), int(m.group(2)),
+                                        int(m.group(3)))
+                ano, mes = dia_sel.year, dia_sel.month
+            except ValueError:
+                dia_sel = None
+
+        # Janela do mes com um dia de margem de cada lado: a consulta filtra
+        # pela COLETA, e uma captura entregue com atraso pode ter sido feita
+        # no ultimo dia do mes anterior.
+        inicio = datetime.datetime(ano, mes, 1) - datetime.timedelta(days=1)
+        fim = (datetime.datetime(ano + (mes == 12), mes % 12 + 1, 1)
+               + datetime.timedelta(days=1))
+        linhas = controller.db.get_calendar_rows(inicio.timestamp(),
+                                                 fim.timestamp(),
+                                                 agent_filter=host or None)
+        nomes = controller.db.get_agent_names()
+        itens = calendario.preparar(linhas, nomes)
+        dias = calendario.resumir_dias(itens)
+
+        def _url(**kw):
+            base = {"host": host} if host else {}
+            base.update({k: v for k, v in kw.items() if v})
+            return "/calendario" + ("?" + urlparse.urlencode(base)
+                                    if base else "")
+
+        seletor = ["<a href='/calendario?mes=%04d-%02d' style='%s'>"
+                   "Todos os hosts</a>"
+                   % (ano, mes, "font-weight:bold" if not host else "")]
+        for uuid, nome in sorted(nomes.items(), key=lambda x: str(x[1])):
+            seletor.append("<a href='/calendario?%s' style='%s'>%s</a>"
+                           % (urlparse.urlencode({"host": uuid,
+                                                  "mes": "%04d-%02d" % (ano, mes)}),
+                              "font-weight:bold" if uuid == host else "",
+                              _esc(nome)))
+        corpo = ("<style>%s</style>" % calendario.CSS
+                 + "<div class='cal-nav' style='flex-wrap:wrap'>"
+                 + " &middot; ".join(seletor) + "</div>")
+        corpo += calendario.render_mes(
+            ano, mes, dias,
+            link_dia=lambda d: _url(dia=d.isoformat()),
+            link_mes=lambda a, m_: _url(mes="%04d-%02d" % (a, m_)),
+            geral=not host, dia_sel=dia_sel)
+        if dia_sel:
+            corpo += calendario.render_lista_do_dia(
+                dia_sel, itens, _selo_tipo_captura,
+                lambda u, i: "/agent/%s?capture=%s" % (u, i))
+        titulo = ("Calendario de capturas: %s" % nomes.get(host, host)
+                  if host else "Calendario de capturas: todos os hosts")
+        html_pag = self._pagina(_esc(titulo), corpo)
+        self.send_response(200)
+        self.send_header("Content-type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(html_pag.encode("utf-8"))
 
     def _serve_history(self, controller, agent_uuid):
         """
