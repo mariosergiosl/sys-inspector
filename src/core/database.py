@@ -531,11 +531,16 @@ class DatabaseManager:
         PARAMETER end_ts: limite superior do timestamp (epoch, inclusivo).
         PARAMETER agent_filter: se informado, restringe a um agent_uuid.
         """
+        # [F-255] capture_type entra na lista leve: a barra de navegacao precisa
+        # dizer se a captura e completa, de cenario ou ociosa, e sem isto a
+        # coleta do incidente fica igual as dezenas em volta. NULL fica NULL
+        # (captura gravada antes da coluna existir): quem exibe diz "nao
+        # registrado", em vez de presumir "completa".
         cols = ['id', 'timestamp', 'agent_uuid', 'cpu_avg',
-                'mem_used_mb', 'alert_score', 'is_alert']
+                'mem_used_mb', 'alert_score', 'is_alert', 'capture_type']
         sql = """
             SELECT id, timestamp, agent_uuid, cpu_avg,
-                   mem_used_mb, alert_score, is_alert
+                   mem_used_mb, alert_score, is_alert, capture_type
             FROM snapshots
             WHERE timestamp BETWEEN ? AND ?
         """

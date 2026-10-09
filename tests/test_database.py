@@ -57,8 +57,10 @@ def test_get_history_contract_and_order(db):
     db.insert_snapshot({"n": 2}, agent_uuid="b", metrics={"score": 5})
     rows = db.get_history(0, time.time() + 10)
     assert len(rows) == 2
+    # [F-255] capture_type entrou no contrato em 2026-10-09, de proposito: a
+    # barra de navegacao do laudo mostra o tipo de cada captura.
     expected_keys = {"id", "timestamp", "agent_uuid", "cpu_avg",
-                     "mem_used_mb", "alert_score", "is_alert"}
+                     "mem_used_mb", "alert_score", "is_alert", "capture_type"}
     assert set(rows[0].keys()) == expected_keys
     # Ordenacao decrescente por timestamp: o mais recente primeiro.
     assert rows[0]["timestamp"] >= rows[1]["timestamp"]
