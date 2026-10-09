@@ -69,6 +69,19 @@ def cenario_observado(processos):
         if (len(partes) > 1 and partes[0] in _SHELLS
                 and partes[1] == SCRIPT_DO_CENARIO):
             return True
+        # Processo que NASCEU durante a janela da captura chega pelo evento de
+        # execucao com cmd so "/bin/bash", sem argumentos: medido na .161 em
+        # 2026-10-09, a captura que pegou a montagem do cenario (394 processos)
+        # saiu "completa" por isso. O nome do script estava nos arquivos abertos
+        # do mesmo shell. Shell com o script aberto e o script rodando; um
+        # editor com o arquivo aberto nao e shell e nao conta.
+        if partes[0] in _SHELLS:
+            abertos = (no.get("open_files") if isinstance(no, dict)
+                       else getattr(no, "open_files", None)) or []
+            for item in abertos:
+                caminho = str(item).split()[0] if str(item).split() else ""
+                if os.path.basename(caminho) == SCRIPT_DO_CENARIO:
+                    return True
     return False
 
 
