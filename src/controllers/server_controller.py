@@ -187,6 +187,52 @@ _NAVEGACAO = (("&#127968;", "/", "Frota"),
               ("&#129513;", "/capacidades", "Capacidades"))
 
 
+# [F-255] Tipo de cada captura, como a barra de navegacao o diz. Os
+# identificadores vem de src/core/database.py (CAPTURE_IDLE/FULL/CHAOS);
+# um tipo que nao esteja aqui aparece pelo proprio nome, com aviso, e nao
+# some (descarte silencioso e proibido neste projeto).
+_TIPOS_DE_CAPTURA = {
+    "full": ("completa", "#888",
+             "Captura completa do ciclo do agente: eBPF, inventario e "
+             "achados."),
+    "chaos": ("cenario de teste", "#ffd166",
+              "Captura feita logo depois de o chaos_maker montar o "
+              "cenario de teste. Os achados desta captura foram "
+              "PLANTADOS de proposito no laboratorio."),
+    "idle": ("ociosa", "#6a9fb5",
+             "Heartbeat do modo ocioso: custo e tamanho fixos, sem a "
+             "coleta pesada."),
+}
+
+
+def _rotulo_tipo_captura(tipo):
+    """
+    (rotulo, cor, explicacao) do tipo de uma captura.
+
+    PARAMETER tipo: valor de capture_type, ou None para captura gravada
+              antes de a coluna existir.
+    """
+    if tipo is None or tipo == "":
+        # D-020: "nao registrado" e um dos tres estados, e nao se presume
+        # "completa" para o que nunca foi gravado.
+        return ("tipo nao registrado", "#666",
+                "Captura gravada antes de o tipo passar a ser registrado.")
+    if tipo in _TIPOS_DE_CAPTURA:
+        return _TIPOS_DE_CAPTURA[tipo]
+    nome = re.sub(r"[^A-Za-z0-9_-]", "", str(tipo))[:20] or "?"
+    return (nome, "#ff6b6b",
+            "Tipo de captura desconhecido por esta versao do servidor.")
+
+
+def _selo_tipo_captura(tipo):
+    """Selo com o tipo da captura exibida, ao lado da contagem."""
+    rotulo, cor, explicacao = _rotulo_tipo_captura(tipo)
+    return ("<span class=\"tipo-captura\" style=\"margin:0 6px; "
+            "padding:1px 7px; border:1px solid %s; border-radius:9px; "
+            "font-size:10px; font-family:sans-serif; color:%s\" "
+            "title=\"%s\">%s</span>" % (cor, cor, explicacao, rotulo))
+
+
 def _barra_navegacao(atual=""):
     """Links entre as telas do servidor, com a atual marcada."""
     saida = ""
@@ -607,7 +653,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             return ("<span style=\"margin-left:12px; font-size:11px; "
                     "font-family:sans-serif; color:#666\" title=\"Este agente "
                     "tem uma unica captura armazenada, entao nao ha o que "
-                    "navegar.\">captura 1 de 1</span>")
+                    "navegar.\">captura 1 de 1</span>"
+                    + (_selo_tipo_captura(historico[0].get("capture_type"))
+                       if historico else ""))
 
         ids = [str(s.get("id")) for s in historico]
         try:
@@ -635,16 +683,29 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         # se le uma linha do tempo. A lista vem ao contrario.
         humana = total - pos
 
+        def _tipo_de(indice):
+            """Tipo da captura na posicao dada, ou None fora da lista."""
+            if 0 <= indice < total:
+                return historico[indice].get("capture_type")
+            return None
+
+        def _sufixo(indice):
+            """Tipo da vizinha, para o titulo da seta: decidir antes de clicar."""
+            if not 0 <= indice < total:
+                return ""
+            return " (%s)" % _rotulo_tipo_captura(_tipo_de(indice))[0]
+
         partes = [
             _seta(mais_velha, "&#9664;",
-                  "Captura anterior, mais antiga que esta",
+                  "Captura anterior, mais antiga que esta" + _sufixo(mais_velha),
                   mais_velha < total),
             ("<span style=\"font-size:11px; font-family:sans-serif; "
              "color:#888\" title=\"Posicao desta captura na linha do tempo "
              "deste agente, da mais antiga para a mais recente.\">"
              "captura %d de %d</span>" % (humana, total)),
+            _selo_tipo_captura(_tipo_de(pos)),
             _seta(mais_nova, "&#9654;",
-                  "Proxima captura, mais recente que esta",
+                  "Proxima captura, mais recente que esta" + _sufixo(mais_nova),
                   mais_nova >= 0),
             _seta(0, "&#9193;",
                   "Ir para a captura mais recente deste agente",
