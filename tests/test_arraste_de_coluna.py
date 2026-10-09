@@ -60,6 +60,25 @@ def test_mousedown_congela_todas_as_colunas_sem_condicao():
         "telas tem variavel: a coluna volta a pular no primeiro pixel")
 
 
+def test_congelamento_mede_todas_antes_de_gravar_qualquer_uma():
+    """Gravar uma coluna redistribui a tabela na hora: ler a proxima depois
+    disso devolve largura ja alterada.
+
+    Defeito da PRIMEIRA versao desta correcao, medido no Chrome em 2026-10-09:
+    o laco fazia `gravar(c, c.offsetWidth)` coluna a coluna; PID desenhada com
+    102px foi gravada como 83px e a coluna arrastada saltou de 917px para
+    1097px no proprio clique. Todo `offsetWidth` do clique tem que vir antes
+    do primeiro `gravar(`.
+    """
+    corpo = _corpo_do_mousedown()
+    assert "gravar(" in corpo, "o clique deixou de gravar as larguras"
+    ultima_leitura = corpo.rfind("offsetWidth")
+    primeira_gravacao = corpo.find("gravar(")
+    assert ultima_leitura < primeira_gravacao, (
+        "o clique voltou a ler largura depois de ja ter gravado outra: cada "
+        "leitura sai redistribuida e a coluna pula no clique")
+
+
 def test_congelamento_grava_na_variavel_do_colgroup():
     """Congelar escrevendo no <th> nao adianta: com table-layout:fixed quem
     manda e o colgroup. A largura tem que ir para a variavel que ele le."""

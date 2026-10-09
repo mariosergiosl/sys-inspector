@@ -1437,12 +1437,21 @@ _JS_COLUNAS_CORE = r"""
       // tabela se redistribuia de novo e a coluna saltava para 662px, com a
       // alca 51px a direita do cursor. Congelar o que esta na tela faz a soma
       // declarada igualar a caixa, e o primeiro pixel deixa de redistribuir.
+      // Mede TODAS antes de gravar QUALQUER uma. Gravar uma coluna redistribui
+      // a tabela na hora, e a proxima leitura ja sai alterada: na primeira
+      // versao desta correcao, medida no Chrome, PID desenhada com 102px foi
+      // gravada como 83px e "Command Tree" saltou de 917px para 1097px no
+      // proprio clique.
       var linha = alvo.parentElement;
+      var medidas = [];
       for (var i = 0; i < linha.children.length; i++){
-        gravar(linha.children[i], linha.children[i].offsetWidth);
+        medidas.push(linha.children[i].offsetWidth);
+      }
+      for (var j = 0; j < linha.children.length; j++){
+        gravar(linha.children[j], medidas[j]);
       }
       ultima = linha.children[linha.children.length - 1];
-      ultimaIni = ultima.offsetWidth;
+      ultimaIni = medidas[medidas.length - 1];
       document.body.style.userSelect = 'none';
       e.preventDefault();
     });
