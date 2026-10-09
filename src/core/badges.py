@@ -52,7 +52,10 @@ def _sig(chave_risco):
 # significado forense/seguranca).
 TAG_MAP = {
     "SSH": ("🔌", "t-ssh", "Active SSH Connection",
-            "Sessao SSH ativa. Rotina de administracao remota; o valor "
+            "Sessao SSH ativa: de entrada (o processo sshd da sessao) ou "
+            "de saida (o cliente ssh). O servico sshd que apenas escuta, o "
+            "ssh-agent e o ssh-keygen nao acendem. Rotina de administracao "
+            "remota; o valor "
             "forense esta em cruzar QUEM entrou (loginuid) e QUANDO com o "
             "log de autenticacao do host, nao no badge isolado."),
     "SUDO": ("🛡️", "t-sudo", "Running via Sudo",
