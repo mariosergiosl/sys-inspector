@@ -686,7 +686,8 @@ def _get_details_html(node, mounts, tree=None):
     html += f"<tr><td class='ctx-lbl'>Life Time:</td><td class='ctx-val' style='color:var(--grn)'>{getattr(node, 'duration_str', 'N/A')}</td></tr>"
 
     is_sudo = "Yes" if "sudo" in node.cmd else "No"
-    is_ssh = "Yes" if "sshd" in node.cmd else "No"
+    # [F-206] O detalhe le a MESMA decisao do badge, em vez de repetir a regra.
+    is_ssh = "Yes" if "SSH" in (getattr(node, "context_tags", None) or []) else "No"
     html += f"<tr><td class='ctx-lbl'>Sudo/SSH:</td><td class='ctx-val'>Sudo:{is_sudo} / SSH:{is_ssh}</td></tr>"
 
     # [F-201] sched_process_exit nao vira badge de anomalia (todo processo

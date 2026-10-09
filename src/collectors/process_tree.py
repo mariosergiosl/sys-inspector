@@ -137,6 +137,33 @@ def calculate_md5(filepath):
         return "ACCESS_DENIED"
 
 
+def _eh_sessao_ssh(cmd):
+    """
+    [F-206] Se a linha de comando e de uma SESSAO SSH, de entrada ou de saida.
+
+    Fonte unica da decisao: o badge (duas montagens da arvore) e o detalhe do
+    processo leem isto. Ate 2026-10-09 eram tres copias, duas acendendo por
+    `"ssh" in cmd` e o detalhe por `"sshd" in cmd`: para
+    `/usr/bin/ssh-agent /usr/bin/gpg-agent ...` o badge acendia e o detalhe
+    dizia SSH:No. E a substring casava qualquer linha que CITASSE ssh, como um
+    curl de alerta de login com "Servico: sshd" no texto, medido na .161.
+
+    Formas medidas no laboratorio (OpenSSH do Leap 15.6 e do SLES 15 SP6):
+      - "sshd: root [priv]", "sshd: root@pts/0", "sshd: root@notty": sessao;
+      - "sshd: /usr/sbin/sshd -D [listener] ...": o servico escutando, NAO;
+      - argv[0] "ssh" (cliente): conexao de saida, sim;
+      - ssh-agent, ssh-keygen, sshfs, sftp-server: nao sao sessao.
+
+    PARAMETER cmd: linha de comando do processo, argumentos separados por espaco.
+    """
+    texto = (cmd or "").strip()
+    if not texto:
+        return False
+    if texto.startswith("sshd:"):
+        return "[listener]" not in texto
+    return os.path.basename(texto.split()[0]) == "ssh"
+
+
 def _get_container_info(pid):
     """Parses cgroup to find Docker/K8s/Podman IDs."""
     c_id, c_type = None, "host"
@@ -630,7 +657,7 @@ class ProcessNode:
                 self.context_tags.append("🧊")  # ICE CUBE
                 self.detection_reasons.append(f"Latency: Waiting for {reason}")
 
-        if "sshd" in cmd_lower or "ssh" in cmd_lower:
+        if _eh_sessao_ssh(self.cmd):
             if "SSH" not in self.context_tags: self.context_tags.append("SSH")
         if "sudo" in cmd_lower:
             if "SUDO" not in self.context_tags: self.context_tags.append("SUDO")
@@ -773,7 +800,7 @@ class ProcessTree:
                 node.loginuser = get_username(loginuid)
 
             cmd_lower = cmd.lower()
-            if ("sshd" in cmd_lower or "ssh" in cmd_lower) and "SSH" not in node.context_tags:
+            if _eh_sessao_ssh(cmd) and "SSH" not in node.context_tags:
                 node.context_tags.append("SSH")
             if "sudo" in cmd_lower and "SUDO" not in node.context_tags:
                 node.context_tags.append("SUDO")
