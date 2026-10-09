@@ -23,6 +23,7 @@ Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks dir
 ## Features (v1.3.1)
 
 * **Fixed in v1.3.1 - The signing identity survives a redeploy on a correctly configured agent:** Three defects found on the bench inside the 1.3.0 fix: the inheritance failed on agents holding only the analyst public key, declaring half of the key pair regenerated the other half, and an agent without the analyst private key was refused at startup. `verify_tls` is now documented in `conf/config.yaml`.
+* **New in v1.3.1 - Finding the capture that matters:** The navigation bar shows each capture's type, and a capture taken while the test scenario runs is marked as such however it was started. The SSH and container badges no longer light up on host processes, and the interface now says Hosts and Report, with capture (agent) distinct from collection (server).
 * **New in v1.3.0 - A signing identity that survives a redeploy:** The key that signs captures now lives where state lives, next to the database, and is inherited from the old location rather than regenerated. Every capture carries the fingerprint of the key that signed it and says how that key got there. A new key is legitimate; being born silently is not, because the same agent signing with two keys and nothing explaining it is exactly what the opposing side looks for.
 * **New in v1.3.0 - An agent that can actually be idle:** Off by default. When on, the heavy capture stops running every cycle and happens for a reason: the declared cadence, an analyst command, or the agent's first cycle. A cycle that does not capture writes down why, with the time remaining, so an idle agent never looks like a stuck one.
 * **New in v1.2.0 - The report as an exhibit:** It downloads as a file named after the host and the moment of COLLECTION, always complete, built by the same code path that draws the screen, and without the navigation bar, because a dead button in a forensic document is worse than no button. The bar itself now moves between captures (previous, next, latest, "capture N of M"), and an arrow with nowhere to go stays visible and dimmed rather than vanishing: the edge of the collection is information.
@@ -30,7 +31,7 @@ Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks dir
 * **New in v1.1.0 - Directed acquisition and referral:** A suspect file or memory region is hashed, excerpted and, when it fits the declared byte budget, copied - always recording the hash SCOPE, so a partial hash is never read as identifying the whole object. Every finding can also state which bench analysis concludes what it cannot, why, and on which object: the tool collects enough to identify and direct, never the mass that proves, and that is only honest when it says who finishes the job.
 * **New in v1.1.0 - Rootkit hunting and container escape:** Crosses the three kernel module lists with the taint flags, judges every library in `/etc/ld.so.preload` by package provenance, and follows `mount` and `pivot_root` - the step that turns a broken namespace into host access. TLS SNI completes "who with" where DNS does not reach (cache, fixed IP, DoH).
 * **New in v1.1.0 - A single execution path:** Agent and server, nothing else. For one machine, install both on the same host. HTTPS is the only transport; the plaintext path was removed from the code rather than switched off.
-* **New in v1.1.0 - A report built for the tree:** The inventory block collapses to give the process tree the screen, columns resize by dragging the divider in the header, and the tree scrolls in both axes with the header staying put. Every detail block is always present, in one of three states: a value, "looked and found nothing", or "not collected by this capture".
+* **New in v1.1.0 - A report built for the tree:** The inventory block collapses to give the process tree the screen, columns resize by dragging the divider in the header, and the tree scrolls in both axes with the header staying put. Every detail block is always present, in one of three states: a value, "looked and found nothing", or "not captured by this capture".
 
 * **New in v1.0.0 - Answer contract per finding:** Every finding declares its **confidence** (confirmed / probable / heuristic), so a heuristic is never shown as a fact, and its **custody** (what was preserved of the artifact). The forensic report reads as an investigation: a "how to read" strip (Findings -> Processes -> ATT&CK), a severity legend with the operator action, tooltips on every evidence field, and clickable pivots in both directions between a finding and its ATT&CK technique.
 * **New in v1.0.0 - Distributed fleet:** Pull-model agents forward encrypted captures to a central server (store-and-forward outbox, prioritized ingestion, audited command queue, per-agent capabilities, HTTPS). The Manager shows each command's progress as a live stepper.
@@ -38,7 +39,7 @@ Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks dir
 * **Forensic Findings:** Every collector emits normalized findings on a single severity scale (Info to Critical), each carrying the source that produced it, the MITRE ATT&CK technique, the raw evidence and a recommended action.
 * **Persistence Enumeration:** Answers the first question after a suspected compromise, how would an intruder survive a reboot: systemd units, cron/at jobs, startup and profile scripts, `/etc/ld.so.preload`, kernel module autoload, udev rules, PAM stacks and per-user `authorized_keys`. Baseline items stay informational; severity rises only on real indicators such as execution from user-writable paths, world-writable files, hidden names or recent modification.
 
-* **Fleet View Dashboard:** Monitor multiple infrastructure nodes from a single centralized web interface.
+* **Hosts Dashboard (Manager):** Monitor multiple infrastructure nodes from a single centralized web interface.
 * **Forensic Time Machine:** Pause live execution and travel back in time to inspect historical snapshots stored in SQLite.
 * **Kernel-Level Visibility:** Uses eBPF kprobes/tracepoints for zero-blindspot monitoring.
 * **Deep Forensics:**
@@ -117,7 +118,7 @@ receives and renders. For a single machine, install both on the same host.
 
 ### 1. Server (dashboard)
 
-Receives captures from the agents and serves the Fleet dashboard.
+Receives captures from the agents and serves the Manager dashboard (the host list).
 
 ```bash
     sudo sys-inspector --mode server

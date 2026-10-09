@@ -103,3 +103,13 @@ def test_o_botao_de_navegacao_diz_hosts():
                  encoding="utf-8") as fh:
         fonte = fh.read()
     assert '("&#127968;", "/", "Hosts")' in fonte
+
+
+def test_o_log_do_servidor_tambem_deixou_frota():
+    """O Mario liberou trocar tambem esta mensagem de log (2026-10-09), que
+    aparece a cada partida de um servidor sem autenticacao."""
+    with io.open(os.path.join(RAIZ, "src/controllers/server_controller.py"),
+                 encoding="utf-8") as fh:
+        fonte = fh.read()
+    assert "coleta inteira da frota" not in fonte
+    assert "tudo o que foi coletado de todos os hosts" in fonte

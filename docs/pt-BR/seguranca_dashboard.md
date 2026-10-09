@@ -97,7 +97,7 @@ de um documento antigo, e o *"só nesta rede, só por hoje"* que fica permanente
 A **verificação do certificado** (`daemon.verify_tls`, no agente), porque ela
 depende de infraestrutura que nem todo ambiente tem: uma CA que assine o
 certificado do servidor. Desligar protege contra escuta passiva e **não** contra
-um interceptador ativo, e essa diferença muda o quanto o laudo daquele agente
+um interceptador ativo, e essa diferença muda o quanto o relatório daquele agente
 vale — por isso ela é registrada no **log**, toda vez, e não só no arquivo de
 configuração.
 
@@ -105,4 +105,4 @@ configuração.
 
 Para um dashboard alcançável além do `localhost`, habilite **também** o Basic
 Auth. O HTTPS já protege a credencial em trânsito; o Basic Auth é o que impede
-que qualquer um que alcance a porta leia a coleta inteira da frota.
+que qualquer um que alcance a porta leia tudo o que foi coletado de todos os hosts.

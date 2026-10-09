@@ -7,8 +7,8 @@
 > item de backlog) que sustenta a afirmação. Uma tabela de conformidade sem
 > evidência é pior que nenhuma tabela, porque promete o que ninguém conferiu.
 >
-> A ferramenta é de **forense de frota**, não de bancada (decisão D-024). Ela
-> coleta o suficiente para **identificar e direcionar**, nunca a massa que prova
+> A ferramenta é de **forense de múltiplos hosts**, não de bancada (decisão D-024). Ela
+> captura o suficiente para **identificar e direcionar**, nunca a massa que prova
 > (decisão D-032). Vários "não cobre" abaixo são escolha deliberada, e estão
 > marcados como tal.
 
@@ -55,7 +55,7 @@ Organiza o trabalho em quatro fases: **coleta, exame, análise e apresentação*
 | Coleta | **Coberto** | 33 pontos de instrumentação eBPF e 8 coletores estáticos |
 | Exame (extrair o relevante do volume) | **Coberto** | `src/core/findings.py` (modelo `Finding` com escala única e impressão digital estável), deduplicação e ordenação por severidade |
 | Análise (correlacionar entre fontes) | **Parcial** | `src/core/correlation.py` correlaciona achado estático com runtime e monta cadeias ATT&CK. A correlação **entre capturas** da mesma série é fraca (itens `C-156` e `F-218`) |
-| Apresentação | **Parcial** | Laudo HTML com abas Findings, Processes e ATT&CK. Falta o laudo como **arquivo** exportável (item `C-149`) e o relatório executivo (`F-061`) |
+| Apresentação | **Parcial** | Relatório HTML com abas Findings, Processes e ATT&CK. Falta o relatório como **arquivo** exportável (item `C-149`) e o relatório executivo (`F-061`) |
 | Timeline como produto da análise | **Parcial** | Existe tela de linha do tempo e `src/core/events.py`, mas os eventos são **derivados da captura** (`events_from_capture`), então herdam a cegueira do snapshot (item `C-155`) |
 
 ---
@@ -90,7 +90,7 @@ mais do que já existe sem aumentar o que se guarda.
 | Continuidade da identidade que assina | **Coberto** | A chave do agente mora onde mora o estado, ao lado do banco, e não no diretório de configuração, que se recria num redeploy. Toda captura carrega a impressão digital da chave que a assinou, e uma chave nova nunca nasce em silêncio: o registro declara se ela já existia, foi herdada de um caminho anterior ou foi criada (`C-158`) |
 | Registro de quem, quando e como | **Parcial** | A captura registra o agente, o instante e a versão do coletor. Falta o **duplo tempo** (quando ocorreu × quando foi observado), item `C-157` |
 | Documentar limitações da aquisição | **Coberto** | Quando o orçamento de bytes se esgota, ou o objeto não é arquivo comum, a custódia registra o motivo em vez de omitir |
-| Minimizar alteração do alvo | **Coberto** | O agente não escreve laudo no host inspecionado, e o gerador de cenário planta artefatos discretos sem alterar o comportamento do resto do host (decisão D-025) |
+| Minimizar alteração do alvo | **Coberto** | O agente não escreve relatório no host inspecionado, e o gerador de cenário planta artefatos discretos sem alterar o comportamento do resto do host (decisão D-025) |
 
 ---
 
@@ -115,7 +115,7 @@ Registrado para que a ausência não seja lida como esquecimento.
 | Não faz | Decisão que tirou |
 |---|---|
 | Captura de memória bruta em massa (LiME e similares) | D-032; removido do escopo em 2026-08-19 |
-| Análise de imagem de memória (Volatility) | Bancada, é o passo depois do laudo |
+| Análise de imagem de memória (Volatility) | Bancada, é o passo depois do relatório |
 | Captura integral de tráfego | D-032: dizer que "500 MB foram para o IP X" é o trabalho; o conteúdo é bancada |
 | Bloqueio, contenção ou resposta ativa | A ferramenta é forense, não EDR (D-024) |
 | Deduzir quais achados vieram do cenário de teste | D-034: só o nome do script é mapeado; o resto tem que ser descoberta legítima, senão a prova é circular |

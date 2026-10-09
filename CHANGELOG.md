@@ -12,6 +12,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Four defects, all found **on the bench** while bringing the lab up for 1.3.0,
 none by reading code. Three of them were inside the fix for the signing key
 that disappeared on redeploy, which already had tests, review and a green CI.
+The rest of this release came from evaluating 1.3.1 itself on a three-agent
+lab: what the screen showed, measured against what the hosts were doing.
+
+### Changed
+
+- **Interface vocabulary.** "Fleet" (Frota) is now **Hosts** and "Laudo" is
+  now **Relatorio** (report): a laudo is the document an examiner signs, not
+  what the tool produces. Capture and collection are now distinct terms: the
+  agent **captures** data from the host, the server **collects** what the
+  agent captured. Texts about the agent side that said "coleta" now say
+  "captura", including the empty-field state, now "nao capturado". The
+  Portuguese interface guide was renamed to
+  `docs/pt-BR/interface-do-relatorio.md`. Code identifiers were kept.
+
+### Added
+
+- **The navigation bar says what kind of capture is on screen.** Complete,
+  test scenario (highlighted) or idle, and each arrow says what kind of capture
+  it leads to before the click. A capture stored before the type was recorded
+  says so, instead of being presumed complete.
+- **A capture taken while the test scenario is running is marked as such,
+  whatever started it.** Before, only the capture triggered by the scenario
+  command was marked: measured on the bench, 1 of the 7 captures taken with the
+  scenario alive. The agent now marks a capture when it observes the scenario
+  script in the captured process tree, including a scenario that started
+  during the capture window and that the tree only knew as `/bin/bash` with the
+  script open.
 
 ### Fixed
 
@@ -51,6 +78,33 @@ that disappeared on redeploy, which already had tests, review and a green CI.
   difference to the last one only when the table would no longer fill the
   box. Same code for the report and the Manager; the drag follows the
   cursor pixel for pixel in both.
+
+- **The SSH badge lit up without an SSH session, and the process detail
+  contradicted it.** The same rule lived in three places: the badge matched the
+  substring `ssh` anywhere in the command line, the detail matched `sshd`. An
+  `ssh-agent` lit the badge while the detail said SSH: No, and a login-alert
+  `curl` that merely mentioned sshd in its message would have lit it too. One
+  rule now, built from command lines measured on the bench: an sshd session
+  process (not the listener) or an outbound `ssh` client.
+
+- **Host processes on a machine with Docker or Podman were reported as
+  containers.** Detection matched the substring `docker` in the cgroup: the
+  host's own `dockerd` and `containerd` (`docker.service`) became a container
+  with id `service`. Measuring it found a second case: Podman's `conmon`, which
+  runs on the host, became a container with id `conmon2026ed`. Docker and
+  Podman are now matched by the container id format. This badge is the entry
+  point for container-escape analysis, and marking the host as a container
+  erases the boundary that analysis needs. Kubernetes detection is unchanged
+  for lack of a real sample on the bench.
+
+- **Agent and server announced an old, hard-coded version.** The agent logged
+  `Universal Collector (v0.80)` and every server start warned that the server
+  mode was "being refactored for v0.80", untrue since 1.1.0. Both now read the
+  single version source, and a test guards every log message.
+
+- **The test suite left fake scenario logs in the host's `/tmp`,** with the
+  same name pattern as real scenario logs. Tests now write to their own
+  directory.
 
 ### Documentation
 
