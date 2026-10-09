@@ -5,6 +5,56 @@ All notable changes to the **Sys-Inspector** project will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Four defects, all found **on the bench** while bringing the lab up for 1.3.0,
+none by reading code. Three of them were inside the fix for the signing key
+that disappeared on redeploy, which already had tests, review and a green CI.
+
+### Fixed
+
+- **Key inheritance failed precisely on the well-configured agent.** The path
+  to inherit the old key from was derived from `private_key_path`, which is the
+  **analyst's** key. A correct agent does not have it: it receives only the
+  public half, because it must encrypt and must not be able to decrypt. On
+  those hosts the path became `"."`, relative to the process working directory,
+  the inheritance found nothing and the agent generated a new key. The defect
+  the fix exists to prevent would have survived inside the fix itself, and only
+  on the best-configured agents. It now looks in three places, ending at the
+  public key, which every agent has by definition.
+
+- **Declaring half the key pair regenerated the other half over it.** With only
+  `agent_private_key_path` set, the private half came from the declared
+  directory and the public half from the database directory. The pair ended up
+  split, the code concluded it was incomplete, and generated a new identity
+  **over the one the operator had declared**. Declaring either half now fixes
+  the directory for both.
+
+- **The correct agent configuration was refused at startup**, with
+  `Failed to provision cryptographic keys: 'private_key_path'`. The
+  provisioning routine already handled this properly, only generating a pair
+  when the **public** key is missing, but `main.py` read the private path with
+  a direct dictionary access and raised before reaching it. In practice every
+  agent was forced to declare a path for the key it must not have. The
+  analyst's private key is now optional at startup, and the decryption utility
+  explains the absence instead of raising.
+
+### Documentation
+
+- **`verify_tls` is documented in `conf/config.yaml`.** Against a self-signed
+  certificate the delivery simply failed, the agent logged `Delivery failed`
+  with no reason, and the only explanation lived in the source. A setting that
+  decides whether evidence reaches the server cannot live only in the code. It
+  ships on, and the comment states what is given up by turning it off: proof of
+  **who** is on the other end, not secrecy.
+
+### Known gap this exposed
+
+- **A failed delivery does not say why it failed.** A rejected certificate, a
+  closed port, a wrong token and a server that is down all produce the same log
+  line. That is the message separating "the lab is misconfigured" from
+  "evidence is being lost", and today it separates nothing.
+
 ## [1.3.0] - 2026-09-18
 
 Chain of custody that survives a redeploy, an agent that can be idle, and

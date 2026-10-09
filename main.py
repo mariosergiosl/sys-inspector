@@ -207,10 +207,23 @@ def main():
     # --------------------------------------------------------------------------
     try:
         from src.core.crypto import ensure_crypto_environment
-        ensure_crypto_environment(
-            config['security']['public_key_path'],
-            config['security']['private_key_path']
-        )
+        seguranca = config.get('security', {}) or {}
+        caminho_publica = seguranca['public_key_path']
+        # A chave PRIVADA do analista e opcional, e num agente ela deve mesmo
+        # estar ausente: ele cifra o que coleta e nao consegue reabrir.
+        #
+        # Ate 2026-09-18 isto era lido com acesso direto e estourava KeyError,
+        # de modo que a configuracao CORRETA de um agente era recusada na
+        # partida. Na pratica obrigava todo agente a declarar um caminho para
+        # a chave que ele nao pode ter, e foi o que se encontrou no
+        # laboratorio: config apontando um arquivo que nunca existiu.
+        #
+        # O destino so e usado quando a chave PUBLICA falta e o par precisa
+        # nascer; nesse caso a privada nasce ao lado dela, que e onde alguem
+        # iria procurar.
+        caminho_privada = seguranca.get('private_key_path') or os.path.join(
+            os.path.dirname(caminho_publica) or ".", "private_key.pem")
+        ensure_crypto_environment(caminho_publica, caminho_privada)
     except Exception as e:
         logging.critical(f"Failed to provision cryptographic keys: {e}")
         sys.exit(1)
@@ -247,7 +260,12 @@ def main():
         logging.info(f"[*] Attempting to decrypt Snapshot ID: {args.decrypt_snapshot}")
 
         # Load Private Key
-        priv_path = config['security']['private_key_path']
+        priv_path = (config.get('security', {}) or {}).get('private_key_path')
+        if not priv_path:
+            logging.error("No private_key_path configured. Decryption needs "
+                          "the analyst private key, which lives on the server "
+                          "and never on an agent.")
+            sys.exit(1)
         if not os.path.exists(priv_path):
             logging.error(f"Private Key not found at {priv_path}")
             sys.exit(1)

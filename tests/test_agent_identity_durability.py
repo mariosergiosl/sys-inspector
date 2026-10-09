@@ -330,3 +330,86 @@ def test_os_tres_eventos_tem_nome_estavel(evento):
     meses depois. Renomea-los quebraria a leitura de capturas ja emitidas.
     """
     assert evento in ("existing", "migrated", "created")
+
+
+# ==============================================================================
+# 4. O AGENTE ENRIJECIDO, QUE NAO TEM A CHAVE DO ANALISTA
+# ==============================================================================
+# Achado em 2026-09-18 ao preparar o laboratorio, e nao por leitura de codigo.
+# A heranca era derivada de `private_key_path`, que e a chave do ANALISTA. Um
+# agente correto NAO a possui: ele recebe so a publica, porque precisa cifrar e
+# nao pode decifrar. Nesses hosts o caminho virava ".", relativo ao diretorio de
+# trabalho, a heranca nao achava nada e o agente gerava chave nova.
+#
+# Ou seja: o defeito que o C-158 existe para evitar sobreviveria DENTRO da
+# correcao, e justamente nos agentes mais bem configurados. O laboratorio so nao
+# denunciou de imediato porque a config de la declara a chave do analista sem
+# ter o arquivo.
+# ==============================================================================
+
+def test_agente_sem_chave_do_analista_ainda_herda(tmp_path):
+    """
+    REPROVA A VERSAO COM O FURO: com apenas `public_key_path` na configuracao, a
+    chave do lugar antigo tem que ser herdada do mesmo jeito.
+    """
+    conf = tmp_path / "conf"
+    estado = tmp_path / "var"
+    conf.mkdir()
+    estado.mkdir()
+
+    velha_priv = str(conf / "agent_private_key.pem")
+    velha_pub = str(conf / "agent_public_key.pem")
+    ensure_agent_identity(velha_priv, velha_pub)
+    impressao_antes = agent_key_fingerprint(velha_pub)
+
+    # Configuracao de AGENTE de verdade: so a chave publica do analista.
+    cfg = {"security": {"public_key_path": str(conf / "public_key.pem")}}
+    db = _BancoFalso(str(estado / "sys_inspector.db"))
+    registro = build_for_capture(db, cfg, {"processes": {}})
+
+    assert registro["agent_key_event"] == IDENTITY_MIGRATED, (
+        "agente sem a chave do analista gerou identidade NOVA em vez de herdar "
+        "a que ja existia (C-158)")
+    assert agent_key_fingerprint(str(estado / "agent_public_key.pem")) == impressao_antes
+
+
+def test_o_caminho_do_agente_tem_precedencia_sobre_o_do_analista(tmp_path):
+    """
+    Quem declarou onde a chave DO AGENTE fica foi explicito sobre este assunto.
+    Essa declaracao vale mais que a do analista, que fala de outra coisa.
+    """
+    explicito = tmp_path / "explicito"
+    outro = tmp_path / "outro"
+    estado = tmp_path / "var"
+    for d in (explicito, outro, estado):
+        d.mkdir()
+
+    velha_priv = str(explicito / "agent_private_key.pem")
+    velha_pub = str(explicito / "agent_public_key.pem")
+    ensure_agent_identity(velha_priv, velha_pub)
+    impressao = agent_key_fingerprint(velha_pub)
+
+    cfg = {"security": {
+        "agent_private_key_path": str(explicito / "agent_private_key.pem"),
+        "private_key_path": str(outro / "private_key.pem"),
+    }}
+    db = _BancoFalso(str(estado / "sys_inspector.db"))
+    registro = build_for_capture(db, cfg, {"processes": {}})
+
+    # O caminho explicito manda, entao a chave continua onde estava.
+    assert registro["agent_key_event"] == IDENTITY_EXISTING
+    assert registro["agent_key_fingerprint"] == impressao
+
+
+def test_configuracao_sem_caminho_nenhum_nao_quebra(tmp_path):
+    """
+    CENARIO ADVERSO: configuracao minima, sem chave declarada. A captura tem que
+    sair assinada do mesmo jeito, com identidade nova e o evento declarando isso.
+    """
+    estado = tmp_path / "var"
+    estado.mkdir()
+    db = _BancoFalso(str(estado / "sys_inspector.db"))
+    registro = build_for_capture(db, {"security": {}}, {"processes": {}})
+
+    assert registro["agent_key_event"] == IDENTITY_CREATED
+    assert registro["signature"]

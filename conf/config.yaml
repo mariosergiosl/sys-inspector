@@ -214,6 +214,22 @@ daemon:
   server_port: 443
   auth_token: "CHANGE_ME"
 
+  # Verify the server's TLS certificate chain. ON by default, and it should
+  # stay on: the agent is delivering forensic evidence, and a certificate it
+  # does not check is a certificate anybody can present.
+  #
+  # Turn it off ONLY against a self-signed certificate, which is the normal
+  # case in a lab. Encryption stays either way; what is given up is proof of
+  # WHO is on the other end, not secrecy. The agent logs a warning saying
+  # exactly that on every start, so the choice never becomes invisible.
+  #
+  # This key was undocumented until 2026-09-18 and it cost a diagnosis in the
+  # lab: against a self-signed certificate the delivery simply failed, the
+  # agent logged "Delivery failed" with no reason, and only the source
+  # explained why. A setting that decides whether evidence reaches the server
+  # cannot live only in the code.
+  verify_tls: true
+
   # [LEGACY v0.60] Direct Sender Options (Not used in v0.80 Local logic yet)
   # batch_size: 10
   # retry_limit: 3

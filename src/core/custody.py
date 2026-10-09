@@ -200,13 +200,51 @@ def build_for_capture(db, config, payload, collector_version=None):
     # Um caminho declarado na configuracao continua mandando: quem escolheu onde
     # a chave fica escolheu por algum motivo, e nao cabe a uma atualizacao mudar
     # isso por conta propria.
-    base_conf = os.path.dirname(sec.get("private_key_path", "") or "") or "."
+    # [C-158] De onde vem o diretorio de CONFIGURACAO, que e onde a chave do
+    # agente morava antes e de onde ela precisa ser herdada.
+    #
+    # Derivar isso de `private_key_path` sozinho era um furo, achado ao preparar
+    # o laboratorio em 2026-09-18: essa e a chave do ANALISTA, e um agente
+    # corretamente enrijecido NAO a possui. Nesses hosts o caminho virava ".",
+    # relativo ao diretorio de trabalho do processo, a heranca nao encontrava
+    # nada e o agente gerava chave nova. Ou seja, o defeito que este item existe
+    # para evitar sobreviveria dentro da propria correcao, e justamente nos
+    # agentes mais bem configurados.
+    #
+    # A ordem abaixo vai do mais especifico ao mais generico, e termina na chave
+    # PUBLICA, que todo agente tem por definicao: sem ela ele nao consegue
+    # cifrar o que coleta.
+    base_conf = "."
+    for chave in ("agent_private_key_path", "private_key_path",
+                  "public_key_path"):
+        caminho = os.path.dirname(sec.get(chave, "") or "")
+        if caminho:
+            base_conf = caminho
+            break
+
     base_estado = os.path.dirname(getattr(db, "db_path", "") or "") or base_conf
 
-    agent_priv = sec.get("agent_private_key_path",
-                         os.path.join(base_estado, "agent_private_key.pem"))
-    agent_pub = sec.get("agent_public_key_path",
-                        os.path.join(base_estado, "agent_public_key.pem"))
+    # O PAR mora junto, sempre.
+    #
+    # Antes, cada metade era resolvida por conta propria: declarar so a privada
+    # deixava a publica no diretorio do banco, o par ficava partido em dois
+    # lugares, o codigo concluia que estava incompleto e GERAVA UMA CHAVE NOVA
+    # POR CIMA da que o operador tinha declarado. E o mesmo defeito da chave que
+    # some no deploy, chegando por outro caminho, e ele destroi a identidade que
+    # alguem escolheu preservar. Achado por teste em 2026-09-18.
+    #
+    # Declarar uma metade fixa o diretorio das duas.
+    agent_priv = sec.get("agent_private_key_path")
+    agent_pub = sec.get("agent_public_key_path")
+    if agent_priv and not agent_pub:
+        agent_pub = os.path.join(os.path.dirname(agent_priv),
+                                 "agent_public_key.pem")
+    elif agent_pub and not agent_priv:
+        agent_priv = os.path.join(os.path.dirname(agent_pub),
+                                  "agent_private_key.pem")
+    elif not agent_priv and not agent_pub:
+        agent_priv = os.path.join(base_estado, "agent_private_key.pem")
+        agent_pub = os.path.join(base_estado, "agent_public_key.pem")
 
     # De onde herdar, quando o destino ainda nao existe: o local antigo, dentro
     # do diretorio de configuracao. Herdar e o que impede que a PROPRIA correcao
