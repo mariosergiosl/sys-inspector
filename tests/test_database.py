@@ -39,7 +39,9 @@ def test_hot_columns_persisted(db):
     assert row["cpu_avg"] == 12.5
     assert row["mem_used_mb"] == 345
     assert row["alert_score"] == 64
-    assert row["is_alert"] == 1
+    # [F-261] 64 e so net_error, nivel Low: desde 2026-10-09 nao e alerta
+    # (decisao do Mario: Info e Low nao acendem). Ver test_alerta_medio_ou_acima.
+    assert row["is_alert"] == 0
 
 
 def test_is_alert_zero_when_no_score(db):
