@@ -54,7 +54,7 @@ def test_campo_nao_coletado_diz_que_nao_foi_coletado():
     html = render_os_block(dados, HW)
 
     assert "FQDN" in html
-    assert "nao coletado" in html
+    assert "nao capturado" in html
 
 
 def test_os_dois_estados_de_ausencia_nao_se_confundem():
@@ -67,9 +67,9 @@ def test_os_dois_estados_de_ausencia_nao_se_confundem():
     del sem_chave["fqdn"]
     ausente = render_os_block(sem_chave, HW, agent_uuid="u")
 
-    assert "nao coletado" not in vazio
+    assert "nao capturado" not in vazio
     assert "nao havia valor" in vazio
-    assert "nao coletado" in ausente
+    assert "nao capturado" in ausente
 
 
 def test_todo_campo_do_bloco_system_aparece_sempre():
@@ -83,7 +83,7 @@ def test_todo_campo_do_bloco_system_aparece_sempre():
 def test_uuid_ausente_nao_apaga_a_linha():
     html = render_os_block(COMPLETO, HW, agent_uuid=None)
     assert "Agent UUID" in html
-    assert "nao coletado" in html
+    assert "nao capturado" in html
 
 
 # ------------------------------------------------------------------------------
@@ -101,7 +101,7 @@ def test_host_sem_interfaces_diz_que_procurou():
 
 def test_interfaces_nao_coletadas_sao_declaradas():
     html = render_net_block({"gateway": "10.0.0.1"})
-    assert "nao coletado" in html
+    assert "nao capturado" in html
 
 
 def test_gateway_e_dns_vazios_nao_somem():

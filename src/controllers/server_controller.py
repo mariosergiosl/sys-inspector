@@ -180,7 +180,7 @@ _CSS_IDENTIDADE = _PALETA + (
     ".attck:hover{border-color:var(--yel);background:#222}")
 
 # Barra de navegacao entre as telas do servidor, uma so definicao para todas.
-_NAVEGACAO = (("&#127968;", "/", "Frota"),
+_NAVEGACAO = (("&#127968;", "/", "Hosts"),
               ("&#128337;", "/timeline", "Linha do tempo"),
               ("&#128203;", "/queue", "Fila"),
               ("&#128220;", "/log", "Comandos"),
@@ -201,7 +201,7 @@ _TIPOS_DE_CAPTURA = {
               "PLANTADOS de proposito no laboratorio."),
     "idle": ("ociosa", "#6a9fb5",
              "Heartbeat do modo ocioso: custo e tamanho fixos, sem a "
-             "coleta pesada."),
+             "captura pesada."),
 }
 
 
@@ -953,11 +953,11 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 cor_idade = ("#ff4d4d" if idade_seg > 3600
                              else "#ffd166" if idade_seg > 900 else "#6a9955")
                 carimbo = (
-                    "<span title=\"Momento em que o agente coletou estes "
-                    "dados. O laudo descreve o host NAQUELE instante, e nao "
+                    "<span title=\"Momento em que o agente capturou estes "
+                    "dados. O relatorio descreve o host NAQUELE instante, e nao "
                     "agora.\" style=\"margin-left:16px; font-size:11px; "
                     "font-family:sans-serif; color:#888\">"
-                    "coletado em %s <b style=\"color:%s\">(%s)</b></span>"
+                    "capturado em %s <b style=\"color:%s\">(%s)</b></span>"
                     % (datetime.datetime.fromtimestamp(
                         float(snaps[0].get('timestamp') or 0)
                     ).strftime("%Y-%m-%d %H:%M:%S"), cor_idade,
@@ -987,7 +987,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     # produz artefato sem carimbo de origem. Numa ferramenta
                     # forense o laudo e a peca que se anexa ao processo.
                     + ("<a href=\"/download/%s?capture=%s\" "
-                       "title=\"Baixar este laudo como arquivo, para anexar. "
+                       "title=\"Baixar este relatorio como arquivo, para anexar. "
                        "Vem sempre completo e identico ao que esta na tela, "
                        "sem a barra de navegacao.\" "
                        "style=\"color:#4ec9b0; padding:4px 6px; "
@@ -1390,7 +1390,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # [C-149] O laudo como arquivo, por captura. E aqui que se escolhe
             # QUAL captura vira peca: a tela do laudo baixa a que esta aberta,
             # e esta lista baixa qualquer uma sem precisar abrir antes.
-            baixar = ("<a class='btn' title='Baixar o laudo desta captura como "
+            baixar = ("<a class='btn' title='Baixar o relatorio desta captura como "
                       "arquivo, para anexar. Vem sempre completo.' "
                       "href='/download/%s?capture=%s'>&#128190;</a>"
                       % (agent_uuid, c["id"]))
@@ -1405,10 +1405,10 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                           _selo_risco(c.get("alert_score")), botao, baixar))
 
         tabela = ("<p style='color:#777;font-size:12px'>%d capturas. "
-                  "A comparacao roda no servidor: o laudo completo passa de "
+                  "A comparacao roda no servidor: o relatorio completo passa de "
                   "10MB e nao caberia no navegador.</p>"
                   "<table><thead><tr><th>Captura</th>"
-                  "<th>Momento da coleta</th><th>CPU media</th>"
+                  "<th>Momento da captura</th><th>CPU media</th>"
                   "<th>Risco (pior processo)</th><th>Comparar</th>"
                   "<th>Baixar</th></tr></thead>"
                   "<tbody>%s</tbody></table>" % (len(capturas), linhas))
@@ -1421,8 +1421,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                  "em ordem, junto com os dos demais hosts'>&#128337; linha do "
                  "tempo deste agente</a>"
                  "<a class='btn' href='/agent/%s' style='padding:3px 10px;"
-                 "margin-left:6px' title='Abrir o laudo da captura mais "
-                 "recente'>&#128269; laudo atual</a>"
+                 "margin-left:6px' title='Abrir o relatorio da captura mais "
+                 "recente'>&#128269; relatorio atual</a>"
                  "<span style='margin-left:auto'>%s</span></div>"
                  % (_identifica_agente(
                      next((a for a in (controller.db.get_fleet_status() or [])
@@ -1936,7 +1936,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                    "%d na janela de %d minuto(s), em ordem cronologica corrigida "
                    "pelo desvio de relogio de cada host. A correlacao acima "
                    "analisa exatamente esta janela. O simbolo &#8631; leva do "
-                   "evento ao processo na arvore do laudo.</p>"
+                   "evento ao processo na arvore do relatorio.</p>"
                    "<table>%s<tbody>%s</tbody></table>"
                    % (stats["total"], total_janela, minutos,
                       cabecalho_tabela, linhas))
@@ -1984,7 +1984,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     + _selo(detectar.get("btf"), "BTF",
                             "BTF no kernel permite o motor CO-RE")
                     + _selo(detectar.get("root"), "root",
-                            "Sem privilegio o laudo sai incompleto sem erro aparente")
+                            "Sem privilegio o relatorio sai incompleto sem erro aparente")
                     + _selo(detectar.get("cgroup_v2"), "cgroup2",
                             "Muda como conteiner e limite de recurso sao identificados"))
 
@@ -2010,10 +2010,10 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             "Duas perguntas diferentes",
             "<div style='color:#bbb;font-size:11px;margin-top:8px;"
             "line-height:1.6'>"
-            "<b style='color:#4ec9b0'>Deteccao</b>: quanto vale um laudo "
+            "<b style='color:#4ec9b0'>Deteccao</b>: quanto vale um relatorio "
             "produzido neste host. Sem eBPF a captura se reduz ao que /proc "
             "mostra; sem privilegio ela sai incompleta SEM erro aparente, que e "
-            "o pior caso, porque o laudo parece integro.<br><br>"
+            "o pior caso, porque o relatorio parece integro.<br><br>"
             "<b style='color:#4ec9b0'>Cenario de teste</b>: o que a afericao "
             "pode cobrar deste host. Um agente com cenario limitado "
             "nao acusa menos por falha da ferramenta: ele "
@@ -2025,7 +2025,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             "como comprometido, ou o contrario.</div>")
 
         corpo = ("<div class='controles'>"
-                 "<span class='rotulo'>Capacidades da frota</span>"
+                 "<span class='rotulo'>Capacidades dos hosts</span>"
                  "<span style='color:#777;font-size:11px'>%d agente(s). "
                  "Verde = disponivel; vermelho = ausente.</span>"
                  "<span style='margin-left:auto'>%s</span></div>"
@@ -2034,7 +2034,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                  "<tbody>%s</tbody></table>" % (len(agentes), ajuda, linhas))
 
         self._set_headers()
-        self.wfile.write(self._pagina("Capacidades da frota", corpo).encode("utf-8"))
+        self.wfile.write(self._pagina("Capacidades dos hosts", corpo).encode("utf-8"))
 
     def _serve_queue(self, controller):
         """
@@ -2080,7 +2080,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             "line-height:1.6'>"
             "Toda captura passa por aqui antes de virar evidencia guardada, "
             "venha da rede ou da coleta local. A fila existe para o servidor "
-            "nao ser derrubado por uma frota inteira reportando ao mesmo "
+            "nao ser derrubado por todos os hosts reportando ao mesmo "
             "tempo.<br><br>"
             "Numa investigacao, porem, um host importa mais que os outros. A "
             "prioridade coloca esse host na frente sem parar a coleta dos "
@@ -2188,7 +2188,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         # Sem isso "chaos" e uma palavra sem significado para quem nao escreveu
         # a ferramenta, e o registro de uma acao precisa dizer que acao foi.
         ACOES = {
-            "collect": ("&#128248;", "Captura sob demanda: o agente coleta "
+            "collect": ("&#128248;", "Captura sob demanda: o agente captura "
                         "agora, em vez de esperar o proximo ciclo.", ""),
             "chaos": ("&#9760;", "APENAS LAB: executa o cenario de teste, que "
                       "planta artefatos conhecidos para aferir a deteccao.",
@@ -2228,9 +2228,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 # efeito de uma captura chega depois do comando terminar.
                 minutos = max(15, int((time.time() - quando) / 60) + 5)
                 atalhos = ("<div style='margin-top:4px'>"
-                           "<a href='/agent/%s' title='Laudo mais recente deste "
+                           "<a href='/agent/%s' title='Relatorio mais recente deste "
                            "agente' style='color:#4ec9b0;text-decoration:none;"
-                           "font-size:11px;margin-right:8px'>&#128269; laudo</a>"
+                           "font-size:11px;margin-right:8px'>&#128269; relatorio</a>"
                            "<a href='/history/%s' title='Capturas deste agente, "
                            "para achar a que este comando produziu' "
                            "style='color:#4ec9b0;text-decoration:none;"
@@ -2292,7 +2292,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             "<b>Espera</b> = tempo ate o agente recolher o pedido, limitado "
             "pelo ciclo dele. <b>Duracao</b> = tempo de execucao no agente."
             "<br><br>Os atalhos de cada linha levam ao efeito do comando: o "
-            "laudo, a lista de capturas e a janela da linha do tempo que cobre "
+            "relatorio, a lista de capturas e a janela da linha do tempo que cobre "
             "aquele momento.</div>" % STUCK_LIMIT)
 
         corpo = (recorte_html
@@ -2473,7 +2473,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             uptime_col = (
                 "<div title='Ha quanto tempo o HOST esta ligado (desde o boot)'>"
                 "&#128421; %s</div>"
-                "<div title='Ha quanto tempo o AGENTE esta coletando (desde que "
+                "<div title='Ha quanto tempo o AGENTE esta capturando (desde que "
                 "subiu)' style='color:#888;font-size:11px'>&#129302; %s</div>"
                 % (_dur_humana(hu) if hu is not None else "?",
                    _dur_humana(au) if au is not None else "?"))
@@ -2552,7 +2552,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 <td class='col-agente' style='color:#aaa;font-size:12px'>{uptime_col}</td>
                 <td class='col-agente'>{status_cell}</td>
                 <td style='white-space:nowrap'>
-                    <a href='/agent/{uuid}' class='btn-ico' title='Abrir o laudo forense deste agente'>&#128269;</a>
+                    <a href='/agent/{uuid}' class='btn-ico' title='Abrir o relatorio deste agente'>&#128269;</a>
                     <a href='/history/{uuid}' class='btn-ico' title='Capturas anteriores deste agente e comparacao entre duas: mostra o que mudou de uma para a outra'>&#128337;</a>
                     <a href='/cmd/collect/{uuid}' class='btn-ico' title='Solicitar captura agora. Entra na fila e o agente executa no proximo check-in (ate ~1 ciclo); a captura leva o tempo configurado (capture_duration)'>&#128248;</a>
                     <a href='/cmd/chaos/{uuid}' class='btn-ico btn-lab' title='APENAS LAB: gera cenario de teste, ESPERA ficar pronto e captura em seguida. Entra na fila; o agente executa no proximo check-in'>&#9760;</a>
@@ -2691,10 +2691,10 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 <th title="Nomes de dominio deste host. O principal em destaque; os demais sao aliases e reverso de DNS">FQDN<span class="col-grip" data-col="--m-w-fqdn"></span></th>
                 <th title="Achados da ultima captura, por severidade: Critical, High, Medium, Low">Severidade<span class="col-grip" data-col="--m-w-sev"></span></th>
                 <th class="col-agente" title="Momento da ultima captura recebida, hora local e UTC">Last Seen<span class="col-grip" data-col="--m-w-seen"></span></th>
-                <th class="col-agente" title="AGENDADOR: proxima coleta esperada, a partir do ciclo do agente (capture_duration + interval). O agente coleta sozinho nessa cadencia; o icone de captura na acao pede uma coleta agora, fora do ciclo.">Next / cadencia<span class="col-grip" data-col="--m-w-next"></span></th>
+                <th class="col-agente" title="AGENDADOR: proxima captura esperada, a partir do ciclo do agente (capture_duration + interval). O agente captura sozinho nessa cadencia; o icone de captura na acao pede uma captura agora, fora do ciclo.">Next / cadencia<span class="col-grip" data-col="--m-w-next"></span></th>
                 <th class="col-agente" title="Uptime do host (desde o boot) e do agente (desde que subiu)">Uptime<span class="col-grip" data-col="--m-w-up"></span></th>
                 <th class="col-agente" title="Estado do AGENTE, nao do host: verde = falou com o servidor dentro do intervalo esperado; vermelho = passou de dois ciclos sem falar">Status do agente<span class="col-grip" data-col="--m-w-stat"></span></th>
-                <th title="Abrir laudo, historico, pedir captura agora, cenario de teste (lab), reiniciar">Action</th>
+                <th title="Abrir relatorio, historico, pedir captura agora, cenario de teste (lab), reiniciar">Action</th>
             </tr></thead>
             <tbody>{rows}</tbody>
         </table>

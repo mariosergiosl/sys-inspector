@@ -880,12 +880,12 @@ def _get_details_html(node, mounts, tree=None):
 # agente mais antigo que a versao do campo.
 ESTADO_VAZIO = ("&mdash;", "#666",
                 "A ferramenta olhou e nao havia valor. A ausencia aqui e uma "
-                "observacao, e nao uma falha de coleta.")
-ESTADO_AUSENTE = ("nao coletado", "#c586c0",
+                "observacao, e nao uma falha de captura.")
+ESTADO_AUSENTE = ("nao capturado", "#c586c0",
                   "Esta captura NAO produziu este campo, entao nada se pode "
                   "concluir a partir da ausencia dele. Costuma acontecer com "
-                  "laudo gerado por agente anterior a versao que passou a "
-                  "coletar o campo.")
+                  "relatorio gerado por agente anterior a versao que passou a "
+                  "capturar o campo.")
 
 
 def _campo(rotulo, dados, chave, formata=None, estilo="", nota=""):
@@ -1631,7 +1631,7 @@ def render_attack_panel(findings):
         "apresentadas na <b>ordem do kill chain</b> (das primeiras taticas as "
         "ultimas), para se ler como uma progressao e nao como etiquetas soltas. "
         "O numero e quantos achados citam cada uma.<br><br>"
-        "As descricoes ficam guardadas localmente, para o laudo continuar "
+        "As descricoes ficam guardadas localmente, para o relatorio continuar "
         "legivel sem internet; o link leva ao MITRE para quem tiver conexao."
         "</div>", 420)
 
@@ -1640,7 +1640,7 @@ def render_attack_panel(findings):
              "<span>MITRE ATT&amp;CK e um catalogo publico de tecnicas de "
              "adversarios observadas em invasoes reais. As tecnicas abaixo, na "
              "ordem do kill chain, sao as citadas pelos achados desta captura. "
-             "As descricoes ficam locais, para o laudo ser legivel offline.</span>"
+             "As descricoes ficam locais, para o relatorio ser legivel offline.</span>"
              + ajuda + "</div>")
 
     return intro + "<div class='atk-list'>" + "".join(rows) + "</div>"
