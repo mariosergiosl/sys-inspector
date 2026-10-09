@@ -28,6 +28,7 @@ from src.collectors.manager import (summarize_metrics, collect_findings,
                                     correlate_findings_with_processes)
 from src.core.findings import summarize_by_severity
 from src.core.database import CAPTURE_FULL, CAPTURE_CHAOS
+from src.version import __version__
 from src.core.crypto import load_public_key, encrypt_data
 from src.core.outbox import Outbox
 from src.core.custody import build_for_capture
@@ -190,7 +191,10 @@ class DaemonController:
         Main Execution Loop.
         Initializes the Engine ONCE and toggles collection cyclically.
         """
-        self.logger.info(f"[DAEMON] Starting Universal Collector (v0.80). Agent ID: {self.agent_uuid}")
+        # [F-251] Versao lida da fonte unica. Ate 2026-10-09 esta linha dizia
+        # "(v0.80)" num agente 1.3.1, e o log e o primeiro lugar onde se confere
+        # QUAL codigo esta rodando num host.
+        self.logger.info(f"[DAEMON] Starting Universal Collector (v{__version__}). Agent ID: {self.agent_uuid}")
         if self.run_once:
             self.logger.info(f"[DAEMON] Ciclo UNICO: Capture={self.capture_duration}s")
         else:
