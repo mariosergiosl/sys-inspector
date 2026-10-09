@@ -41,6 +41,17 @@ that disappeared on redeploy, which already had tests, review and a green CI.
   analyst's private key is now optional at startup, and the decryption utility
   explains the absence instead of raising.
 
+- **Dragging a column divider made the table jump.** Found evaluating 1.3.1
+  on the bench. The table fills its box and the browser spreads the spare
+  width across the columns, so the drag started from the drawn width, wrote
+  it to the column variable and the table redistributed again: one pixel of
+  drag moved the column from 610px to 662px, leaving the handle 51px away
+  from the cursor. Clicking now freezes every column at its drawn width,
+  measured before any is written, and shrinking a column hands the
+  difference to the last one only when the table would no longer fill the
+  box. Same code for the report and the Manager; the drag follows the
+  cursor pixel for pixel in both.
+
 ### Documentation
 
 - **`verify_tls` is documented in `conf/config.yaml`.** Against a self-signed
