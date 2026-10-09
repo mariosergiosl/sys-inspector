@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           sys-inspector
-Version:        1.3.0
+Version:        1.3.1
 Release:        1%{?dist}
 Summary:        System inspector and forensic tool using eBPF (Multi-Agent/Web)
 
@@ -203,6 +203,11 @@ ln -sf %{_sbindir}/service %{buildroot}%{_sbindir}/rc%{name}
 %dir %attr(0750,root,root) /var/log/sys-inspector/reports
 
 %changelog
+* Fri Oct 09 2026 Mario Luz <mario.mssl@gmail.com> - 1.3.1-1
+- Fixed: the signing key inheritance now works on a correctly configured agent, which holds only the analyst public key.
+- Fixed: declaring only half of the agent key pair no longer generates a new identity over the declared one.
+- Fixed: an agent without the analyst private key is no longer refused at startup.
+- Changed: verify_tls is documented in conf/config.yaml.
 * Mon Aug 17 2026 Mario Luz <mario.mssl@gmail.com> - 1.0.1-1
 - Fixed: file-ownership provenance now falls back to dpkg (resilient to usrmerge and alternatives) when rpm is present but does not own the file, so it works on Debian/Ubuntu hosts; content verification runs only under a real rpm owner.
 - Changed: restored a green CI by clearing the flake8/pylint backlog and ignoring style-only checks with a documented rationale.

@@ -20,8 +20,9 @@
 
 Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks directly into the Linux Kernel to capture events (process execution, file I/O, network connections) in real-time.
 
-## Features (v1.3.0)
+## Features (v1.3.1)
 
+* **Fixed in v1.3.1 - The signing identity survives a redeploy on a correctly configured agent:** Three defects found on the bench inside the 1.3.0 fix: the inheritance failed on agents holding only the analyst public key, declaring half of the key pair regenerated the other half, and an agent without the analyst private key was refused at startup. `verify_tls` is now documented in `conf/config.yaml`.
 * **New in v1.3.0 - A signing identity that survives a redeploy:** The key that signs captures now lives where state lives, next to the database, and is inherited from the old location rather than regenerated. Every capture carries the fingerprint of the key that signed it and says how that key got there. A new key is legitimate; being born silently is not, because the same agent signing with two keys and nothing explaining it is exactly what the opposing side looks for.
 * **New in v1.3.0 - An agent that can actually be idle:** Off by default. When on, the heavy capture stops running every cycle and happens for a reason: the declared cadence, an analyst command, or the agent's first cycle. A cycle that does not capture writes down why, with the time remaining, so an idle agent never looks like a stuck one.
 * **New in v1.2.0 - The report as an exhibit:** It downloads as a file named after the host and the moment of COLLECTION, always complete, built by the same code path that draws the screen, and without the navigation bar, because a dead button in a forensic document is worse than no button. The bar itself now moves between captures (previous, next, latest, "capture N of M"), and an arrow with nowhere to go stays visible and dimmed rather than vanishing: the edge of the collection is information.

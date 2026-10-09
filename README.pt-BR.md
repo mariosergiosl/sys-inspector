@@ -13,8 +13,9 @@ O **Sys-Inspector** é uma ferramenta avançada de observabilidade e forense mov
 
 Diferente das ferramentas tradicionais que consultam o `/proc` periodicamente, o Sys-Inspector se conecta diretamente ao Kernel do Linux para capturar eventos (execução de processos, I/O de arquivos, conexões de rede) em tempo real.
 
-## Funcionalidades (v1.3.0)
+## Funcionalidades (v1.3.1)
 
+* **Corrigido na v1.3.1 - A identidade que assina sobrevive ao deploy no agente bem configurado:** Três defeitos achados na bancada dentro da correção da 1.3.0: a herança falhava no agente que tem só a chave pública do analista, declarar metade do par regerava a outra metade, e o agente sem a chave privada do analista era recusado na partida. A opção `verify_tls` passou a estar documentada no `conf/config.yaml`.
 * **Novo na v1.3.0 - A identidade que assina sobrevive ao deploy:** A chave que assina as capturas passou a morar onde mora o estado, ao lado do banco, e é herdada do lugar antigo em vez de regerada. Toda captura carrega a impressão digital da chave que a assinou e diz como aquela chave chegou ali. Chave nova é legítima; nascer calada não é, porque o mesmo agente assinando com duas chaves sem nada explicando é exatamente o que a parte contrária procura.
 * **Novo na v1.3.0 - Um agente que pode de fato ficar ocioso:** Desligado por padrão. Ligado, a captura pesada deixa de rodar em todo ciclo e passa a acontecer por motivo: a cadência declarada, um comando do analista, ou o primeiro ciclo do agente. Um ciclo que não captura escreve por quê, com o tempo que falta, para que agente ocioso nunca se pareça com agente travado.
 * **Novo na v1.2.0 - O laudo como peça:** Baixa como arquivo nomeado pelo host e pelo instante da COLETA, sempre completo, montado pelo mesmo código que desenha a tela, e sem a barra de navegação, porque botão morto num documento pericial é pior que botão nenhum. A própria barra passou a andar entre as capturas (anterior, próxima, mais recente, "captura N de M"), e uma seta sem destino fica visível e apagada em vez de sumir: o limite da coleção é informação.
