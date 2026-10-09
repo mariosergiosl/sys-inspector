@@ -164,15 +164,28 @@ def _eh_sessao_ssh(cmd):
     return os.path.basename(texto.split()[0]) == "ssh"
 
 
+# [C-166] Formato do ID de conteiner na linha de cgroup, e nao substring.
+# Medido na .161 em 2026-10-09 (cgroup v2, Docker 28.5.1, Podman 4.9.5):
+#   conteiner Docker : 0::/system.slice/docker-<64 hex>.scope
+#   conteiner Podman : 0::/machine.slice/libpod-<64 hex>.scope
+#   dockerd/containerd do HOST : 0::/system.slice/docker.service
+#   conmon do HOST   : 0::/machine.slice/libpod-conmon-<64 hex>.scope
+# Por substring os dois ultimos viravam conteiner (ids "service" e
+# "conmon2026ed"). "/docker/<64 hex>" cobre o cgroup v1.
+_CGROUP_DOCKER = re.compile(r"/docker[-/]([0-9a-f]{64})(?:\.scope)?(?:/|$)")
+_CGROUP_LIBPOD = re.compile(r"/libpod-([0-9a-f]{64})\.scope(?:/|$)")
+
+
 def _get_container_info(pid):
     """Parses cgroup to find Docker/K8s/Podman IDs."""
     c_id, c_type = None, "host"
     try:
         with open(f"/proc/{pid}/cgroup", "r") as f:
             for line in f:
-                if "docker" in line:
-                    parts = line.split("docker")[-1]
-                    c_id = ''.join(filter(str.isalnum, parts))[:12]
+                line = line.strip()
+                m = _CGROUP_DOCKER.search(line)
+                if m:
+                    c_id = m.group(1)[:12]
                     c_type = "docker"
                     break
                 elif "kubepods" in line:
@@ -181,10 +194,9 @@ def _get_container_info(pid):
                         parts = line.split("pod")[-1]
                         c_id = ''.join(filter(str.isalnum, parts))[:12]
                         break
-                elif "libpod" in line:
+                elif _CGROUP_LIBPOD.search(line):
                     c_type = "podman"
-                    parts = line.split("libpod-")[-1]
-                    c_id = ''.join(filter(str.isalnum, parts))[:12]
+                    c_id = _CGROUP_LIBPOD.search(line).group(1)[:12]
                     break
     except: pass
     return c_id, c_type
