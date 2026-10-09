@@ -1,7 +1,7 @@
 #!/bin/bash
 # ======================================================================================
 # FILE: tools/agent_chaos.sh
-# USAGE: agent_chaos.sh [duration_seconds]   (default 300)
+# USAGE: agent_chaos.sh [duration_seconds | --cleanup]   (default 300)
 # DESCRIPTION: Lab scenario planted on an agent host so the running daemon captures
 #              it and forwards to the server. Plants persistence artifacts that
 #              exercise the STATIC detectors, and launches chaos_maker so the
@@ -38,6 +38,8 @@
 # VERSION: 1.3.1
 # CREATED: 2026-08-07
 # REVISION: 2026-08-07 isolate the unsafe-library signal to a single process
+#           2026-10-09 clean up everything at the end of the run (--cleanup), keep
+#           a pre-existing /etc/ld.so.preload, version variable from the header
 # ======================================================================================
 
 set -u
@@ -45,12 +47,15 @@ set -u
 # --------------------------------------------------------------------------------------
 # CONSTANTS
 # --------------------------------------------------------------------------------------
-VERSION="1.0.1"
+VERSION="1.3.1"
 MARK="/tmp/chaos_persist"                     # strange path: only OUR process maps it
 SYS_LIB_DIR="/usr/local/lib"                  # normal path: preload here does NOT taint
 SYS_LIB="${SYS_LIB_DIR}/libhealthcheck.so"    # innocuous name, mirrors real-world evasion
 SHM_LIB="/dev/shm/libinject.so"               # strange path for the single tainted proc
 PRELOAD_FILE="/etc/ld.so.preload"
+# Copy of a PRE-EXISTING ld.so.preload, kept outside /tmp so a reboot during the
+# run does not lose it. Restored by the cleanup.
+PRELOAD_BACKUP="${PRELOAD_FILE}.agent_chaos.bak"
 SVC_FILE="/etc/systemd/system/evil-backdoor.service"
 CRON_EVIL="/etc/cron.d/evil-cron"
 CRON_HIDDEN="/etc/cron.d/.hidden-cron"
@@ -59,6 +64,8 @@ CHAOS_HOME="/opt/sys-inspector"
 # Endereco do gateway do lab: o host que o possui roteia a rede das outras VMs,
 # entao nao pode rodar o caos de REDE (derrubaria a frota e o proprio SSH).
 LAB_GATEWAY_IP="${LAB_GATEWAY_IP:-192.168.56.200}"
+# Absolute path of this script, so the end-of-run cleanup can call it back.
+SELF="$(readlink -f "$0")"
 
 #=== FUNCTION ==========================================================================
 # NAME:         usage
@@ -68,6 +75,8 @@ usage() {
     echo "Usage: agent_chaos.sh [duration_seconds]   (default 300)"
     echo "  Plants an authorized lab scenario for the sys-inspector daemon to capture."
     echo "  Run ONLY on a disposable test VM."
+    echo "  Everything planted is removed when the duration ends."
+    echo "  --cleanup  remove every artifact of this script now, and exit"
     echo "  --help     show this message"
     echo "  --version  show version"
 }
@@ -83,8 +92,48 @@ cleanup_previous() {
     pkill -f "${MINER}" 2>/dev/null
     pkill -f "${MARK}/tainted.sh" 2>/dev/null
     rm -rf "${MARK}"
-    rm -f "${PRELOAD_FILE}" "${SYS_LIB}" "${SHM_LIB}" "${MINER}"
+    restore_preload
+    rm -f "${SYS_LIB}" "${SHM_LIB}" "${MINER}"
     rm -f "${CRON_EVIL}" "${CRON_HIDDEN}" "${SVC_FILE}"
+}
+
+#=== FUNCTION ==========================================================================
+# NAME:         restore_preload
+# DESCRIPTION:  Undo the ld.so.preload change WITHOUT destroying a file the host
+#               already had. Until 2026-10-09 the cleanup did "rm -f" on the whole
+#               file: on a host with a legitimate preload that was data loss. Now:
+#               restore the backup if one exists; otherwise remove the file only if
+#               it holds exactly the line this script writes; otherwise leave it
+#               and say so.
+#=======================================================================================
+restore_preload() {
+    if [ -f "${PRELOAD_BACKUP}" ]; then
+        cp -p "${PRELOAD_BACKUP}" "${PRELOAD_FILE}" && rm -f "${PRELOAD_BACKUP}"
+        echo "--- ld.so.preload restored from ${PRELOAD_BACKUP} ---"
+    elif [ -f "${PRELOAD_FILE}" ]; then
+        if [ "$(cat "${PRELOAD_FILE}")" = "${SYS_LIB}" ]; then
+            rm -f "${PRELOAD_FILE}"
+        else
+            echo "--- ld.so.preload is not ours (content differs): left untouched ---"
+        fi
+    fi
+}
+
+#=== FUNCTION ==========================================================================
+# NAME:         schedule_cleanup
+# DESCRIPTION:  Detach the end-of-run cleanup. This script returns right after
+#               planting, so the cleanup cannot run inline: it runs after the
+#               runtime scenario (or, without chaos_maker, after the duration).
+#               Until 2026-10-09 the cleanup only ran at the START of the next run;
+#               with no next run, the artifacts planted on 2026-08-12 stayed on
+#               three lab hosts for two months, and every capture of those hosts
+#               reported the planted persistence.
+# PARAMETER 1:  command to run before the cleanup (the scenario, or a sleep)
+#=======================================================================================
+schedule_cleanup() {
+    local antes="$1"
+    setsid nohup bash -c "${antes}; bash '${SELF}' --cleanup" \
+        >>/tmp/chaos.log 2>&1 </dev/null &
 }
 
 #=== FUNCTION ==========================================================================
@@ -131,6 +180,10 @@ plant_preload() {
     mkdir -p "${SYS_LIB_DIR}"
     echo 'static void __attribute__((constructor)) init(void) { }' > "${MARK}/stub.c"
     if gcc -shared -fPIC -o "${SYS_LIB}" "${MARK}/stub.c" 2>/dev/null; then
+        # Keep a pre-existing preload before writing ours (see restore_preload).
+        if [ -f "${PRELOAD_FILE}" ] && [ ! -f "${PRELOAD_BACKUP}" ]; then
+            cp -p "${PRELOAD_FILE}" "${PRELOAD_BACKUP}"
+        fi
         echo "${SYS_LIB}" > "${PRELOAD_FILE}"
     else
         echo "--- gcc failed to build stub: ld.so.preload not written ---"
@@ -177,7 +230,11 @@ launch_tainted_process() {
 #=======================================================================================
 find_chaos_maker() {
     local c
-    for c in /usr/bin/chaos_maker.sh \
+    # [2026-10-09] Primeiro o chaos_maker que esta AO LADO deste script, como o
+    # agente ja faz. Na .161 havia uma copia de 13/08 em /tmp, que este laco
+    # escolheria antes do chaos_maker 1.3.1 implantado junto com o script.
+    for c in "$(dirname "${SELF}")/chaos_maker.sh" \
+             /usr/bin/chaos_maker.sh \
              "${CHAOS_HOME}/tools/chaos_maker.sh" \
              /tmp/chaos_maker.sh \
              /usr/lib/python3.6/site-packages/tools/chaos_maker.sh; do
@@ -201,6 +258,7 @@ run_chaos() {
     if [ -z "${maker}" ]; then
         echo "--- chaos_maker.sh not found on this host: runtime chaos NOT launched ---"
         echo "CHAOS_MAKER_NOT_FOUND $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/chaos.log
+        schedule_cleanup "sleep ${dur}"
         return 0
     fi
     # MODULOS.
@@ -227,8 +285,7 @@ run_chaos() {
         echo "CHAOS_MAKER_START $(date -u +%Y-%m-%dT%H:%M:%SZ) using ${maker}" \
              "modules=${modulos} dur=${dur} gateway_guard=${motivo:-none}"
     } > /tmp/chaos.log
-    setsid nohup bash "${maker}" ${modulos} --duration "${dur}" \
-        >>/tmp/chaos.log 2>&1 </dev/null &
+    schedule_cleanup "bash '${maker}' ${modulos} --duration '${dur}'"
 }
 
 # --------------------------------------------------------------------------------------
@@ -237,6 +294,10 @@ run_chaos() {
 case "${1:-}" in
     --help)    usage; exit 0 ;;
     --version) echo "agent_chaos.sh ${VERSION}"; exit 0 ;;
+    --cleanup)
+        cleanup_previous
+        echo "AGENT_CHAOS_CLEANED $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        exit 0 ;;
 esac
 
 DUR="${1:-300}"
@@ -250,7 +311,7 @@ plant_preload
 launch_tainted_process
 run_chaos "${DUR}"
 
-echo "$(hostname): persistence planted + chaos for ${DUR}s"
+echo "$(hostname): persistence planted + chaos for ${DUR}s, cleanup scheduled at the end"
 echo "========================================"
 echo " --- script concluido. --- "
 echo "========================================"
