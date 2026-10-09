@@ -36,6 +36,42 @@ from src.core.commands import CMD_COLLECT, CMD_CHAOS_COLLECT, CMD_RESTART
 from src.core.executed import ExecutionLedger
 
 
+# [C-154] Nome do script do cenario de teste. So o NOME: a D-034 proibe mapear
+# mais que isso, para a prova da deteccao nao virar circular.
+SCRIPT_DO_CENARIO = "chaos_maker.sh"
+_SHELLS = ("bash", "sh", "dash", "zsh", "ksh")
+
+
+def cenario_observado(processos):
+    """
+    [C-154] Se o processo do cenario de teste esta vivo nesta captura.
+
+    Ate 2026-10-09 a captura so era marcada como cenario quando o COMANDO vinha
+    da tela, e so a captura dedicada: medido na .161, das 7 capturas feitas com
+    o cenario vivo (17:36:33 a 17:41:39) so 1 saiu marcada, e as outras 6
+    eram iguais as do ciclo normal. Decisao do Mario em 2026-08-20: o cenario
+    se identifica sempre que estiver rodando, venha de onde vier.
+
+    O script roda como "/bin/bash <caminho>/chaos_maker.sh --all ...", entao
+    o nome aparece no argv[0] (executado direto) ou no argv[1] quando o
+    argv[0] e um shell. So com shell: "vim tools/chaos_maker.sh" nao e o
+    cenario rodando.
+
+    PARAMETER processos: arvore serializada, {pid: {"cmd": ...}}.
+    """
+    for no in (processos or {}).values():
+        cmd = no.get("cmd") if isinstance(no, dict) else getattr(no, "cmd", "")
+        partes = [os.path.basename(p) for p in (cmd or "").split()[:2]]
+        if not partes:
+            continue
+        if partes[0] == SCRIPT_DO_CENARIO:
+            return True
+        if (len(partes) > 1 and partes[0] in _SHELLS
+                and partes[1] == SCRIPT_DO_CENARIO):
+            return True
+    return False
+
+
 class DaemonController:
     def __init__(self, config, db_manager, shutdown_event, run_once=False):
         """
@@ -650,8 +686,14 @@ class DaemonController:
         # Uma captura feita logo apos plantar o cenario nasce marcada como tal:
         # ela mede a ferramenta, nao o host em uso, e misturar as duas na mesma
         # serie historica distorce a comparacao entre capturas.
-        tipo = CAPTURE_CHAOS if cycle_id == "chaos" else CAPTURE_FULL
+        # [C-154] Tambem pela OBSERVACAO: uma captura do ciclo normal feita com o
+        # cenario vivo mede a ferramenta tanto quanto a captura do comando. A
+        # origem fica registrada como informacao, nunca como condicao.
+        observado = cenario_observado(full_data.get('processes'))
+        tipo = (CAPTURE_CHAOS if cycle_id == "chaos" or observado
+                else CAPTURE_FULL)
         full_data['capture_type'] = tipo
+        full_data['scenario_observed'] = observado
 
         # Achados estaticos (persistencia), mesmo conjunto dos demais modos.
         findings = collect_findings(full_data['processes'], self.config)
