@@ -463,7 +463,7 @@ class DaemonController:
         # ainda viva segue escrevendo no mesmo caminho depois do truncamento.
         # Com um arquivo por rodada nao existe marcador alheio para confundir.
         marca = "%d-%d" % (int(time.time()), os.getpid())
-        log_path = "/tmp/si_chaos_%s.log" % marca
+        log_path = os.path.join(self.CHAOS_LOG_DIR, "si_chaos_%s.log" % marca)
         try:
             log_fh = open(log_path, "w")
         except OSError as exc:
@@ -541,11 +541,19 @@ class DaemonController:
     # frequencia.
     CHAOS_LOGS_MANTIDOS = 10
 
+    # [F-254] Onde ficam os logs de rodada. Em uso real e o /tmp do host; e
+    # atributo, e nao literal, para que os testes escrevam num diretorio
+    # proprio. Ate 2026-10-09 a suite deixava no /tmp de uma VM do laboratorio
+    # um "si_chaos_<ts>-<pid>.log" com o marcador de pronto, no mesmo padrao
+    # de nome dos logs reais: residuo de teste misturado com rodada real.
+    CHAOS_LOG_DIR = "/tmp"
+
     def _limpar_logs_de_chaos_antigos(self):
         """Mantem apenas os logs de rodada mais recentes."""
         import glob
         try:
-            logs = sorted(glob.glob("/tmp/si_chaos_*.log"),
+            logs = sorted(glob.glob(os.path.join(self.CHAOS_LOG_DIR,
+                                                 "si_chaos_*.log")),
                           key=os.path.getmtime)
             for velho in logs[:-self.CHAOS_LOGS_MANTIDOS]:
                 try:

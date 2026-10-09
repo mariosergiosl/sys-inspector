@@ -18,9 +18,12 @@
 # AUTHOR: Mario Luz (Sys-Inspector Project)
 # ==============================================================================
 
+import glob
 import os
 import subprocess
+import tempfile
 import threading
+import time
 
 import pytest
 
@@ -52,6 +55,8 @@ class _Daemon(object):
     CHAOS_READY_MARK = DaemonController.CHAOS_READY_MARK
     CHAOS_SETUP_TIMEOUT = 2
     CHAOS_LOGS_MANTIDOS = DaemonController.CHAOS_LOGS_MANTIDOS
+    # [F-254] Diretorio proprio: o teste nao escreve no /tmp do host.
+    CHAOS_LOG_DIR = tempfile.mkdtemp(prefix="si_teste_chaos_")
     _run_chaos = DaemonController._run_chaos
     _esperar_chaos_pronto = DaemonController._esperar_chaos_pronto
     _log_tem_marcador = DaemonController._log_tem_marcador
@@ -142,7 +147,7 @@ def test_cenario_que_sobe_devolve_sucesso(monkeypatch):
 
     resultado = daemon._run_chaos({"duration": 30})
     assert "pronto para captura" in resultado
-    assert "log /tmp/si_chaos_" in resultado
+    assert "log %s" % os.path.join(_Daemon.CHAOS_LOG_DIR, "si_chaos_") in resultado
 
 
 def test_marcador_impresso_e_processo_encerrado_ainda_e_sucesso(monkeypatch):
@@ -188,3 +193,31 @@ def test_run_chaos_falha_explicito_se_o_script_nao_existe(monkeypatch):
     with pytest.raises(RuntimeError) as exc:
         daemon._run_chaos({"duration": 30})
     assert "not installed" in str(exc.value)
+
+
+def test_o_teste_nao_deixa_log_de_cenario_no_tmp_do_host(monkeypatch):
+    """
+    [F-254] Rodar o comando de cenario pelo stub de teste nao pode criar nada
+    no /tmp real. REPROVA A VERSAO ANTERIOR, que gravava em
+    /tmp/si_chaos_<ts>-<pid>.log com caminho fixo: achado em 2026-10-09 como um
+    log falso de cenario na .161.
+    """
+    # Por data de modificacao, e nao por nome: o nome usa segundo e PID, e
+    # outro teste no mesmo segundo e processo ja cria o MESMO nome. Comparando
+    # nomes, a primeira versao deste teste passou contra o codigo com defeito
+    # enquanto o /tmp da .161 ia de 16 para 18 arquivos.
+    inicio = time.time() - 1
+    daemon = _Daemon()
+    saida = "montando\n%s\n" % DaemonController.CHAOS_READY_MARK
+    monkeypatch.setattr(subprocess, "Popen",
+                        _popen_falso(saida, _ProcessoVivo()))
+    daemon._run_chaos({"duration": 30})
+    tocados = [p for p in glob.glob("/tmp/si_chaos_*.log")
+               if os.path.getmtime(p) >= inicio]
+    assert not tocados, (
+        "o teste escreveu log de cenario no /tmp do host: %s" % tocados)
+
+
+def test_o_diretorio_real_dos_logs_continua_sendo_o_tmp():
+    """Em uso real nada muda: o operador continua achando os logs no /tmp."""
+    assert DaemonController.CHAOS_LOG_DIR == "/tmp"
