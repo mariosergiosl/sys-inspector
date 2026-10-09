@@ -1396,24 +1396,53 @@ _JS_COLUNAS_CORE = r"""
     //    variaveis CSS. Ali o arraste altera a VARIAVEL, e as duas pontas se
     //    movem juntas. Escrever dois arrastes diferentes recriaria a
     //    divergencia que as variaveis acabaram de eliminar.
-    // O nome da variavel pode vir na propria alca (Manager, onde o <th> ja
-    // carrega outros atributos) ou no elemento que a contem (laudo, onde o
-    // cabecalho e uma div por coluna). Aceitar os dois evita obrigar as duas
-    // telas a escrever o HTML do mesmo jeito para usar o mesmo mecanismo.
-    var variavel = grip.getAttribute('data-col') || alvo.getAttribute('data-col');
+    // O nome da variavel podia vir na propria alca (Manager) ou no elemento que
+    // a contem (laudo), pelo atributo data-col. Desde 2026-10-09 o arraste o
+    // le do <colgroup> (ver variavelDa): o data-col continua no HTML como
+    // rotulo legivel da ligacao, mas nao e mais ele que decide.
+    // Nota: hoje as duas telas usam <table> com colgroup e variaveis; o texto
+    // acima sobre "cabecalho em divs" e "largura no proprio <th>" descreve o
+    // desenho anterior.
     var iniX = 0, iniW = 0, arrastando = false;
+    var ultima = null, ultimaIni = 0;
+    // Variavel de largura de cada coluna, lida do <colgroup>, que e a fonte
+    // unica das larguras nas duas telas. Nao serve ler so o data-col da alca:
+    // a ultima coluna da Manager (Action) nao tem alca, e e justamente ela que
+    // absorve a diferenca no arraste.
+    function variavelDa(cel){
+      var tabela = cel.closest('table');
+      var cols = tabela ? tabela.querySelectorAll('colgroup col') : [];
+      var idx = Array.prototype.indexOf.call(cel.parentElement.children, cel);
+      var m = cols[idx] ? /var\((--[\w-]+)\)/.exec(cols[idx].getAttribute('style') || '') : null;
+      return m ? m[1] : null;
+    }
+    // Grava a largura de UMA coluna: na variavel do colgroup quando existe,
+    // senao no proprio <th>.
+    function gravar(cel, largura){
+      var v = variavelDa(cel);
+      if (v){
+        document.documentElement.style.setProperty(v, largura + 'px');
+      } else {
+        cel.style.width = largura + 'px';
+      }
+    }
     grip.addEventListener('mousedown', function(e){
       arrastando = true; iniX = e.pageX; iniW = alvo.offsetWidth;
-      if (!variavel){
-        // Fixa a largura ATUAL de todas as colunas antes do primeiro arraste.
-        // Sem isso, mexer numa coluna faz as vizinhas se redistribuirem e a
-        // tabela inteira "pula" no primeiro pixel de movimento.
-        var linha = alvo.parentElement;
-        for (var i = 0; i < linha.children.length; i++){
-          var c = linha.children[i];
-          if (!c.style.width) { c.style.width = c.offsetWidth + 'px'; }
-        }
+      // Fixa a largura RENDERIZADA de todas as colunas antes do primeiro
+      // arraste, nas DUAS telas. A tabela ocupa a largura da caixa (F-230), e
+      // quando a soma declarada e menor que a caixa o navegador distribui a
+      // sobra entre as colunas. Medido em 2026-10-09 no laudo: variaveis
+      // somando 1670px numa caixa de 1887px, "Command Tree" declarada 540px e
+      // desenhada 610px. O arraste partia dos 610, gravava 611 na variavel, a
+      // tabela se redistribuia de novo e a coluna saltava para 662px, com a
+      // alca 51px a direita do cursor. Congelar o que esta na tela faz a soma
+      // declarada igualar a caixa, e o primeiro pixel deixa de redistribuir.
+      var linha = alvo.parentElement;
+      for (var i = 0; i < linha.children.length; i++){
+        gravar(linha.children[i], linha.children[i].offsetWidth);
       }
+      ultima = linha.children[linha.children.length - 1];
+      ultimaIni = ultima.offsetWidth;
       document.body.style.userSelect = 'none';
       e.preventDefault();
     });
@@ -1421,11 +1450,17 @@ _JS_COLUNAS_CORE = r"""
       if (!arrastando) return;
       var largura = iniW + (e.pageX - iniX);
       if (largura <= 40) return;
-      if (variavel){
-        document.documentElement.style.setProperty(variavel, largura + 'px');
+      if (alvo === ultima){
+        // Encolher a ultima abriria um vao que o navegador redistribuiria de
+        // novo entre as outras: ela so cresce a partir do que ocupa.
+        if (largura < ultimaIni) largura = ultimaIni;
       } else {
-        alvo.style.width = largura + 'px';
+        // Ao encolher uma coluna, a ultima absorve a diferenca e a tabela
+        // continua ocupando a caixa sem redistribuir: a coluna arrastada segue
+        // o cursor pixel a pixel. Ao crescer, a tabela cresce e a caixa rola.
+        gravar(ultima, ultimaIni + Math.max(0, iniW - largura));
       }
+      gravar(alvo, largura);
     });
     document.addEventListener('mouseup', function(){
       if (!arrastando) return;
