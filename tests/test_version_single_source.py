@@ -77,3 +77,31 @@ def test_shell_scripts_share_the_product_version():
         # nenhuma das versoes antigas conhecidas sobra num cabecalho.
         for velho in ("v0.90.15", "v0.70.07", 'VERSION="2.0"'):
             assert velho not in s, "%s ainda tem %s" % (path, velho)
+
+
+def test_no_log_message_announces_a_literal_version():
+    """
+    [F-251] Mensagem de log que anuncia versao tem que ler __version__.
+
+    Em 2026-10-09 um agente 1.3.1 se anunciava "Universal Collector (v0.80)" e
+    todo servidor 1.3.x avisava "[BETA] ... refactored for v0.80". O log e o
+    primeiro lugar onde se confere QUAL codigo roda num host, e os testes acima
+    procuravam versao em tela e custodia, nao em log. Este percorre toda chamada
+    de log de src/ e do main.py atras de um literal "vN.N".
+    """
+    import os
+    import re
+    chamada = re.compile(r"(?:logger|logging)\.\w+\(([^\n]*)")
+    literal = re.compile(r"\bv\d+\.\d+")
+    achados = []
+    arquivos = ["main.py"]
+    for raiz, _dirs, nomes in os.walk("src"):
+        arquivos += [os.path.join(raiz, n) for n in nomes if n.endswith(".py")]
+    for caminho in arquivos:
+        for num, linha in enumerate(_src(caminho).splitlines(), 1):
+            m = chamada.search(linha)
+            if m and literal.search(m.group(1)):
+                achados.append("%s:%d" % (caminho, num))
+    assert not achados, (
+        "mensagem de log com versao literal, em vez de __version__: %s"
+        % ", ".join(achados))

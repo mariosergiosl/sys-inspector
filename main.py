@@ -119,6 +119,7 @@ def main():
         from src.utils.config_loader import load_config
         from src.core.database import DatabaseManager
         from src.core.crypto import load_private_key, decrypt_data
+        from src.version import __version__
     except ImportError as e:
         print(f"[CRITICAL] Failed to import core modules after setup: {e}")
         sys.exit(1)
@@ -324,8 +325,11 @@ def main():
         elif mode == 'server':
             if args.once:
                 logging.warning("[ARGS] --once so vale no modo daemon; ignorado.")
-            # v0.60 Legacy Server Mode (being refactored)
-            logging.warning("[BETA] Server Mode logic is being refactored for v0.80.")
+            # [F-251] Ate 2026-10-09 aqui havia um aviso "[BETA] Server Mode logic
+            # is being refactored for v0.80", emitido a cada partida de um
+            # servidor 1.3.x. O modo servidor e o unico caminho desde a 1.1.0, e
+            # o aviso nao era mais verdade. No lugar, a versao real.
+            logging.info("[SERVER] Sys-Inspector v%s", __version__)
             ctrl = load_controller('server')(config, db, SHUTDOWN_EVENT)
             ctrl.run()
 
