@@ -65,13 +65,14 @@ def id_valido(valor):
 
 
 from src.version import __version__
-from src.core.correlation import correlate
+from src.core.correlation import correlate, agrupar_conclusoes
 from src.core.commands import CommandQueue, ALLOWED, STUCK_LIMIT
 from src.core.tls import ensure_self_signed_cert
 from src.core.outbox import PATH_SLOT, PATH_INGEST, PATH_COMMAND_RESULT
 from src.core.snapshot_diff import (diff_snapshots, classify,
                                     summarize_risk, build_timeline)
 from src.exporters.html_report import _esc
+from src.core import calendario
 
 
 def _fmt_ts(valor):
@@ -182,6 +183,7 @@ _CSS_IDENTIDADE = _PALETA + (
 # Barra de navegacao entre as telas do servidor, uma so definicao para todas.
 _NAVEGACAO = (("&#127968;", "/", "Hosts"),
               ("&#128337;", "/timeline", "Linha do tempo"),
+              ("&#128197;", "/calendario", "Capturas / Coletas"),
               ("&#128203;", "/queue", "Fila"),
               ("&#128220;", "/log", "Comandos"),
               ("&#129513;", "/capacidades", "Capacidades"))
@@ -774,6 +776,9 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         elif self.path.startswith('/timeline'):
             self._serve_timeline(controller)
 
+        elif self.path.split('?')[0] == '/calendario':
+            self._serve_calendario(controller)
+
         elif self.path == '/capabilities':
             self._serve_capabilities(controller)
 
@@ -949,19 +954,38 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 # anterior. Amarelo a partir de 15 minutos, vermelho a partir
                 # de uma hora: nao e alarme, e a informacao de que o que se
                 # esta lendo pode nao descrever o estado atual do host.
-                idade_seg = time.time() - float(snaps[0].get('timestamp') or 0)
+                # [F-259] Capturado e coletado sao instantes diferentes:
+                # snapshots.timestamp e quando o SERVIDOR gravou (coleta); a
+                # captura feita pelo agente esta na custodia. Ate 2026-10-09 a
+                # barra dizia "capturado em" mostrando a coleta. Sem a data do
+                # agente, a barra diz honestamente "coletado em".
+                coletado = float(snaps[0].get('timestamp') or 0)
+                capturado = controller.db.get_captured_at(snaps[0].get('id'))
+                referencia = capturado if capturado else coletado
+                idade_seg = time.time() - referencia
                 cor_idade = ("#ff4d4d" if idade_seg > 3600
                              else "#ffd166" if idade_seg > 900 else "#6a9955")
+                fmt = "%Y-%m-%d %H:%M:%S"
+                if capturado:
+                    rotulo = "capturado em"
+                    dica = ("Momento em que o agente capturou estes dados. O "
+                            "relatorio descreve o host NAQUELE instante, e nao "
+                            "agora. Coletado pelo servidor em %s (atraso de "
+                            "%s)." % (datetime.datetime.fromtimestamp(
+                                coletado).strftime(fmt),
+                                calendario.fmt_atraso(max(0.0, coletado - capturado))))
+                else:
+                    rotulo = "coletado em"
+                    dica = ("Momento em que o servidor recebeu estes dados. "
+                            "Esta captura nao traz o instante em que o agente "
+                            "a fez.")
                 carimbo = (
-                    "<span title=\"Momento em que o agente capturou estes "
-                    "dados. O relatorio descreve o host NAQUELE instante, e nao "
-                    "agora.\" style=\"margin-left:16px; font-size:11px; "
-                    "font-family:sans-serif; color:#888\">"
-                    "capturado em %s <b style=\"color:%s\">(%s)</b></span>"
-                    % (datetime.datetime.fromtimestamp(
-                        float(snaps[0].get('timestamp') or 0)
-                    ).strftime("%Y-%m-%d %H:%M:%S"), cor_idade,
-                       _human_age(idade_seg)))
+                    "<span title=\"%s\" style=\"margin-left:16px; "
+                    "font-size:11px; font-family:sans-serif; color:#888\">"
+                    "%s %s <b style=\"color:%s\">(%s)</b></span>"
+                    % (dica, rotulo,
+                       datetime.datetime.fromtimestamp(referencia).strftime(fmt),
+                       cor_idade, _human_age(idade_seg)))
 
                 back = (
                     # [F-231] Barra mais baixa: 8px em cima e embaixo eram
@@ -1000,6 +1024,15 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                        "margin-left:12px; opacity:0.75; "
                        "text-decoration:none; font-size:17px\">&#128337;</a>"
                        % agent_uuid)
+                    # [F-258/F-259] Os dois calendarios dentro do host, ja
+                    # filtrados por ele: os mesmos botoes da barra geral.
+                    + ("<a class=\"navlink\" href=\"/timeline?agent=%s\" "
+                       "title=\"Calendario de achados deste host\" "
+                       "style=\"margin-left:12px\">&#128337; Linha do tempo</a>"
+                       "<a class=\"navlink\" href=\"/calendario?agent=%s\" "
+                       "title=\"Calendario de capturas e coletas deste host\" "
+                       "style=\"margin-left:6px\">&#128197; Capturas / "
+                       "Coletas</a>" % (agent_uuid, agent_uuid))
                     + _acao("collect", "&#128248;",
                             "Solicitar captura agora: entra na fila, o agente "
                             "executa no proximo check-in (ate ~1 ciclo)")
@@ -1352,6 +1385,155 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 "<hr style='border:none;border-top:1px solid #2a2a2a;margin:26px 0'>"
                 % (total, cabecalho, linhas))
 
+    _RE_MES = re.compile(r"^(\d{4})-(\d{2})$")
+    _RE_DIA = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+
+    def _params_calendario(self, args):
+        """
+        Parametros comuns aos dois calendarios, validados antes do uso.
+
+        Devolve (agente, ano, mes, dia, hora). agente vazio = todos os hosts;
+        sem mes, o corrente; dia e hora opcionais. Um agente invalido devolve
+        None no lugar da tupla, e o chamador recusa.
+        """
+        agente = (args.get("agent") or [""])[0]
+        if agente and not id_valido(agente):
+            return None
+        hoje = datetime.date.today()
+        ano, mes = hoje.year, hoje.month
+        m = self._RE_MES.match((args.get("mes") or [""])[0])
+        if m and 1 <= int(m.group(2)) <= 12:
+            ano, mes = int(m.group(1)), int(m.group(2))
+        dia = None
+        m = self._RE_DIA.match((args.get("dia") or [""])[0])
+        if m:
+            try:
+                dia = datetime.date(int(m.group(1)), int(m.group(2)),
+                                    int(m.group(3)))
+                ano, mes = dia.year, dia.month
+            except ValueError:
+                dia = None
+        hora = None
+        bruto = (args.get("hora") or [""])[0]
+        if bruto.isdigit() and int(bruto) < 24:
+            hora = int(bruto)
+        return agente, ano, mes, dia, hora
+
+    @staticmethod
+    def _janela_do_mes(ano, mes):
+        """Inicio e fim do mes, com um dia de margem de cada lado (epoch)."""
+        inicio = datetime.datetime(ano, mes, 1) - datetime.timedelta(days=1)
+        fim = (datetime.datetime(ano + (mes == 12), mes % 12 + 1, 1)
+               + datetime.timedelta(days=1))
+        return inicio.timestamp(), fim.timestamp()
+
+    @staticmethod
+    def _seletor_hosts(rota, nomes, agente, ano, mes):
+        """Todos os hosts | host1 | host2 ..., mantendo o mes."""
+        mes_txt = "%04d-%02d" % (ano, mes)
+        itens = ["<a href='%s?%s' style='%s'>Todos os hosts</a>"
+                 % (rota, urlparse.urlencode({"mes": mes_txt}),
+                    "font-weight:bold" if not agente else "")]
+        for uuid, nome in sorted(nomes.items(), key=lambda x: str(x[1])):
+            itens.append("<a href='%s?%s' style='%s'>%s</a>"
+                         % (rota, urlparse.urlencode({"agent": uuid,
+                                                      "mes": mes_txt}),
+                            "font-weight:bold" if uuid == agente else "",
+                            _esc(nome)))
+        return ("<div class='cal-nav' style='flex-wrap:wrap'>"
+                + " &middot; ".join(itens) + "</div>")
+
+    def _serve_calendario(self, controller):
+        """
+        [F-259] Capturas / Coletas: calendario geral ou de um host.
+
+        URL: agent (sem ele, todos os hosts), mes (AAAA-MM), dia (AAAA-MM-DD,
+        lista as capturas do dia) e hora (0 a 23, so aquela hora do dia).
+        """
+        args = urlparse.parse_qs(urlparse.urlparse(self.path).query)
+        params = self._params_calendario(args)
+        if params is None:
+            self._recusa_id((args.get("agent") or [""])[0])
+            return
+        agente, ano, mes, dia_sel, hora = params
+        inicio, fim = self._janela_do_mes(ano, mes)
+        linhas = controller.db.get_calendar_rows(inicio, fim,
+                                                 agent_filter=agente or None)
+        nomes = controller.db.get_agent_names()
+        itens = calendario.preparar(linhas, nomes)
+        dias = calendario.resumir_dias(itens)
+
+        def _url(**kw):
+            base = {"agent": agente} if agente else {}
+            base.update({k: v for k, v in kw.items() if v is not None})
+            return "/calendario" + ("?" + urlparse.urlencode(base)
+                                    if base else "")
+
+        corpo = ("<style>%s</style>" % calendario.CSS
+                 + self._seletor_hosts("/calendario", nomes, agente, ano, mes))
+        corpo += calendario.render_mes(
+            ano, mes, dias,
+            link_dia=lambda d: _url(dia=d.isoformat()),
+            link_mes=lambda a, m_: _url(mes="%04d-%02d" % (a, m_)),
+            geral=not agente, dia_sel=dia_sel)
+        if dia_sel:
+            corpo += calendario.render_lista_do_dia(
+                dia_sel, itens, _selo_tipo_captura,
+                lambda u, i: "/agent/%s?capture=%s" % (u, i),
+                hora=hora,
+                link_hora=lambda h: _url(dia=dia_sel.isoformat(), hora=h),
+                link_eventos=lambda u, i: "/timeline?%s" % urlparse.urlencode(
+                    {"agent": u, "capture": i}))
+        titulo = ("Capturas / Coletas: %s" % nomes.get(agente, agente)
+                  if agente else "Capturas / Coletas: todos os hosts")
+        html_pag = self._pagina(_esc(titulo), corpo)
+        self.send_response(200)
+        self.send_header("Content-type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(html_pag.encode("utf-8"))
+
+    def _serve_calendario_achados(self, controller, args):
+        """
+        [F-258] A Linha do tempo abre no calendario de ACHADOS E DESCOBERTAS.
+
+        Pedido do Mario em 2026-10-09: a lista de eventos era longa, nao
+        clicavel e nao levava ao detalhe. O calendario mostra, por dia, os
+        achados distintos por severidade e o que e novo; clicar no dia abre a
+        lista que ja existia, restrita aquele dia.
+        """
+        params = self._params_calendario(args)
+        if params is None:
+            self._recusa_id((args.get("agent") or [""])[0])
+            return
+        agente, ano, mes, _dia, _hora = params
+        inicio, fim = self._janela_do_mes(ano, mes)
+        eventos = controller.events.daily_rows(inicio, fim,
+                                               agent_uuid=agente or None)
+        nomes = controller.db.get_agent_names()
+        dias = calendario.resumir_dias_achados(eventos)
+
+        def _url(**kw):
+            base = {"agent": agente} if agente else {}
+            base.update({k: v for k, v in kw.items() if v is not None})
+            return "/timeline" + ("?" + urlparse.urlencode(base)
+                                  if base else "")
+
+        corpo = ("<style>%s</style>" % calendario.CSS
+                 + self._seletor_hosts("/timeline", nomes, agente, ano, mes)
+                 + "<p style='color:#777;font-size:12px'>Clique num dia para a "
+                   "lista de eventos daquele dia. A lista por janela recente "
+                   "continua em <a href='%s'>ultima hora</a>.</p>"
+                 % _url(min=60))
+        corpo += calendario.render_mes_achados(
+            ano, mes, dias,
+            link_dia=lambda d: _url(dia=d.isoformat()),
+            link_mes=lambda a, m_: _url(mes="%04d-%02d" % (a, m_)),
+            geral=not agente)
+        titulo = ("Linha do tempo: %s" % nomes.get(agente, agente)
+                  if agente else "Linha do tempo: todos os hosts")
+        self._set_headers()
+        self.wfile.write(self._pagina(_esc(titulo), corpo).encode("utf-8"))
+
     def _serve_history(self, controller, agent_uuid):
         """
         Capturas de um agente, para escolher duas e compara-las.
@@ -1663,8 +1845,46 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         # "nenhum": a tela abre mostrando tudo.
         tipos = [t for t in (args.get("type") or []) if t]
 
-        eventos = controller.events.timeline(inicio=desde, agent_uuid=agente,
-                                             limit=limite)
+        # [F-258] Sem recorte escolhido (janela, tipo, dia ou captura), a tela
+        # abre no calendario de achados. Os botoes de janela continuam levando
+        # a lista, porque mandam ?min=.
+        dia_txt = (args.get("dia") or [""])[0]
+        captura_txt = (args.get("capture") or [""])[0]
+        if not (dia_txt or captura_txt or "min" in args or tipos):
+            self._serve_calendario_achados(controller, args)
+            return
+        if agente and not id_valido(agente):
+            self._recusa_id(agente)
+            return
+        fim_janela = None
+        captura_id = None
+        recorte = "na janela de %d minuto(s)" % minutos
+        voltar_cal = ""
+        m = self._RE_DIA.match(dia_txt)
+        if m:
+            try:
+                dia_ev = datetime.date(int(m.group(1)), int(m.group(2)),
+                                       int(m.group(3)))
+                desde = datetime.datetime.combine(
+                    dia_ev, datetime.time.min).timestamp()
+                fim_janela = desde + 86400 - 0.001
+                recorte = "no dia %s" % dia_ev.strftime("%d/%m/%Y")
+            except ValueError:
+                pass
+        if captura_txt.isdigit():
+            captura_id = int(captura_txt)
+            desde = None
+            recorte = "na captura #%d" % captura_id
+        if dia_txt or captura_txt:
+            base_cal = {"agent": agente} if agente else {}
+            voltar_cal = ("<p><a href='/timeline%s'>&larr; calendario de "
+                          "achados</a></p>"
+                          % (("?" + urlparse.urlencode(base_cal))
+                             if base_cal else ""))
+
+        eventos = controller.events.timeline(inicio=desde, fim=fim_janela,
+                                             agent_uuid=agente, limit=limite,
+                                             capture_id=captura_id)
         stats = controller.events.stats()
 
         # Contagem por tipo ANTES de filtrar, para o botao de cada tipo mostrar
@@ -1692,14 +1912,22 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         topo = ""
         if conclusoes:
             itens = ""
-            for c in conclusoes[:10]:
+            # [F-260] A mesma conclusao, repetida a cada captura, vira um cartao
+            # com a contagem: oito cartoes iguais sao um fato visto oito vezes.
+            for c, vezes in agrupar_conclusoes(conclusoes)[:10]:
                 # A conclusao carrega severidade e tecnica; exibi-las aqui evita
                 # que o analista precise abrir o laudo so para saber o peso e a
                 # que tecnica a leitura corresponde.
-                selos = ("<span style='background:%s;color:#000;"
-                         "border-radius:3px;padding:1px 7px;font-size:10px;"
-                         "font-weight:bold;margin-right:6px'>%s</span>"
-                         % (risk.CORES.get(c.severity, "#888"), _esc(c.severity)))
+                selos = ""
+                if vezes > 1:
+                    selos += ("<span style='color:#ffd166;font-size:11px;"
+                              "margin-right:8px' title='A mesma leitura "
+                              "apareceu %d vezes nesta janela'>visto %d vezes"
+                              "</span>" % (vezes, vezes))
+                selos += ("<span style='background:%s;color:#000;"
+                          "border-radius:3px;padding:1px 7px;font-size:10px;"
+                          "font-weight:bold;margin-right:6px'>%s</span>"
+                          % (risk.CORES.get(c.severity, "#888"), _esc(c.severity)))
                 selos += _selo_attck(c.technique)
                 itens += ("<div style='background:#2a1a1a;border-left:3px solid "
                           "#ff4d4d;padding:10px 14px;margin-bottom:8px'>"
@@ -1931,14 +2159,14 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                   "<span style='margin-left:auto'>%s</span></div>%s"
                   % (atalhos, chips, _ajuda_risco(), limpar))
 
-        corpo = (barras + topo
+        corpo = (voltar_cal + barras + topo
                  + "<p style='color:#777;font-size:12px'>%d eventos no total; "
-                   "%d na janela de %d minuto(s), em ordem cronologica corrigida "
+                   "%d %s, em ordem cronologica corrigida "
                    "pelo desvio de relogio de cada host. A correlacao acima "
                    "analisa exatamente esta janela. O simbolo &#8631; leva do "
                    "evento ao processo na arvore do relatorio.</p>"
                    "<table>%s<tbody>%s</tbody></table>"
-                   % (stats["total"], total_janela, minutos,
+                   % (stats["total"], total_janela, recorte,
                       cabecalho_tabela, linhas))
 
         self._set_headers()

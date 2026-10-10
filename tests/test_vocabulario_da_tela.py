@@ -41,7 +41,10 @@ PROIBIDOS = [
     (re.compile(r"\bfrota\b", re.I), "frota -> hosts"),
     (re.compile(r"falha de coleta", re.I), "captura e do agente"),
     (re.compile(r"momento da coleta", re.I), "captura e do agente"),
-    (re.compile(r"\bcoletado em\b", re.I), "captura e do agente"),
+    # "coletado em" saiu da lista em 2026-10-10: depois que a barra passou a
+    # ler a data do AGENTE na custodia, "coletado em" e o texto CERTO quando so
+    # se tem a data do servidor. O teste do fim do arquivo trava onde ele pode
+    # aparecer.
     (re.compile(r"\bnao coletado\b", re.I), "captura e do agente"),
 ]
 
@@ -113,3 +116,15 @@ def test_o_log_do_servidor_tambem_deixou_frota():
         fonte = fh.read()
     assert "coleta inteira da frota" not in fonte
     assert "tudo o que foi coletado de todos os hosts" in fonte
+
+
+def test_coletado_em_so_quando_falta_a_data_do_agente():
+    """Colisao achada em 2026-10-10: a trava proibia "coletado em" e a barra
+    passou a usa-lo corretamente. Ele so pode aparecer no ramo em que a
+    captura nao traz o instante do agente."""
+    with io.open(os.path.join(RAIZ, "src/controllers/server_controller.py"),
+                 encoding="utf-8") as fh:
+        fonte = fh.read()
+    assert fonte.count('rotulo = "coletado em"') == 1
+    trecho = fonte.split('rotulo = "coletado em"')[0].rsplit("if capturado:", 1)[1]
+    assert "else:" in trecho, "'coletado em' fora do ramo sem data do agente"

@@ -191,7 +191,8 @@ class EventStore(object):
             LOG.error("Storing events failed: %s", exc)
         return gravados
 
-    def timeline(self, inicio=None, fim=None, agent_uuid=None, limit=500):
+    def timeline(self, inicio=None, fim=None, agent_uuid=None, limit=500,
+                 capture_id=None):
         """
         A linha do tempo: tudo que aconteceu, em ordem, de um ou de todos.
 
@@ -210,6 +211,11 @@ class EventStore(object):
         if agent_uuid:
             sql += " AND agent_uuid = ?"
             params.append(agent_uuid)
+        # [F-258] Os eventos de UMA captura: e o "explodir" do calendario de
+        # capturas para a lista, a partir da captura escolhida.
+        if capture_id is not None:
+            sql += " AND capture_id = ?"
+            params.append(int(capture_id))
         # Os mais RECENTES, apresentados em ordem crescente.
         #
         # A forma ingenua (ORDER BY ASC LIMIT n) devolve os mais ANTIGOS, e foi
@@ -241,6 +247,29 @@ class EventStore(object):
                 return saida
         except Exception as exc:
             LOG.error("Reading timeline failed: %s", exc)
+            return []
+
+    def daily_rows(self, inicio, fim, agent_uuid=None):
+        """
+        [F-258] Eventos do periodo, so com o que o calendario de achados usa.
+
+        Sem limite de quantidade: o calendario agrega o mes inteiro, e cortar
+        por contagem faria dias inteiros sumirem justamente nos de mais
+        atividade. Por isso so as colunas leves, sem o detalhe.
+        """
+        sql = ("SELECT agent_uuid, type, severity, subject, corrected_ts, "
+               "capture_id FROM events WHERE corrected_ts >= ? "
+               "AND corrected_ts <= ?")
+        params = [float(inicio), float(fim)]
+        if agent_uuid:
+            sql += " AND agent_uuid = ?"
+            params.append(agent_uuid)
+        sql += " ORDER BY corrected_ts ASC"
+        try:
+            with closing(self._conn()) as conn:
+                return [dict(r) for r in conn.execute(sql, params)]
+        except Exception as exc:
+            LOG.error("Reading daily rows failed: %s", exc)
             return []
 
     def stats(self):
