@@ -103,6 +103,16 @@ Uma vez instalado, o comando fica disponível globalmente:
     sys-inspector
 ```
 
+## Telas
+
+![Tela de Hosts](docs/Capturas/01_hosts/hosts.jpg)
+
+![Calendário de Capturas / Coletas, um dia](docs/Capturas/03_capturas_coletas/dia_horas_e_lista.jpg)
+
+![Relatório, achado com o encaminhamento para análise](docs/Capturas/07_relatorio/achado_encaminhamento_para_analise.jpg)
+
+Todas as telas, com o texto de cada tooltip, estão em [docs/Capturas](docs/Capturas/README.md).
+
 ## Uso
 
 O Sys-Inspector é orquestrado pelo ponto de entrada `main.py` (ou globalmente como `sys-inspector`). Ele suporta vários modos de execução.

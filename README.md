@@ -110,6 +110,16 @@ Once installed, the command is available globally:
     sys-inspector
 ```
 
+## Screenshots
+
+![Hosts screen](https://raw.githubusercontent.com/mariosergiosl/sys-inspector/v1.4.1/docs/Capturas/01_hosts/hosts.jpg)
+
+![Captures / Collections calendar, one day](https://raw.githubusercontent.com/mariosergiosl/sys-inspector/v1.4.1/docs/Capturas/03_capturas_coletas/dia_horas_e_lista.jpg)
+
+![Report, finding with the referral for analysis](https://raw.githubusercontent.com/mariosergiosl/sys-inspector/v1.4.1/docs/Capturas/07_relatorio/achado_encaminhamento_para_analise.jpg)
+
+Every screen, with the text of each tooltip, is in [docs/Capturas](https://github.com/mariosergiosl/sys-inspector/blob/main/docs/Capturas/README.md).
+
 ## Usage
 
 Sys-Inspector is orchestrated via the `main.py` entry point (or globally as `sys-inspector`). It supports multiple execution modes.
