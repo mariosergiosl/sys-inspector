@@ -128,3 +128,28 @@ def test_coletado_em_so_quando_falta_a_data_do_agente():
     assert fonte.count('rotulo = "coletado em"') == 1
     trecho = fonte.split('rotulo = "coletado em"')[0].rsplit("if capturado:", 1)[1]
     assert "else:" in trecho, "'coletado em' fora do ramo sem data do agente"
+
+
+# Travessao colado a texto: pedido do Mario em 2026-10-10 ("evitar o uso de
+# travessao em qualquer texto"), visto em "nada preservado -- nada do artefato
+# foi retido". O travessao SOZINHO, como valor de campo vazio (estado "olhou e
+# nao havia" da D-020), e simbolo e nao pontuacao, e passa.
+_TRAVESSAO = "(?:&mdash;|&#8212;|\u2014)"
+_TRAVESSAO_EM_TEXTO = re.compile(
+    r"[A-Za-z0-9,.:;)]\s*" + _TRAVESSAO + "|" + _TRAVESSAO + r"\s*[A-Za-z0-9(]")
+
+
+def test_nenhum_travessao_no_meio_de_texto():
+    """REPROVA A VERSAO ANTERIOR: cinco textos de tela usavam o travessao
+    como separador, inclusive a custodia de todo achado de inventario."""
+    achados = []
+    for raiz_dir, _d, nomes in os.walk(os.path.join(RAIZ, "src")):
+        for nome in nomes:
+            if not nome.endswith(".py"):
+                continue
+            caminho = os.path.relpath(os.path.join(raiz_dir, nome), RAIZ)
+            for linha, valor in _strings_de_tela(caminho):
+                m = _TRAVESSAO_EM_TEXTO.search(valor)
+                if m:
+                    achados.append("%s:%d %r" % (caminho, linha, m.group(0)))
+    assert not achados, "travessao em texto:\n" + "\n".join(achados)

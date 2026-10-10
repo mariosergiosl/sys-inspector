@@ -365,7 +365,7 @@ def _legenda_risco():
                   "<span style='display:inline-block;width:74px;color:%s;"
                   "font-size:10px;font-weight:bold'>%s</span>"
                   "<span style='color:#bbb;font-size:11px'>%s</span>"
-                  "<span style='color:#666;font-size:11px'> &mdash; %s</span>"
+                  "<span style='color:#666;font-size:11px'>: %s</span>"
                   "</div>"
                   % (risk.CORES.get(severidade, "#888"), _esc(severidade),
                      _esc(rotulo), _esc(explicacao)))
@@ -2330,7 +2330,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             "nao acusa menos por falha da ferramenta: ele "
             "nao tem como gerar o que falta.<br><br>"
             "As duas colunas existem porque as situacoes opostas "
-            "&mdash; a deteccao falhou, ou nao havia o que detectar &mdash; "
+            "(a deteccao falhou, ou nao havia o que detectar) "
             "produzem o mesmo resultado visivel: a ausencia. Sem esta tela, o "
             "analista deduz, e deduzir errado aqui leva a tratar host saudavel "
             "como comprometido, ou o contrario.</div>")

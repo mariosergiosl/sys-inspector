@@ -749,7 +749,7 @@ def _get_details_html(node, mounts, tree=None):
     drop_style = "color:var(--red);font-weight:bold" if node.tcp_drops > 0 else "color:#888"
     html += (f"<div style='margin-bottom:4px'>"
              f"<span title='Contadores deste processo, sem os filhos.'>"
-             f"Deste processo &mdash; Retransmits: "
+             f"Deste processo: Retransmits: "
              f"<span style='{retr_style}'>{node.tcp_retrans}</span> | Drops: "
              f"<span style='{drop_style}'>{node.tcp_drops}</span></span></div>")
 
@@ -758,7 +758,7 @@ def _get_details_html(node, mounts, tree=None):
     html += (f"<div style='margin-bottom:8px; color:#888; font-size:11px'>"
              f"<span title='Este processo mais TODOS os descendentes. E este o "
              f"numero que o badge da arvore exibe, somado.'>"
-             f"Com os descendentes &mdash; Retransmits: {tree_r} | "
+             f"Com os descendentes: Retransmits: {tree_r} | "
              f"Drops: {tree_d} "
              f"<b style='color:#aaa'>(badge: {tree_r + tree_d})</b>"
              f"</span></div>")
@@ -1281,7 +1281,7 @@ def _custody_line(custody):
                       % _esc(str(dados["reason"])))
 
     aviso = ("" if nivel != CUSTODY_NONE or partes else
-             " &mdash; nada do artefato foi retido para pericia")
+             ": nada do artefato foi retido para pericia")
     detalhe = ("<div class='fnd-cust-det'>" + " &middot; ".join(partes) + "</div>"
                if partes else "")
 
@@ -1321,6 +1321,23 @@ def _referral_block(referral):
         % (_esc(referral.get("analysis", "")),
            _esc(referral.get("reason", "")),
            _esc(referral.get("object", ""))))
+
+
+def _texto_evidencia(valor):
+    """
+    [F-267] Valor de evidencia legivel: texto como esta, lista com um item por
+    linha, dicionario como "chave: valor". Ate 2026-10-10 tudo que nao era
+    texto saia como repr() do Python ("[{'bit': 12, 'flag': 'O', ...}]"),
+    visto pelo Mario no achado de kernel tingido.
+    """
+    if isinstance(valor, str):
+        return valor
+    if isinstance(valor, dict):
+        return ", ".join("%s: %s" % (k, _texto_evidencia(v))
+                         for k, v in valor.items())
+    if isinstance(valor, (list, tuple)):
+        return "\n".join(_texto_evidencia(v) for v in valor)
+    return str(valor)
 
 
 def _evidence_key_html(key):
@@ -1494,7 +1511,7 @@ def render_findings_panel(findings):
         # Evidencia bruta, exibida sob demanda (chave: valor).
         ev_rows = []
         for key, value in (f.get("evidence") or {}).items():
-            text = value if isinstance(value, str) else repr(value)
+            text = _texto_evidencia(value)
             if len(text) > 2000:
                 text = text[:2000] + " ... [truncated]"
             ev_rows.append(f"<div class='fnd-ev-row'>{_evidence_key_html(key)}"
