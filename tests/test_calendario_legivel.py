@@ -141,3 +141,12 @@ def test_titulo_da_lista_diz_host_e_recorte_e_o_corte_e_avisado():
     assert 'titulo += ": " + str(nomes.get(agente' in corpo
     assert "if total_janela >= limite:" in corpo
     assert "Exibindo so os %d eventos mais recentes" in corpo
+
+
+def test_botao_manager_no_mesmo_desenho_dos_outros():
+    """Pedido do Mario em 2026-10-10: o '<- Manager' da barra do relatorio
+    era um link solto, diferente dos botoes Linha do tempo e Capturas /
+    Coletas ao lado."""
+    fonte = _fonte("src/controllers/server_controller.py")
+    assert ('"style=\\"%s\\">&larr; Manager</a>" % _ESTILO_BOTAO_BARRA'
+            in fonte)
