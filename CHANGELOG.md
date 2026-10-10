@@ -36,6 +36,18 @@ lab: what the screen showed, measured against what the hosts were doing.
   changed, departed from the host's usual count or followed a gap, a 24-hour
   strip inside each day, and identical consecutive captures collapsed into one
   line. Both buttons also exist inside every host, filtered to it.
+- **The calendars explain themselves.** Day cells say "22 changed" instead of a
+  bare code, every strip piece has a tooltip in words, the "?" help bubble of the
+  other screens explains the reading, and the Marks column says what changed,
+  the host's usual value and the gap length. Buttons share the Manager's look,
+  including in the report bar, where they rendered as underlined links. The
+  "changed" and "off the usual" marks, and the grouping, only consider Medium or
+  above: counting Low findings, which oscillate with normal activity, flagged 99
+  of ~150 captures in a day.
+- **Inside a host's day, the event list no longer falls back to all hosts.**
+  Type filters kept the window but dropped the day, and "see all" removed host
+  and day at once. Filters now keep the day or capture, each filter has its own
+  way out, the title says host and range, and the 1500-event cap is announced.
 - **The sequence reading groups a conclusion repeated on every capture** into
   one card that says how many times it was seen.
 - **The navigation bar says what kind of capture is on screen.** Complete,
