@@ -5,7 +5,7 @@
 # ==============================================================================
 
 Name:           sys-inspector
-Version:        1.4.0
+Version:        1.4.1
 Release:        1%{?dist}
 Summary:        System inspector and forensic tool using eBPF (Multi-Agent/Web)
 
@@ -203,6 +203,11 @@ ln -sf %{_sbindir}/service %{buildroot}%{_sbindir}/rc%{name}
 %dir %attr(0750,root,root) /var/log/sys-inspector/reports
 
 %changelog
+* Sat Oct 10 2026 Mario Luz <mario.mssl@gmail.com> - 1.4.1-1
+- Changed: the referral block of every finding is now "Encaminhamento para analise".
+- Changed: an empty field says what it is ("nada encontrado", "sem captura" and others by context) instead of an em dash.
+- Fixed: the Capabilities screen showed a literal "&mdash;" for a host without operating system information.
+- Removed: run_local.live.bash and run_snapshot.bash, broken since the modes they called were removed in 1.1.0.
 * Sat Oct 10 2026 Mario Luz <mario.mssl@gmail.com> - 1.4.0-1
 - Fixed: the signing key inheritance now works on a correctly configured agent, which holds only the analyst public key.
 - Fixed: declaring only half of the agent key pair no longer generates a new identity over the declared one.

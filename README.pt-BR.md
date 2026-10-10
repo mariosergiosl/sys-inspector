@@ -13,8 +13,9 @@ O **Sys-Inspector** é uma ferramenta avançada de observabilidade e forense mov
 
 Diferente das ferramentas tradicionais que consultam o `/proc` periodicamente, o Sys-Inspector se conecta diretamente ao Kernel do Linux para capturar eventos (execução de processos, I/O de arquivos, conexões de rede) em tempo real.
 
-## Funcionalidades (v1.4.0)
+## Funcionalidades (v1.4.1)
 
+* **Alterado na v1.4.1 - Todo campo vazio diz o que é:** Nenhuma tela mostra mais um traço sozinho. O estado "olhou e não havia" do relatório diz "nada encontrado", e as demais células vazias dizem o que aconteceu no contexto delas, como "sem captura" numa hora sem capturas. O bloco de encaminhamento de cada achado passou a se chamar "Encaminhamento para análise".
 * **Corrigido na v1.4.0 - A identidade que assina sobrevive ao deploy no agente bem configurado:** Três defeitos achados no laboratório dentro da correção da 1.3.0: a herança falhava no agente que tem só a chave pública do analista, declarar metade do par regerava a outra metade, e o agente sem a chave privada do analista era recusado na partida. A opção `verify_tls` passou a estar documentada no `conf/config.yaml`.
 * **Novo na v1.4.0 - Achar a captura que importa:** A barra de navegação mostra o tipo de cada captura, e a captura feita com o cenário de teste rodando sai marcada como tal, venha de onde vier. Os badges de SSH e de contêiner deixaram de acender em processos do host, e a interface passou a dizer Hosts e Relatório, com captura (agente) distinta de coleta (servidor).
 * **Novo na v1.3.0 - A identidade que assina sobrevive ao deploy:** A chave que assina as capturas passou a morar onde mora o estado, ao lado do banco, e é herdada do lugar antigo em vez de regerada. Toda captura carrega a impressão digital da chave que a assinou e diz como aquela chave chegou ali. Chave nova é legítima; nascer calada não é, porque o mesmo agente assinando com duas chaves sem nada explicando é exatamente o que a parte contrária procura.
