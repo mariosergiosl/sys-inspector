@@ -28,6 +28,16 @@ lab: what the screen showed, measured against what the hosts were doing.
 
 ### Added
 
+- **Two calendars, for all hosts and for each host.** The Timeline button now
+  opens a month calendar of findings and discoveries: distinct findings per day
+  by severity, the new ones, and the other events; clicking a day opens the
+  existing event list for that day. A new Captures / Collections button opens
+  the calendar of captures, with the same colours, marks for captures that
+  changed, departed from the host's usual count or followed a gap, a 24-hour
+  strip inside each day, and identical consecutive captures collapsed into one
+  line. Both buttons also exist inside every host, filtered to it.
+- **The sequence reading groups a conclusion repeated on every capture** into
+  one card that says how many times it was seen.
 - **The navigation bar says what kind of capture is on screen.** Complete,
   test scenario (highlighted) or idle, and each arrow says what kind of capture
   it leads to before the click. A capture stored before the type was recorded
@@ -105,6 +115,25 @@ lab: what the screen showed, measured against what the hosts were doing.
 - **The test suite left fake scenario logs in the host's `/tmp`,** with the
   same name pattern as real scenario logs. Tests now write to their own
   directory.
+
+- **Every capture was flagged as an alert.** Any signal set the flag, including
+  Info and Low ones that every active host raises all the time (DNS, sshd
+  credential changes, renamed files, ephemeral listeners). The flag now needs a
+  finding or a signal of Medium severity or above.
+
+- **The report bar said "captured at" while showing when the server stored
+  the capture.** It now shows when the agent captured it, from the custody
+  record, with the collection time and delay in the tooltip; without the
+  agent's time it says "collected at".
+
+- **`agent_chaos.sh` did not clean up what it planted when it finished.** The
+  cleanup only ran at the start of the next run, so persistence planted in a
+  lab stayed for good. A run now schedules its own cleanup for the end, and
+  `--cleanup` removes everything at once. The cleanup used to delete
+  `/etc/ld.so.preload` outright, destroying a legitimate preload the host
+  already had: an existing file is now kept and restored. The script also
+  prefers the `chaos_maker.sh` next to it over stray copies, and `--version`
+  no longer answers 1.0.1.
 
 ### Documentation
 

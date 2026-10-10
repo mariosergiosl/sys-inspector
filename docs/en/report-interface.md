@@ -60,6 +60,40 @@ Below the icons, the state of the last command, in stages.
 Every column has a **draggable divider** on the right edge of its title. The mark
 highlights on hover and the cursor changes to the resize cursor.
 
+### 1.6 Calendars: Timeline and Captures / Collections
+
+Two buttons in the navigation bar open month calendars, and the same two buttons
+exist inside every host (in the report bar), already filtered to it. Above the
+month, a selector switches between all hosts and each host.
+
+Both use the same colours: the day border takes the colour of the highest
+severity, and the strip shows the composition by severity (C critical, A high,
+M medium, B low). Info is left out: it is inventory and appears in every capture.
+
+**Timeline** ("Linha do tempo") opens on the calendar of **findings and
+discoveries**. Each day shows the distinct findings (the same finding on the same
+host counts once per day), how many are new (the first time that host shows that
+finding) and how many other events happened. Clicking a day opens the list of
+that day's events, the same list as before, with the sequence reading on top; a
+reading repeated on every capture appears once, with "seen N times". The window
+buttons (15min, 1h, 6h, 24h) still lead to the recent list.
+
+**Captures / Collections** ("Capturas / Coletas") counts captures per day.
+Capturing is the agent obtaining data from the host; collecting is the server
+receiving what was captured, and the gap between the two moments is the
+collection delay. Day marks: Δ for captures whose composition changed against the
+previous capture of the same host, ≠ for captures whose total departs from the
+host's usual value (the most common one), and ⚠ for gaps, intervals with no
+capture much longer than usual. In the all-hosts view, the day says how many hosts
+have something to look at.
+
+Clicking a day shows a 24-hour strip with the number of captures per hour, in the
+same colours; clicking an hour narrows the list. In the list, identical
+consecutive captures collapse into one line ("N identical captures", first to last
+time), which opens on demand; a capture that changed, or that follows a gap,
+always starts a new group. Each capture links to its report and to its event
+list.
+
 ## 2. Report (per agent)
 
 ### 2.1 Top bar
