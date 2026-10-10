@@ -625,6 +625,16 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         # declarava produzido por uma versao que nao existe mais: para quem for
         # reproduzir a analise depois, e informacao errada no lugar mais
         # sensivel.
+        # [F-259] O canto do relatorio mostrava o instante em que o agente
+        # COMECOU a montar o inventario, e a barra o da custodia, gravado ao
+        # fechar a captura: dois horarios para a mesma captura (07:58:53 e
+        # 07:58:55, apontado pelo Mario em 2026-10-10). Os dois passam a ser o
+        # da captura, quando a custodia o traz.
+        capturado = controller.db.get_captured_at(escolhido["id"])
+        if capturado:
+            data = dict(data)
+            data["generated"] = datetime.datetime.fromtimestamp(
+                capturado).strftime("%Y-%m-%d %H:%M:%S")
         generate_report(data, tree, tmp_filename, __version__)
         try:
             with open(tmp_filename, "r", encoding="utf-8") as fh:

@@ -1516,6 +1516,20 @@ def render_findings_panel(findings):
                 text = text[:2000] + " ... [truncated]"
             ev_rows.append(f"<div class='fnd-ev-row'>{_evidence_key_html(key)}"
                            f"<pre class='fnd-ev-v'>{_esc(text)}</pre></div>")
+        # [F-267] Captura de agente anterior a lista de modulos tingidos: o
+        # campo nao existe, e a ausencia nao pode parecer "nenhum modulo"
+        # (D-020). Pergunta do Mario em 2026-10-10: "nas capturas antigas
+        # deveria mostrar?". Nao: o agente nao registrou isso naquela hora, e
+        # deduzir pelo estado de agora inventaria um fato.
+        evid = f.get("evidence") or {}
+        if "taint_bits" in evid and "modulos_com_a_marca" not in evid:
+            rotulo, cor, dica = ESTADO_AUSENTE
+            ev_rows.append(
+                f"<div class='fnd-ev-row'>"
+                f"{_evidence_key_html('modulos_com_a_marca')}"
+                f"<pre class='fnd-ev-v' style='color:{cor}' title='{_esc(dica)}'>"
+                f"{rotulo}: captura feita por versao anterior do agente, que "
+                f"nao registrava quais modulos levavam a marca</pre></div>")
         ev_html = ("".join(ev_rows) if ev_rows
                    else "<div class='d-na'>Sem evidencia bruta anexada.</div>")
 

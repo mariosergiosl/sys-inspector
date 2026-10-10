@@ -163,3 +163,31 @@ def test_descricao_completa_para_pos_analise(tmpdir, monkeypatch):
     assert "sha256 " in linha and len(linha.split("sha256 ")[1][:64]) == 64
     assert "pacote: nenhum pacote o possui" in linha
     assert "assinatura: sem assinatura" in linha
+
+
+def test_captura_antiga_diz_nao_capturado_e_nao_nenhum_modulo():
+    """Pergunta do Mario: 'nas capturas antigas deveria mostrar?'. Nao ha
+    como saber quais modulos estavam carregados naquela hora; a tela tem que
+    dizer 'nao capturado' (D-020), e nao deixar a ausencia parecer 'nenhum'."""
+    from src.exporters.html_report import render_findings_panel
+    antigo = {"title": "Kernel tingido por modulo de procedencia irregular",
+              "severity": "High", "category": "rootkit", "target": "kernel",
+              "description": "x", "source": "heuristic",
+              "evidence": {"taint_bits": [{"bit": 12, "flag": "O"}]}}
+    html = render_findings_panel([antigo])
+    assert "nao capturado: captura feita por versao anterior do agente" in html
+    novo = dict(antigo, evidence={"taint_bits": [], "modulos_com_a_marca":
+                                  ["vboxsf [O]"]})
+    assert "nao capturado: captura feita" not in render_findings_panel([novo])
+
+
+def test_canto_do_relatorio_usa_o_horario_da_captura():
+    """O canto mostrava o inicio do inventario e a barra a custodia: dois
+    horarios para a mesma captura (07:58:53 e 07:58:55)."""
+    with io.open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "src/controllers/server_controller.py"),
+            encoding="utf-8") as fh:
+        corpo = fh.read().split("def _laudo_de(")[1].split("\n    def ")[0]
+    antes = corpo.split("generate_report(data, tree")[0]
+    assert "controller.db.get_captured_at(escolhido[\"id\"])" in antes
+    assert 'data["generated"] = datetime.datetime.fromtimestamp(' in antes
