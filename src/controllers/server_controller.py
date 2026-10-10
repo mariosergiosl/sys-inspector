@@ -102,7 +102,8 @@ def _selo_risco(score):
     nivel = risk.level(score)
     if not nivel:
         return ("<span title='Avaliado: nenhum sinal de risco levantado neste "
-                "processo' style='color:#555;font-size:11px'>&mdash;</span>")
+                "processo' style='color:#555;font-size:11px'>nada encontrado"
+                "</span>")
 
     sinais = risk.summary(score)
     desconhecidos = risk.unknown_bits(score)
@@ -347,7 +348,7 @@ def _identifica_agente(info, uuid=""):
             "<div style='color:#888;font-size:10px'>%s</div>"
             "<div style='color:#555;font-family:monospace;font-size:10px'>%s"
             "</div>"
-            % (_esc(host), " &middot; ".join(detalhe) or "&mdash;", _esc(uuid)))
+            % (_esc(host), " &middot; ".join(detalhe) or "sem FQDN e sem IP", _esc(uuid)))
 
 
 def _legenda_risco():
@@ -401,7 +402,7 @@ def _fmt_datahora(epoch, compacto=True):
     try:
         valor = float(epoch)
     except (TypeError, ValueError):
-        return "<span style='color:#555'>&mdash;</span>"
+        return "<span style='color:#555'>sem data</span>"
     local = datetime.datetime.fromtimestamp(valor).strftime("%Y-%m-%d %H:%M:%S")
     utc = datetime.datetime.utcfromtimestamp(valor).strftime("%Y-%m-%d %H:%M:%S")
     if compacto:
@@ -1587,7 +1588,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                      ) if anterior else ("<span title='E a captura mais antiga "
                                          "guardada deste agente: nao ha anterior "
                                          "com que comparar' "
-                                         "style='color:#555'>&mdash;</span>")
+                                         "style='color:#555'>nenhuma anterior</span>")
 
             idade = ("<span style='color:#666;font-size:10px'>%s</span>"
                      % _human_age(time.time() - float(c["timestamp"] or 0)))
@@ -2323,7 +2324,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                        "<div style='color:#666;font-size:10px'>%s</div></td>"
                        "<td>%s</td><td>%s</td></tr>"
                        % (_identifica_agente(a, uuid),
-                          _esc(a.get("os_info") or "&mdash;"),
+                          _esc(a.get("os_info") or "nao informado"),
                           _esc(detectar.get("kernel") or "kernel nao reportado"),
                           deteccao, cenario))
 
@@ -2541,7 +2542,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             # isso, o registro diz que algo aconteceu e obriga o analista a
             # procurar o efeito em outra tela, a mao.
             resultado = _esc((r.get("result") or "")[:120]) or (
-                "<span style='color:#555'>&mdash;</span>")
+                "<span style='color:#555'>sem resultado</span>")
             atalhos = ""
             if r.get("agent_uuid"):
                 quando = r.get("finished_at") or r.get("created_at") or 0
@@ -2757,7 +2758,7 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                             % _esc(fqdn))
             else:
                 fqdn_col = ("<span title='host sem FQDN resolvivel (sem dominio "
-                            "configurado)' style='color:#555'>&mdash;</span>")
+                            "configurado)' style='color:#555'>sem FQDN</span>")
             if outros_nomes:
                 fqdn_col += ("<div style='color:#777;font-family:monospace;"
                              "font-size:10px' title='Outros nomes pelos quais "

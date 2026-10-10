@@ -284,7 +284,8 @@ def collect_memory_forensics(processos, acquirer=None):
                         "dela, o que identifica o objeto e sustenta a leitura "
                         "do padrao. O que ela nao faz, por escopo declarado "
                         "(D-032), e concluir O QUE aquele codigo executa: isso "
-                        "exige analise de bancada sobre o conteudo integral."),
+                        "exige analise aprofundada do conteudo integral, fora do "
+                        "host."),
                     obj=("pid:%d regiao %s-%s (%d KB) em %s"
                          % (pid, maior["start"], maior["end"],
                             maior["size"] // 1024, cmd[:120] or "?")))))
@@ -388,7 +389,7 @@ def collect_memory_forensics(processos, acquirer=None):
                         "A ferramenta ve DE ONDE a biblioteca veio e quem pode "
                         "escrever nela, e preserva hash e recorte. Dizer se ela "
                         "sequestra o processo depende do conteudo dela, que e "
-                        "analise de bancada."),
+                        "analise aprofundada, fora do host."),
                     obj="pid:%d biblioteca %s"
                         % (pid, arriscadas[0].get("path", "?")))))
 

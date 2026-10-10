@@ -2,4 +2,4 @@ blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability
     url: https://github.com/mariosergiosl/sys-inspector/security/advisories/new
-    about: Do not open a public issue for a vulnerability. Use private reporting instead — see SECURITY.md.
+    about: Do not open a public issue for a vulnerability. Use private reporting instead; see SECURITY.md.

@@ -442,7 +442,7 @@ td:last-child .tag { margin-right: 1px; margin-bottom: 2px; }
 }
 .fnd-cust-det code { color: var(--cyn); font-size: 10px; word-break: break-all; }
 
-/* --- ENCAMINHAMENTO A BANCADA (C-044) --- */
+/* --- ENCAMINHAMENTO PARA ANALISE (C-044) --- */
 /* Bloco visualmente distinto do resto do detalhe do achado de proposito: ele
    nao fala com o operador do host, fala com quem vai continuar o trabalho fora
    da frota, e essa mudanca de interlocutor precisa ser vista antes de ser lida. */

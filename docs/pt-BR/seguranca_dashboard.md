@@ -22,7 +22,7 @@ vaza, pelo tempo de resposta, quantos caracteres iniciais coincidem.
 
 Dois casos falham **fechados**, de propósito: autenticação ligada sem
 `password_hash`, e ausência da biblioteca `werkzeug`. Nos dois o operador pediu
-proteção, e seguir aberto o deixaria acreditando estar protegido — pior que
+proteção, e seguir aberto o deixaria acreditando estar protegido, pior que
 recusar.
 
 ### 1. Gerar o hash da senha
@@ -84,7 +84,7 @@ Comportamento:
 
 O padrão anterior era pior do que parecia. No agente, o transporte era decidido
 pelo **número da porta** (`use_tls = server_port == 443`): qualquer porta
-diferente — 8080, o caso comum em laboratório e rede interna — fazia o agente
+diferente (8080, o caso comum em laboratório e rede interna) fazia o agente
 falar em claro sem avisar, levando junto a captura e o cabeçalho
 `Authorization: Bearer <token>`.
 
@@ -98,7 +98,7 @@ A **verificação do certificado** (`daemon.verify_tls`, no agente), porque ela
 depende de infraestrutura que nem todo ambiente tem: uma CA que assine o
 certificado do servidor. Desligar protege contra escuta passiva e **não** contra
 um interceptador ativo, e essa diferença muda o quanto o relatório daquele agente
-vale — por isso ela é registrada no **log**, toda vez, e não só no arquivo de
+vale; por isso ela é registrada no **log**, toda vez, e não só no arquivo de
 configuração.
 
 ## Recomendação

@@ -429,7 +429,7 @@ def _finding_modulo_escondido(nome, onde_aparece, onde_falta, confianca):
             analysis=(
                 "Aquisicao de memoria do kernel e analise do modulo carregado "
                 "(extracao do codigo a partir da imagem, comparacao com o .ko "
-                "em disco se ele existir). Analise em host de bancada, nunca "
+                "em disco se ele existir). Analise feita em outro host, nunca "
                 "no proprio host suspeito."),
             reason=(
                 "A ferramenta prova a DIVERGENCIA entre fontes, que e o "

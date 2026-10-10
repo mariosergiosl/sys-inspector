@@ -150,3 +150,22 @@ def test_botao_manager_no_mesmo_desenho_dos_outros():
     fonte = _fonte("src/controllers/server_controller.py")
     assert ('"style=\\"%s\\">&larr; Manager</a>" % _ESTILO_BOTAO_BARRA'
             in fonte)
+
+
+def test_campo_vazio_do_calendario_diz_o_que_e():
+    """REPROVA A 1.4.0: hora sem captura, faixa sem achado, marca ausente e
+    atraso nao medido mostravam so o travessao. Pedido do Mario em 2026-10-10:
+    campo vazio nunca fica sem informacao, e a palavra depende do contexto."""
+    itens = _dia_09()
+    horas = calendario.render_horas(itens, lambda h: "/h")
+    assert "sem captura" in horas, "hora sem nenhuma captura"
+    horas_ev = calendario.render_horas_achados([], lambda h: "/h")
+    assert "sem evento" in horas_ev, "hora da Linha do tempo sem evento"
+    assert "nada encontrado" in calendario._faixa({})
+    assert calendario.fmt_atraso(None) == "nao medido"
+    lista = calendario.render_lista_do_dia(DIA, itens, lambda t: t,
+                                           lambda u, i: "/r")
+    assert "<td>varios</td>" in lista, "coletado do grupo"
+    assert "nenhuma" in lista, "captura sem marca"
+    for html in (horas, horas_ev, lista):
+        assert "&mdash;" not in html
