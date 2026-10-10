@@ -96,7 +96,7 @@ CUSTODY_LABELS = {
 
 
 # ------------------------------------------------------------------------------
-# REFERRAL / ENCAMINHAMENTO A BANCADA (C-044, decisoes D-028 e D-032)
+# REFERRAL / ENCAMINHAMENTO PARA ANALISE (C-044, decisoes D-028 e D-032)
 # ------------------------------------------------------------------------------
 # O campo que impede a fronteira de escopo de virar omissao.
 #
@@ -123,7 +123,7 @@ REFERRAL_CAMPOS = ("analysis", "reason", "object")
 
 def make_referral(analysis, reason, obj):
     """
-    Monta um encaminhamento a bancada.
+    Monta um encaminhamento para analise.
 
     Os tres campos sao OBRIGATORIOS juntos: um encaminhamento que diz a analise
     e nao diz o objeto nao encaminha nada, so recomenda genericamente. Devolve
@@ -193,7 +193,7 @@ class Finding(object):
                   o coletor ainda nao declarou; a interface trata como nao dito.
         PARAMETER custody: dict de custodia {"level": CUSTODY_*, "sha256": ...,
                   "copy_path": ...}. Declara o que foi preservado do artefato.
-        PARAMETER referral: dict de encaminhamento a bancada (ver make_referral),
+        PARAMETER referral: dict de encaminhamento para analise (ver make_referral),
                   com analysis/reason/object. Vazio quando o achado se conclui
                   dentro do alcance da frota, e isso tambem e uma resposta.
         """

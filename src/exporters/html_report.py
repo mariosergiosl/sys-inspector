@@ -878,7 +878,7 @@ def _get_details_html(node, mounts, tree=None):
 # que a coleta olhou; o valor vazio significa que nao havia. Chave ausente
 # significa que aquela captura nao produziu o campo, o que acontece com laudo de
 # agente mais antigo que a versao do campo.
-ESTADO_VAZIO = ("&mdash;", "#666",
+ESTADO_VAZIO = ("nada encontrado", "#666",
                 "A ferramenta olhou e nao havia valor. A ausencia aqui e uma "
                 "observacao, e nao uma falha de captura.")
 ESTADO_AUSENTE = ("nao capturado", "#c586c0",
@@ -1288,14 +1288,16 @@ def _custody_line(custody):
     return ("<div class='fnd-custody' title='Custodia: o que foi preservado do "
             "artefato para a pericia. A aquisicao e DIRIGIDA (D-032): hash, "
             "metadado e um recorte pequeno, o suficiente para identificar e "
-            "direcionar. A massa que PROVA e trabalho de bancada.'>"
+            "direcionar. A massa que PROVA e trabalho de analise aprofundada, "
+            "fora do host.'>"
             "<b>Custodia:</b> %s%s%s</div>"
             % (_esc(custody_label(custody)), aviso, detalhe))
 
 
 def _referral_block(referral):
     """
-    Encaminhamento a bancada (C-044), VISIVEL no detalhe do achado.
+    Encaminhamento para analise (C-044; ate a 1.4.0 dizia "a bancada"),
+    VISIVEL no detalhe do achado.
 
     Nao vai em title/tooltip de proposito. A D-028 pede todo encaminhamento
     DITO, e um texto que so aparece com o mouse em cima nao esta dito: numa lista
@@ -1304,13 +1306,13 @@ def _referral_block(referral):
 
     Ausencia tambem e resposta: quando o achado se conclui dentro do alcance da
     frota, o bloco simplesmente nao aparece, e isso significa "nao precisa de
-    bancada", nao "esqueceram de preencher" (D-020).
+    analise aprofundada", nao "esqueceram de preencher" (D-020).
     """
     if not has_referral(referral):
         return ""
     return (
         "<div class='fnd-referral'>"
-        "<div class='fnd-ref-hdr'>&#128269; Encaminhamento a bancada"
+        "<div class='fnd-ref-hdr'>&#128269; Encaminhamento para analise"
         "<span class='fnd-ref-why'>o que esta ferramenta NAO conclui, e quem "
         "conclui</span></div>"
         "<table class='fnd-ref-tbl'>"

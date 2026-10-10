@@ -224,7 +224,7 @@ def _faixa(composicao, largura=100, contexto=""):
     total = sum(composicao.values())
     if not total:
         return ("<div class='cal-faixa vazia' title='Nenhum achado Baixo ou "
-                "acima'>&mdash;</div>")
+                "acima'>nada encontrado</div>")
     partes = []
     for s in SEVERIDADES:
         n = composicao.get(s, 0)
@@ -244,7 +244,7 @@ def _fmt_hora(ts):
 
 def fmt_atraso(seg):
     if seg is None:
-        return "&mdash;"
+        return "nao medido"
     if seg < 120:
         return "%ds" % round(seg)
     if seg < 7200:
@@ -498,7 +498,7 @@ def render_horas_achados(eventos_do_dia, link_hora, hora_sel=None):
         sel = " sel" if h == hora_sel else ""
         if not r:
             saida += ("<div class='cal-hora%s' style='border-top-color:#333'>"
-                      "<b>%02dh</b><div style='color:#555'>&mdash;</div></div>"
+                      "<b>%02dh</b><div style='color:#555'>sem evento</div></div>"
                       % (sel, h))
             continue
         novos = ("<span class='cal-delta' title='%d achado(s) vistos pela "
@@ -595,7 +595,7 @@ def render_horas(do_dia, link_hora, hora_sel=None):
         sel = " sel" if h == hora_sel else ""
         if not caps:
             saida += ("<div class='cal-hora%s' style='border-top-color:#333'>"
-                      "<b>%02dh</b><div style='color:#555'>&mdash;</div></div>"
+                      "<b>%02dh</b><div style='color:#555'>sem captura</div></div>"
                       % (sel, h))
             continue
         pior = {s: max(c["sev"][s] for c in caps) for s in SEVERIDADES}
@@ -675,7 +675,7 @@ def render_lista_do_dia(dia, itens, selo, link_captura, hora=None,
             variacao = ("" if min(baixos) == max(baixos) else
                         "<div class='cal-detalhe'>Baixo de %d a %d</div>"
                         % (min(baixos), max(baixos)))
-            saida += ("<tr class='item cal-grupo'><td>%s a %s</td><td>&mdash;</td>"
+            saida += ("<tr class='item cal-grupo'><td>%s a %s</td><td>varios</td>"
                       "<td>ate %s</td><td>%s</td><td style='width:220px'>%s</td>"
                       "<td>%s<b>%d capturas iguais</b>%s</td>"
                       "<td style='white-space:nowrap'>"
@@ -683,7 +683,7 @@ def render_lista_do_dia(dia, itens, selo, link_captura, hora=None,
                       "<a class='cal-btn' href='%s'>ultima</a></td></tr>"
                       % (_fmt_hora(primeira["captured_at"]),
                          _fmt_hora(ultima["captured_at"]),
-                         fmt_atraso(max(atrasos)) if atrasos else "&mdash;",
+                         fmt_atraso(max(atrasos)) if atrasos else "nao medido",
                          selo(primeira["capture_type"]),
                          _faixa(pior, contexto="no maximo do grupo"),
                          _marcas_captura(primeira), len(grupo), variacao,
@@ -774,7 +774,7 @@ def _linha_captura(c, selo, link_captura, link_eventos):
             "relatorio</a>%s</td></tr>"
             % (capt, _fmt_hora(c["collected_at"]),
                fmt_atraso(c["atraso"]), selo(c["capture_type"]),
-               _faixa(c["sev"]), _marcas_captura(c) or "&mdash;",
+               _faixa(c["sev"]), _marcas_captura(c) or "nenhuma",
                link_captura(c["agent_uuid"], c["id"]),
                ("<a class='cal-btn' href='%s'>eventos</a>"
                 % link_eventos(c["agent_uuid"], c["id"]))

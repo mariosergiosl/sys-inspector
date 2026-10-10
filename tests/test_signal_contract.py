@@ -378,9 +378,10 @@ def test_campo_vazio_do_lote_2_aparece_como_vazio_e_nao_some():
     # raciocinio antigo de que a linha vazia confunde. O Mario cortou: "temos uma
     # regra de nunca esconder um campo sem valor". A D-020 vale para o CAMPO, e
     # nao so para o bloco, e ela ja resolve a confusao com TRES estados: valor,
-    # "olhou e nao havia" (travessao), e "nao coletado" (captura antiga). Pular a
+    # "olhou e nao havia" (travessao ate a 1.4.0, "nada encontrado" desde a
+    # 1.4.1), e "nao coletado" (captura antiga). Pular a
     # linha nao era o estado do meio, era a ausencia dos dois.
-    assert "&mdash;" in html, (
+    assert "nada encontrado" in html, (
         "campo sem valor voltou a ser OMITIDO em vez de mostrado vazio")
     for rotulo in ("TLS SNI", "Mount", "Pivot Root"):
         assert rotulo in html, (

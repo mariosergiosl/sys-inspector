@@ -201,7 +201,7 @@ dado:
 |---|---|
 | Executable Provenance | "sem binário em disco (processo de kernel, ou caminho ilegível)" |
 | Process Ancestry | "sem ancestral capturado nesta janela" |
-| Probe Signals | cada campo com um travessão, ou "não capturado" |
+| Probe Signals | cada campo com "nada encontrado", ou "não capturado" |
 | Security Forensics | "nenhum motivo de segurança disparou para este processo" |
 
 **Por que a ferramenta insiste nisso (decisão D-020):** um campo omitido faz o
@@ -210,7 +210,7 @@ tinha" contra "a ferramenta não olhou". A segunda invalida qualquer conclusão
 tirada da ausência. Por isso todo campo aparece, em um de três estados:
 
 - **um valor**: a captura olhou e havia;
-- **um travessão** (`—`): olhou e não havia. A ausência aqui é observação, não
+- **"nada encontrado"**: olhou e não havia. A ausência aqui é observação, não
   falha;
 - **"não capturado"**: esta captura não produziu o campo, o que costuma acontecer
   com relatório gerado por agente anterior à versão que passou a capturar aquilo.

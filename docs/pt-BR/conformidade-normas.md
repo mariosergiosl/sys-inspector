@@ -7,7 +7,7 @@
 > item de backlog) que sustenta a afirmação. Uma tabela de conformidade sem
 > evidência é pior que nenhuma tabela, porque promete o que ninguém conferiu.
 >
-> A ferramenta é de **forense de múltiplos hosts**, não de bancada (decisão D-024). Ela
+> A ferramenta é de **forense de múltiplos hosts**, não de análise aprofundada de um único host (decisão D-024). Ela
 > captura o suficiente para **identificar e direcionar**, nunca a massa que prova
 > (decisão D-032). Vários "não cobre" abaixo são escolha deliberada, e estão
 > marcados como tal.
@@ -23,17 +23,17 @@
 
 ---
 
-## 1. RFC 3227 — Guidelines for Evidence Collection and Archiving
+## 1. RFC 3227: Guidelines for Evidence Collection and Archiving
 
 Documento do IETF (2002) que estabelece a **ordem de volatilidade**: coletar
 primeiro o que some primeiro.
 
 | Item da norma | Situação | Evidência |
 |---|---|---|
-| Coletar antes registradores, cache e memória | **Fora de escopo** | Captura de memória bruta é bancada (D-032). A ferramenta aponta a região suspeita e encaminha (`src/core/acquisition.py`, campo `referral` em `src/core/findings.py`) |
+| Coletar antes registradores, cache e memória | **Fora de escopo** | Captura de memória bruta é análise aprofundada, fora do host (D-032). A ferramenta aponta a região suspeita e encaminha (`src/core/acquisition.py`, campo `referral` em `src/core/findings.py`) |
 | Tabela de rotas, cache ARP, tabela de processos, estatísticas de kernel | **Coberto** | `src/collectors/system_inventory.py` e `src/collectors/process_tree.py`; sondas eBPF em `src/probes/base_trace.c` |
 | Sistemas de arquivos temporários | **Parcial** | Detecta execução a partir de `/tmp`, `/dev/shm`, `/var/tmp`, `/run/shm` (`UNSAFE_EXEC_PREFIXES`). Não preserva o conteúdo integral desses caminhos |
-| Disco | **Parcial** | Hash e recorte de arquivos suspeitos, com cópia integral quando cabe no teto (`Acquirer.acquire_file`). Imagem de disco é bancada |
+| Disco | **Parcial** | Hash e recorte de arquivos suspeitos, com cópia integral quando cabe no teto (`Acquirer.acquire_file`). Imagem de disco é análise aprofundada, fora do host |
 | Registro remoto e monitoramento | **Coberto** | Entrega ao servidor central por HTTPS com token (`src/core/outbox.py`, decisão D-033) |
 | Configuração física e topologia de rede | **Coberto** | `get_net_info()` e `get_hw_info()` em `system_inventory.py` |
 | Mídia de arquivamento | **Fora de escopo** | |
@@ -46,7 +46,7 @@ aviso. É a maior distância entre esta ferramenta e a norma.
 
 ---
 
-## 2. NIST SP 800-86 — Guide to Integrating Forensic Techniques into Incident Response
+## 2. NIST SP 800-86: Guide to Integrating Forensic Techniques into Incident Response
 
 Organiza o trabalho em quatro fases: **coleta, exame, análise e apresentação**.
 
@@ -60,7 +60,7 @@ Organiza o trabalho em quatro fases: **coleta, exame, análise e apresentação*
 
 ---
 
-## 3. NIST SP 800-92 — Guide to Computer Security Log Management
+## 3. NIST SP 800-92: Guide to Computer Security Log Management
 
 O ponto central da norma para esta ferramenta: **o log durável é separado do
 estado corrente**. A memória do que aconteceu não mora na fotografia.
@@ -80,7 +80,7 @@ mais do que já existe sem aumentar o que se guarda.
 
 ---
 
-## 4. ISO/IEC 27037 — Identificação, coleta, aquisição e preservação
+## 4. ISO/IEC 27037: Identificação, coleta, aquisição e preservação
 
 | Item da norma | Situação | Evidência |
 |---|---|---|
@@ -115,8 +115,8 @@ Registrado para que a ausência não seja lida como esquecimento.
 | Não faz | Decisão que tirou |
 |---|---|
 | Captura de memória bruta em massa (LiME e similares) | D-032; removido do escopo em 2026-08-19 |
-| Análise de imagem de memória (Volatility) | Bancada, é o passo depois do relatório |
-| Captura integral de tráfego | D-032: dizer que "500 MB foram para o IP X" é o trabalho; o conteúdo é bancada |
+| Análise de imagem de memória (Volatility) | Análise aprofundada, é o passo depois do relatório |
+| Captura integral de tráfego | D-032: dizer que "500 MB foram para o IP X" é o trabalho; o conteúdo é análise aprofundada |
 | Bloqueio, contenção ou resposta ativa | A ferramenta é forense, não EDR (D-024) |
 | Deduzir quais achados vieram do cenário de teste | D-034: só o nome do script é mapeado; o resto tem que ser descoberta legítima, senão a prova é circular |
 

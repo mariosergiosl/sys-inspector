@@ -110,6 +110,7 @@ def test_as_tres_perguntas_aparecem_rotuladas_na_tela():
     """
     r = make_referral("analise X", "motivo Y", "objeto Z")
     html = render_findings_panel([_achado(referral=r).to_dict()])
+    assert "Encaminhamento para analise" in html
     assert "Analise necessaria" in html
     assert "Por que este achado a motiva" in html
     assert "Objeto" in html
@@ -122,7 +123,11 @@ def test_achado_que_se_conclui_sozinho_nao_desenha_o_bloco():
     quando o encaminhamento EXISTE -- por isso o teste anterior.
     """
     html = render_findings_panel([_achado().to_dict()])
-    assert "Encaminhamento a bancada" not in html
+    # O titulo era "Encaminhamento a bancada" ate a 1.4.0. Cobrar a
+    # classe do bloco, e nao so o titulo, impede que a proxima troca de
+    # nome torne este teste vazio sem ninguem perceber.
+    assert "fnd-referral" not in html
+    assert "Encaminhamento para analise" not in html
 
 
 def test_o_objeto_do_encaminhamento_e_escapado():

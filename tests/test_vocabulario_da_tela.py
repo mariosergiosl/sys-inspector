@@ -130,26 +130,47 @@ def test_coletado_em_so_quando_falta_a_data_do_agente():
     assert "else:" in trecho, "'coletado em' fora do ramo sem data do agente"
 
 
-# Travessao colado a texto: pedido do Mario em 2026-10-10 ("evitar o uso de
-# travessao em qualquer texto"), visto em "nada preservado -- nada do artefato
-# foi retido". O travessao SOZINHO, como valor de campo vazio (estado "olhou e
-# nao havia" da D-020), e simbolo e nao pontuacao, e passa.
-_TRAVESSAO = "(?:&mdash;|&#8212;|\u2014)"
-_TRAVESSAO_EM_TEXTO = re.compile(
-    r"[A-Za-z0-9,.:;)]\s*" + _TRAVESSAO + "|" + _TRAVESSAO + r"\s*[A-Za-z0-9(]")
+# Travessao: pedido do Mario em 2026-10-10 ("evitar o uso de travessao em
+# qualquer texto"), visto em "nada preservado -- nada do artefato foi retido".
+# Na primeira versao desta trava o travessao SOZINHO, como valor de campo vazio
+# (estado "olhou e nao havia" da D-020), passava por ser simbolo. O Mario
+# corrigiu no mesmo dia: campo vazio nunca fica sem informacao, e o travessao
+# que quer dizer "nada encontrado" passa a dizer isso por extenso. A trava
+# agora reprova QUALQUER travessao em texto de tela.
+_TRAVESSAO = re.compile("&mdash;|&#8212;|\u2014")
 
 
-def test_nenhum_travessao_no_meio_de_texto():
-    """REPROVA A VERSAO ANTERIOR: cinco textos de tela usavam o travessao
-    como separador, inclusive a custodia de todo achado de inventario."""
-    achados = []
+def _strings_de_todo_src():
+    """Strings de tela de todos os modulos de src, com o arquivo de cada uma."""
     for raiz_dir, _d, nomes in os.walk(os.path.join(RAIZ, "src")):
-        for nome in nomes:
+        for nome in sorted(nomes):
             if not nome.endswith(".py"):
                 continue
             caminho = os.path.relpath(os.path.join(raiz_dir, nome), RAIZ)
             for linha, valor in _strings_de_tela(caminho):
-                m = _TRAVESSAO_EM_TEXTO.search(valor)
-                if m:
-                    achados.append("%s:%d %r" % (caminho, linha, m.group(0)))
-    assert not achados, "travessao em texto:\n" + "\n".join(achados)
+                yield caminho, linha, valor
+
+
+def test_nenhum_travessao_na_tela():
+    """REPROVA AS DUAS VERSOES ANTERIORES: cinco textos usavam o travessao como
+    separador, e quinze campos vazios mostravam so o travessao."""
+    achados = []
+    for caminho, linha, valor in _strings_de_todo_src():
+        m = _TRAVESSAO.search(valor)
+        if m:
+            achados.append("%s:%d %r" % (caminho, linha, m.group(0)))
+    assert not achados, "travessao na tela:\n" + "\n".join(achados)
+
+
+def test_encaminhamento_para_analise_e_nao_bancada():
+    """REPROVA A 1.4.0: o bloco de cada achado dizia "Encaminhamento a
+    bancada". O Mario pediu "Encaminhamento para analise" (2026-10-10), e
+    "bancada" saiu tambem dos outros textos de tela."""
+    achados = []
+    for caminho, linha, valor in _strings_de_todo_src():
+        if re.search(r"\bbancada\b", valor, re.I):
+            achados.append("%s:%d" % (caminho, linha))
+    assert not achados, "'bancada' na tela:\n" + "\n".join(achados)
+    with io.open(os.path.join(RAIZ, "src/exporters/html_report.py"),
+                 encoding="utf-8") as fh:
+        assert "Encaminhamento para analise" in fh.read()

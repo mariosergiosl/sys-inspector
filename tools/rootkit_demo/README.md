@@ -91,7 +91,7 @@ sudo dmesg | grep sysinspector_demo_hide
 Com o módulo escondido, rode uma captura e procure na aba Findings por um achado
 **Critical** com título `Modulo de kernel ausente da lista de modulos:
 sysinspector_demo_hide`, fonte `heuristic`, técnica `T1014`, e o bloco
-"Encaminhamento a bancada" preenchido.
+"Encaminhamento para analise" preenchido.
 
 Conferência rápida, fora da ferramenta:
 

@@ -7,7 +7,7 @@
 > backlog item) backing the claim. A compliance table without evidence is worse
 > than no table, because it promises what nobody checked.
 >
-> This is a **fleet forensics** tool, not a bench tool (decision D-024). It
+> This is a **fleet forensics** tool, not a single-host in-depth analysis tool (decision D-024). It
 > collects enough to **identify and direct**, never the mass that proves
 > (decision D-032). Several "not covered" rows below are deliberate, and are
 > marked as such.
@@ -23,17 +23,17 @@
 
 ---
 
-## 1. RFC 3227 — Guidelines for Evidence Collection and Archiving
+## 1. RFC 3227: Guidelines for Evidence Collection and Archiving
 
 IETF document (2002) establishing the **order of volatility**: collect first what
 disappears first.
 
 | Item | Status | Evidence |
 |---|---|---|
-| Registers, cache and memory first | **Out of scope** | Raw memory capture is bench work (D-032). The tool points at the suspect region and refers it onward (`src/core/acquisition.py`, `referral` field in `src/core/findings.py`) |
+| Registers, cache and memory first | **Out of scope** | Raw memory capture is in-depth analysis, off the host (D-032). The tool points at the suspect region and refers it onward (`src/core/acquisition.py`, `referral` field in `src/core/findings.py`) |
 | Routing table, ARP cache, process table, kernel statistics | **Covered** | `src/collectors/system_inventory.py` and `src/collectors/process_tree.py`; eBPF probes in `src/probes/base_trace.c` |
 | Temporary file systems | **Partial** | Detects execution from `/tmp`, `/dev/shm`, `/var/tmp`, `/run/shm` (`UNSAFE_EXEC_PREFIXES`). Does not preserve the full content of those paths |
-| Disk | **Partial** | Hash and excerpt of suspect files, with a full copy when it fits the byte ceiling (`Acquirer.acquire_file`). Disk imaging is bench work |
+| Disk | **Partial** | Hash and excerpt of suspect files, with a full copy when it fits the byte ceiling (`Acquirer.acquire_file`). Disk imaging is in-depth analysis, off the host |
 | Remote logging and monitoring | **Covered** | Central delivery over HTTPS with a token (`src/core/outbox.py`, decision D-033) |
 | Physical configuration and network topology | **Covered** | `get_net_info()` and `get_hw_info()` in `system_inventory.py` |
 | Archival media | **Out of scope** | |
@@ -47,7 +47,7 @@ standard.
 
 ---
 
-## 2. NIST SP 800-86 — Integrating Forensic Techniques into Incident Response
+## 2. NIST SP 800-86: Integrating Forensic Techniques into Incident Response
 
 Organises the work into four phases: **collection, examination, analysis and
 reporting**.
@@ -62,7 +62,7 @@ reporting**.
 
 ---
 
-## 3. NIST SP 800-92 — Computer Security Log Management
+## 3. NIST SP 800-92: Computer Security Log Management
 
 The core point of this standard for this tool: **the durable log is separate from
 current state**. The memory of what happened does not live in the photograph.
@@ -82,7 +82,7 @@ extracting more from what already exists without storing more.
 
 ---
 
-## 4. ISO/IEC 27037 — Identification, collection, acquisition and preservation
+## 4. ISO/IEC 27037: Identification, collection, acquisition and preservation
 
 | Item | Status | Evidence |
 |---|---|---|
@@ -116,8 +116,8 @@ Recorded so that absence is not read as oversight.
 | Does not do | Decision that removed it |
 |---|---|
 | Bulk raw memory capture (LiME and similar) | D-032; removed from scope on 2026-08-19 |
-| Memory image analysis (Volatility) | Bench work, the step after the report |
-| Full traffic capture | D-032: saying "500 MB went to IP X" is the job; the content is bench work |
+| Memory image analysis (Volatility) | In-depth analysis, the step after the report |
+| Full traffic capture | D-032: saying "500 MB went to IP X" is the job; the content is in-depth analysis |
 | Blocking, containment or active response | The tool is forensic, not EDR (D-024) |
 | Infer which findings came from the test scenario | D-034: only the script name is mapped; the rest must be legitimate discovery, otherwise the proof is circular |
 
