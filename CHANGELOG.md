@@ -44,6 +44,11 @@ lab: what the screen showed, measured against what the hosts were doing.
   "changed" and "off the usual" marks, and the grouping, only consider Medium or
   above: counting Low findings, which oscillate with normal activity, flagged 99
   of ~150 captures in a day.
+- **The day's event list has the 24-hour strip too,** with the distinct findings
+  of each hour; clicking an hour narrows the list. The "off the usual" mark now
+  compares with the host's last 24 hours instead of the whole month: clean
+  captures right after removing planted artifacts were flagged because the
+  month was still dominated by the previous state.
 - **Inside a host's day, the event list no longer falls back to all hosts.**
   Type filters kept the window but dropped the day, and "see all" removed host
   and day at once. Filters now keep the day or capture, each filter has its own

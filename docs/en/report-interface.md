@@ -75,15 +75,19 @@ discoveries**. Each day shows the distinct findings (the same finding on the sam
 host counts once per day), how many are new (the first time that host shows that
 finding) and how many other events happened. Clicking a day opens the list of
 that day's events, the same list as before, with the sequence reading on top; a
-reading repeated on every capture appears once, with "seen N times". The window
-buttons (15min, 1h, 6h, 24h) still lead to the recent list.
+reading repeated on every capture appears once, with "seen N times". The day list
+has on top the same 24-hour strip as the other calendar, counting the distinct
+findings of each hour; clicking an hour narrows the list, and type filters keep
+the day and hour. The window buttons (15min, 1h, 6h, 24h) still lead to the
+recent list.
 
 **Captures / Collections** ("Capturas / Coletas") counts captures per day.
 Capturing is the agent obtaining data from the host; collecting is the server
 receiving what was captured, and the gap between the two moments is the
 collection delay. Day marks: Δ for captures whose composition changed against the
 previous capture of the same host, ≠ for captures whose total departs from the
-host's usual value (the most common one), and ⚠ for gaps, intervals with no
+host's usual value (the most common one in the previous 24 hours, with at least
+three captures to compare), and ⚠ for gaps, intervals with no
 capture much longer than usual. In the all-hosts view, the day says how many hosts
 have something to look at. The three marks only look at Medium-or-above findings:
 Low ones vary with the host's normal activity and, if they counted, almost every
