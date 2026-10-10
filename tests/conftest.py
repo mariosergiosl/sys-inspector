@@ -23,6 +23,11 @@ if _ROOT not in sys.path:
 # testes usam tempfile.mkdtemp sem limpar; ja eram 16833 desde agosto. Este
 # arquivo e importado antes da coleta, entao o desvio pega tambem o mkdtemp
 # feito no corpo de uma classe. Com falha, a pasta fica, para investigar.
+# O tmp_path do proprio pytest fica FORA do desvio: ele limpa a pasta dele no
+# encerramento, depois deste arquivo, e com ela dentro da pasta da sessao
+# reclamava de FileNotFoundError ao final de toda rodada. O pytest ja guarda so
+# as tres ultimas rodadas dele.
+os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", tempfile.gettempdir())
 TMP_DA_SESSAO = tempfile.mkdtemp(prefix="si-pytest-")
 tempfile.tempdir = TMP_DA_SESSAO
 

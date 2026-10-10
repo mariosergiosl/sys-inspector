@@ -39,3 +39,11 @@ def test_o_desvio_vale_antes_da_coleta():
     sessao = os.path.realpath(tempfile.gettempdir())
     assert os.path.basename(sessao).startswith("si-pytest-"), sessao
     assert os.path.realpath(t._Daemon.CHAOS_LOG_DIR).startswith(sessao + os.sep)
+
+
+def test_tmp_path_do_pytest_fica_fora_da_pasta_da_sessao(tmp_path):
+    """REPROVA A PRIMEIRA VERSAO DA CORRECAO: com a pasta do pytest dentro da
+    pasta da sessao, apagada antes da limpeza dele, toda rodada terminava com
+    FileNotFoundError em pytest-of-root."""
+    sessao = os.path.realpath(tempfile.gettempdir())
+    assert not os.path.realpath(str(tmp_path)).startswith(sessao + os.sep)
