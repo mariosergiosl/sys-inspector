@@ -76,14 +76,17 @@ os achados distintos (o mesmo achado do mesmo host conta uma vez no dia), quanto
 são novos (primeira vez que aquele host mostra aquele achado) e quantos outros
 eventos houve. Clicar no dia abre a lista de eventos daquele dia, a mesma lista
 de antes, com a leitura da sequência no topo; uma leitura repetida a cada captura
-aparece uma vez, com "visto N vezes". Os botões de janela (15min, 1h, 6h, 24h)
-continuam levando à lista recente.
+aparece uma vez, com "visto N vezes". A lista do dia tem no topo a mesma faixa de
+24 horas do outro calendário, contando os achados distintos de cada hora; clicar
+numa hora restringe a lista, e os filtros de tipo mantêm o dia e a hora. Os botões
+de janela (15min, 1h, 6h, 24h) continuam levando à lista recente.
 
 **Capturas / Coletas** conta as capturas por dia. Capturar é o agente obtendo os
 dados do host; coletar é o servidor recebendo o que foi capturado, e a diferença
 entre os dois instantes é o atraso da coleta. Marcas do dia: Δ para capturas cuja
 composição mudou em relação à anterior do mesmo host, ≠ para capturas cujo total
-foge do padrão do host (o valor mais comum), e ⚠ para lacunas, intervalos sem
+foge do padrão do host (o valor mais comum nas 24 horas anteriores, com pelo
+menos três capturas para comparar), e ⚠ para lacunas, intervalos sem
 captura bem maiores que o típico. Na visão geral, o dia diz quantos hosts têm
 algo a olhar. As três marcas olham só os achados Médio ou acima: o Baixo varia
 com a atividade normal do host e, se contasse, quase toda captura sairia marcada.
