@@ -35,7 +35,7 @@ import calendar
 import datetime
 import html
 import statistics
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 
 from src.core.findings import (SEV_LOW, SEV_MEDIUM, SEV_HIGH, SEV_CRITICAL)
 from src.core.risk import CORES
@@ -60,6 +60,16 @@ RELEVANTES = (SEV_CRITICAL, SEV_HIGH, SEV_MEDIUM)
 # de poucos segundos.
 MULTIPLO_LACUNA = 3
 PISO_LACUNA_S = 120
+
+# [F-265] Padrao do host: o total de achados Medio ou acima mais comum nas
+# capturas das ULTIMAS 24 HORAS antes de cada captura. Ate 2026-10-10 era o
+# mais comum do mes inteiro, e as primeiras capturas LIMPAS da .161, logo
+# depois de remover artefatos plantados, sairam "fora do padrao" porque o mes
+# ainda era dominado pelo estado de antes. Um padrao recente acompanha a
+# mudanca de estado do host. Com menos de PADRAO_MINIMO capturas na janela nao
+# ha padrao para comparar, e a marca nao acende.
+JANELA_PADRAO_S = 24 * 3600
+PADRAO_MINIMO = 3
 
 NOMES_MES = ("janeiro", "fevereiro", "marco", "abril", "maio", "junho",
              "julho", "agosto", "setembro", "outubro", "novembro", "dezembro")
@@ -124,21 +134,31 @@ def preparar(linhas, nomes=None):
     for item in itens:
         por_host[item["agent_uuid"]].append(item)
     for capturas in por_host.values():
-        # Padrao do host: o total de achados Medio ou acima mais comum na
-        # janela. Empate fica com o menor, que e a leitura conservadora ("o
-        # normal e ter menos").
-        contagem = Counter(c["total_relevante"] for c in capturas)
-        maior = max(contagem.values())
-        padrao = min(t for t, n in contagem.items() if n == maior)
         intervalos = [b["captured_at"] - a["captured_at"]
                       for a, b in zip(capturas, capturas[1:])]
         tipico = statistics.median(intervalos) if intervalos else 0
         limite = max(PISO_LACUNA_S, MULTIPLO_LACUNA * tipico)
         anterior = None
+        janela = deque()
+        contagem = Counter()
         for c in capturas:
-            c["padrao"] = padrao
-            c["fora_do_padrao"] = (len(capturas) > 1
-                                   and c["total_relevante"] != padrao)
+            # Janela deslizante das 24 h anteriores a ESTA captura, com o
+            # contador mantido incrementalmente (meses de capturas a cada ~40 s
+            # nao podem custar uma varredura por captura).
+            while janela and (c["captured_at"] - janela[0]["captured_at"]
+                              > JANELA_PADRAO_S):
+                velha = janela.popleft()
+                contagem[velha["total_relevante"]] -= 1
+                if not contagem[velha["total_relevante"]]:
+                    del contagem[velha["total_relevante"]]
+            if len(janela) >= PADRAO_MINIMO:
+                # Empate fica com o menor, que e a leitura conservadora ("o
+                # normal e ter menos").
+                maior = max(contagem.values())
+                c["padrao"] = min(t for t, n in contagem.items() if n == maior)
+                c["fora_do_padrao"] = c["total_relevante"] != c["padrao"]
+            janela.append(c)
+            contagem[c["total_relevante"]] += 1
             if anterior is not None:
                 c["anterior_sev"] = anterior["sev"]
                 c["mudou"] = c["relevante"] != anterior["relevante"]
@@ -296,7 +316,8 @@ AJUDA_MARCAS = (
     "<b class='cal-delta'>mudou</b>: a captura tem achados Medio ou acima "
     "diferentes da captura anterior do mesmo host. "
     "<b class='cal-desvio'>fora do padrao</b>: o total de achados Medio ou "
-    "acima difere do valor mais comum daquele host no mes. "
+    "acima difere do valor mais comum daquele host nas 24 horas anteriores "
+    "(com pelo menos tres capturas para comparar). "
     "<b class='cal-lacuna'>lacuna</b>: o intervalo desde a captura anterior foi "
     "bem maior que o tipico do host (agente parado, host desligado ou "
     "entrega interrompida). Achados Baixos variam com a atividade normal e "
@@ -408,26 +429,22 @@ EV_ACHADO = "finding.raised"
 EV_CAPTURA = "capture.taken"
 
 
-def resumir_dias_achados(eventos):
+def _resumir_achados(eventos, chave_tempo):
     """
-    [F-258] Agrega os eventos por dia para o calendario de ACHADOS.
-
-    Por dia: achados DISTINTOS (o mesmo achado do mesmo host conta uma vez no
-    dia, com a severidade mais alta vista), composicao por severidade desses
-    achados, quantos sao NOVOS (primeira vez que aquele host mostra aquele
-    achado na janela carregada), descobertas (os demais eventos, exceto o
-    registro da propria captura), capturas e hosts.
-
-    PARAMETER eventos: dicts de EventStore.daily_rows, em ordem de tempo.
+    Agrega eventos por uma chave de tempo (dia ou hora) para o calendario de
+    achados: achados distintos por severidade, novos, demais eventos,
+    capturas e hosts. "Novo" e a primeira vez, na sequencia recebida, que
+    aquele host mostra aquele achado.
     """
-    ordem = {s: i for i, s in enumerate(reversed(SEVERIDADES))}
+    ordem = {sv: i for i, sv in enumerate(reversed(SEVERIDADES))}
     ja_visto = set()
-    dias = {}
+    saida = {}
     for ev in eventos or []:
-        d = _dia(float(ev.get("corrected_ts") or 0))
-        r = dias.setdefault(d, {"achados": {}, "novos": 0, "descobertas": 0,
-                                "capturas": 0, "hosts": set(),
-                                "hosts_atencao": set()})
+        k = chave_tempo(float(ev.get("corrected_ts") or 0))
+        r = saida.setdefault(k, {"achados": {}, "novos": 0, "descobertas": 0,
+                                 "capturas": 0, "eventos": 0, "hosts": set(),
+                                 "hosts_atencao": set()})
+        r["eventos"] += 1
         r["hosts"].add(ev.get("agent_uuid"))
         tipo = ev.get("type")
         if tipo == EV_CAPTURA:
@@ -447,11 +464,72 @@ def resumir_dias_achados(eventos):
             ja_visto.add(chave)
             r["novos"] += 1
             r["hosts_atencao"].add(ev.get("agent_uuid"))
-    for r in dias.values():
-        r["composicao"] = {s: 0 for s in SEVERIDADES}
+    for r in saida.values():
+        r["composicao"] = {sv: 0 for sv in SEVERIDADES}
         for sev in r["achados"].values():
             r["composicao"][sev] += 1
-    return dias
+    return saida
+
+
+def render_horas_achados(eventos_do_dia, link_hora, hora_sel=None):
+    """
+    [F-258] Faixa das 24 horas na lista de eventos de um dia, no mesmo desenho
+    da faixa do calendario de capturas. Pedido do Mario em 2026-10-10: "pode
+    colocar nessa tela aquela mesma barra de filtro de hora?". Tambem e a
+    saida natural do corte em 1500 eventos: uma hora cabe inteira na lista.
+
+    PARAMETER eventos_do_dia: dicts de EventStore.daily_rows do dia.
+    PARAMETER link_hora: funcao(hora ou None) -> URL; None volta ao dia todo.
+    """
+    horas = _resumir_achados(
+        eventos_do_dia, lambda ts: datetime.datetime.fromtimestamp(ts).hour)
+    saida = ("<div class='cal-titulo' style='margin-top:6px'><b>Horas do "
+             "dia</b> %s</div><div class='cal-horas'>"
+             % bolha("Horas do dia", "Cada coluna e uma hora: quantos eventos "
+                     "houve, a faixa dos achados distintos daquela hora (o "
+                     "mesmo achado do mesmo host conta uma vez) e quantos "
+                     "achados apareceram pela primeira vez no dia. Clique numa "
+                     "hora para ver so ela; a lista cabe inteira.<br><br>"
+                     + AJUDA_FAIXA))
+    for h in range(24):
+        r = horas.get(h)
+        sel = " sel" if h == hora_sel else ""
+        if not r:
+            saida += ("<div class='cal-hora%s' style='border-top-color:#333'>"
+                      "<b>%02dh</b><div style='color:#555'>&mdash;</div></div>"
+                      % (sel, h))
+            continue
+        novos = ("<span class='cal-delta' title='%d achado(s) vistos pela "
+                 "primeira vez no dia'>novos %d</span>"
+                 % (r["novos"], r["novos"])) if r["novos"] else ""
+        saida += ("<a class='cal-hora%s' href='%s' style='border-top-color:%s' "
+                  "title='Clique para listar so esta hora'><b>%02dh</b>"
+                  "<div title='%d evento(s) nesta hora'>%d</div>%s"
+                  "<div style='font-size:9px'>%s</div></a>"
+                  % (sel, link_hora(h), _cor_borda(r["composicao"]), h,
+                     r["eventos"], r["eventos"],
+                     _faixa(r["composicao"],
+                            contexto="distintos nesta hora"), novos))
+    saida += "</div>"
+    if hora_sel is not None:
+        saida += ("<p><a class='cal-btn' href='%s'>&larr; dia inteiro</a></p>"
+                  % link_hora(None))
+    return saida
+
+
+def resumir_dias_achados(eventos):
+    """
+    [F-258] Agrega os eventos por dia para o calendario de ACHADOS.
+
+    Por dia: achados DISTINTOS (o mesmo achado do mesmo host conta uma vez no
+    dia, com a severidade mais alta vista), composicao por severidade desses
+    achados, quantos sao NOVOS (primeira vez que aquele host mostra aquele
+    achado na janela carregada), descobertas (os demais eventos, exceto o
+    registro da propria captura), capturas e hosts.
+
+    PARAMETER eventos: dicts de EventStore.daily_rows, em ordem de tempo.
+    """
+    return _resumir_achados(eventos, _dia)
 
 
 def render_mes_achados(ano, mes, dias, link_dia, link_mes, geral,
@@ -672,7 +750,8 @@ def _marcas_captura(c):
     if c["fora_do_padrao"]:
         marcas += ("<div><span class='cal-marca cal-desvio'>&ne; fora do "
                    "padrao</span><span class='cal-detalhe'>%d achado(s) Medio ou "
-                   "acima; o comum neste host e %d</span></div>"
+                   "acima; o comum neste host nas 24h anteriores e %d</span>"
+                   "</div>"
                    % (c["total_relevante"], c["padrao"]))
     if c["lacuna_antes"]:
         marcas += ("<div><span class='cal-marca cal-lacuna'>&#9888; lacuna"
