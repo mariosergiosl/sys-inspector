@@ -39,6 +39,10 @@ transport.
 - **The Capabilities screen showed `&mdash;` literally** for a host that did
   not report its operating system: the placeholder was escaped as text.
 
+- **The test suite no longer fills `/tmp`.** Each run left about 430
+  temporary directories behind; the suite now keeps its temporary files in
+  one session directory, removed at the end when the run passes.
+
 ### Removed
 
 - `run_local.live.bash` and `run_snapshot.bash`, which called the `local-live`
