@@ -44,6 +44,16 @@ from src.core.risk import CORES
 # proposito: e inventario, aparece em toda captura e nao separa nada.
 SEVERIDADES = (SEV_CRITICAL, SEV_HIGH, SEV_MEDIUM, SEV_LOW)
 SIGLA = {SEV_CRITICAL: "C", SEV_HIGH: "A", SEV_MEDIUM: "M", SEV_LOW: "B"}
+NOME = {SEV_CRITICAL: "Critico", SEV_HIGH: "Alto", SEV_MEDIUM: "Medio",
+        SEV_LOW: "Baixo"}
+
+# Severidades que contam para "mudou", "fora do padrao" e para separar grupos.
+# Baixo fica de fora pela mesma razao da regra de alerta (F-261): e atividade
+# rotineira e varia o tempo todo. Medido em 2026-10-10 no dia 09/10 da .161:
+# com o Baixo indo de 4 a 23 entre capturas seguidas, 99 de ~150 capturas
+# sairam "fora do padrao" e 22 "mudaram", e o marcador deixou de separar.
+# O Baixo continua na faixa; so nao dispara marcador.
+RELEVANTES = (SEV_CRITICAL, SEV_HIGH, SEV_MEDIUM)
 
 # Lacuna: intervalo entre duas capturas do mesmo host maior que este multiplo
 # do intervalo tipico daquele host, com um piso para nao acusar variacao normal
@@ -99,9 +109,14 @@ def preparar(linhas, nomes=None):
             "capture_type": ln.get("capture_type"),
             "sev": sev,
             "total": sum(sev.values()),
+            "relevante": tuple(sev[s] for s in RELEVANTES),
+            "total_relevante": sum(sev[s] for s in RELEVANTES),
             "mudou": False,
             "fora_do_padrao": False,
             "lacuna_antes": False,
+            "anterior_sev": None,
+            "padrao": None,
+            "lacuna_s": None,
         })
     itens.sort(key=lambda i: i["captured_at"])
 
@@ -109,9 +124,10 @@ def preparar(linhas, nomes=None):
     for item in itens:
         por_host[item["agent_uuid"]].append(item)
     for capturas in por_host.values():
-        # Padrao do host: o total mais comum na janela. Empate fica com o
-        # menor, que e a leitura conservadora ("o normal e ter menos").
-        contagem = Counter(c["total"] for c in capturas)
+        # Padrao do host: o total de achados Medio ou acima mais comum na
+        # janela. Empate fica com o menor, que e a leitura conservadora ("o
+        # normal e ter menos").
+        contagem = Counter(c["total_relevante"] for c in capturas)
         maior = max(contagem.values())
         padrao = min(t for t, n in contagem.items() if n == maior)
         intervalos = [b["captured_at"] - a["captured_at"]
@@ -120,11 +136,15 @@ def preparar(linhas, nomes=None):
         limite = max(PISO_LACUNA_S, MULTIPLO_LACUNA * tipico)
         anterior = None
         for c in capturas:
-            c["fora_do_padrao"] = len(capturas) > 1 and c["total"] != padrao
+            c["padrao"] = padrao
+            c["fora_do_padrao"] = (len(capturas) > 1
+                                   and c["total_relevante"] != padrao)
             if anterior is not None:
-                c["mudou"] = c["sev"] != anterior["sev"]
-                c["lacuna_antes"] = (c["captured_at"] - anterior["captured_at"]
-                                     > limite)
+                c["anterior_sev"] = anterior["sev"]
+                c["mudou"] = c["relevante"] != anterior["relevante"]
+                intervalo = c["captured_at"] - anterior["captured_at"]
+                c["lacuna_antes"] = intervalo > limite
+                c["lacuna_s"] = intervalo if c["lacuna_antes"] else None
             anterior = c
     return itens
 
@@ -171,8 +191,16 @@ def severidade_mais_alta(composicao):
     return None
 
 
-def _faixa(composicao, largura=100):
-    """Faixa empilhada por severidade, com as contagens escritas."""
+def _faixa(composicao, largura=100, contexto=""):
+    """
+    Faixa empilhada por severidade, com as contagens escritas.
+
+    Cada pedaco diz por extenso o que conta ao passar o mouse ("Critico: 3
+    achados"): a letra sozinha era um codigo que so quem escreveu entendia.
+
+    PARAMETER contexto: complemento da dica, por exemplo "na pior captura do
+              dia".
+    """
     total = sum(composicao.values())
     if not total:
         return ("<div class='cal-faixa vazia' title='Nenhum achado Baixo ou "
@@ -181,8 +209,11 @@ def _faixa(composicao, largura=100):
     for s in SEVERIDADES:
         n = composicao.get(s, 0)
         if n:
-            partes.append("<span style='flex:%d;background:%s' title='%s: %d'>"
-                          "%s%d</span>" % (n, CORES[s], s, n, SIGLA[s], n))
+            partes.append("<span style='flex:%d;background:%s' title='%s: %d "
+                          "achado(s)%s'>%s%d</span>"
+                          % (n, CORES[s], NOME[s], n,
+                             (" " + contexto) if contexto else "",
+                             SIGLA[s], n))
     return ("<div class='cal-faixa' style='width:%d%%'>%s</div>"
             % (largura, "".join(partes)))
 
@@ -217,7 +248,7 @@ CSS = (
     ".cal-faixa{display:flex;height:14px;margin:4px 0;border-radius:2px;"
     "overflow:hidden;font-size:9px;color:#111;font-weight:bold}"
     ".cal-faixa span{display:flex;align-items:center;justify-content:center;"
-    "min-width:18px}"
+    "min-width:24px;padding:0 2px}"
     ".cal-faixa.vazia{color:#555;font-weight:normal}"
     ".cal-marca{display:inline-block;margin-right:6px}"
     ".cal-delta{color:#4ec9b0}.cal-desvio{color:#ffd166}"
@@ -230,23 +261,62 @@ CSS = (
     "text-decoration:none;text-align:center;display:block}"
     ".cal-hora .cal-faixa span{min-width:0}"
     ".cal-hora.sel{outline:2px solid var(--cyn)}"
+    # Botoes no desenho dos da tela Manager, e nao links sublinhados.
+    ".cal-btn{color:var(--cyn);text-decoration:none;border:1px solid #2f4f4a;"
+    "border-radius:4px;padding:2px 9px;font-size:11px;white-space:nowrap;"
+    "margin-right:4px;display:inline-block}"
+    ".cal-btn:hover{background:#222;color:#fff;border-color:var(--cyn)}"
+    ".cal-detalhe{color:#999;font-size:11px;margin-top:2px}"
+    ".cal-titulo{display:flex;align-items:center;gap:8px}"
 )
 
 
+def bolha(titulo, conteudo):
+    """
+    O "?" de ajuda, no mesmo desenho das outras telas (classe .ajuda, cujo
+    estilo vem em toda pagina do servidor). Fica aqui para o calendario nao
+    depender do controlador.
+    """
+    return ("<span class='ajuda'><span class='icone'>?</span>"
+            "<span class='balao'><b style='color:#4ec9b0;font-size:11px'>%s"
+            "</b><div style='font-size:11px;color:#bbb;line-height:1.6;"
+            "margin-top:6px'>%s</div></span></span>"
+            % (html.escape(titulo), conteudo))
+
+
+AJUDA_FAIXA = (
+    "Cada cor e uma severidade, com a letra e a quantidade: "
+    "<b style='color:%s'>C</b> critico, <b style='color:%s'>A</b> alto, "
+    "<b style='color:%s'>M</b> medio, <b style='color:%s'>B</b> baixo. Info "
+    "fica de fora: e inventario e aparece em toda captura. A borda do dia (ou "
+    "da hora) tem a cor da severidade mais alta presente."
+    % (CORES[SEV_CRITICAL], CORES[SEV_HIGH], CORES[SEV_MEDIUM], CORES[SEV_LOW]))
+
+AJUDA_MARCAS = (
+    "<b class='cal-delta'>mudou</b>: a captura tem achados Medio ou acima "
+    "diferentes da captura anterior do mesmo host. "
+    "<b class='cal-desvio'>fora do padrao</b>: o total de achados Medio ou "
+    "acima difere do valor mais comum daquele host no mes. "
+    "<b class='cal-lacuna'>lacuna</b>: o intervalo desde a captura anterior foi "
+    "bem maior que o tipico do host (agente parado, host desligado ou "
+    "entrega interrompida). Achados Baixos variam com a atividade normal e "
+    "nao disparam nenhuma destas marcas.")
+
+
 def _marcas(r):
-    """Contadores do dia: mudou, fora do padrao, lacunas."""
+    """Contadores do dia em palavras: mudaram, fora do padrao, lacunas."""
     saida = ""
     if r["mudou"]:
-        saida += ("<span class='cal-marca cal-delta' title='Capturas cuja "
-                  "composicao de achados mudou em relacao a anterior do mesmo "
-                  "host'>&Delta;%d</span>" % r["mudou"])
+        saida += ("<div class='cal-delta' title='Capturas com achados Medio ou "
+                  "acima diferentes da anterior do mesmo host'>%d mudaram</div>"
+                  % r["mudou"])
     if r["fora"]:
-        saida += ("<span class='cal-marca cal-desvio' title='Capturas com total "
-                  "de achados diferente do padrao do proprio host'>&ne;%d"
-                  "</span>" % r["fora"])
+        saida += ("<div class='cal-desvio' title='Capturas cujo total de achados "
+                  "Medio ou acima difere do mais comum do host'>%d fora do "
+                  "padrao</div>" % r["fora"])
     if r["lacunas"]:
-        saida += ("<span class='cal-marca cal-lacuna' title='Intervalos sem "
-                  "captura muito maiores que o tipico do host'>&#9888;%d</span>"
+        saida += ("<div class='cal-lacuna' title='Intervalos sem captura bem "
+                  "maiores que o tipico do host'>%d lacuna(s)</div>"
                   % r["lacunas"])
     return saida
 
@@ -283,7 +353,10 @@ def _grade(ano, mes, dias, link_mes, celula, legenda, dia_sel=None):
             saida += ("<a class='%s' href='%s' style='border-left-color:%s' "
                       "title='%s'><div class='cal-num'>%d</div>%s</a>"
                       % (classes, url, cor, dica, d.day, interno))
-    saida += "</div><div class='cal-legenda'>%s</div>" % legenda
+    ajuda = bolha("Como ler o calendario",
+                  AJUDA_FAIXA + "<br><br>" + AJUDA_MARCAS)
+    saida += ("</div><div class='cal-legenda cal-titulo'>%s %s</div>"
+              % (ajuda, legenda))
     return saida
 
 
@@ -314,9 +387,10 @@ def render_mes(ano, mes, dias, link_dia, link_mes, geral, dia_sel=None):
         if geral and r["hosts_atencao"]:
             atencao = ("<div style='color:#ffd166'>%d host(s) a olhar</div>"
                        % len(r["hosts_atencao"]))
-        interno = ("<div>%d capturas%s</div>%s<div>%s</div>%s"
-                   % (r["capturas"], hosts, _faixa(r["pior"]), _marcas(r),
-                      atencao))
+        interno = ("<div>%d capturas%s</div>%s%s%s"
+                   % (r["capturas"], hosts,
+                      _faixa(r["pior"], contexto="na pior captura do dia"),
+                      _marcas(r), atencao))
         return (_cor_borda(r["pior"]), link_dia(d), interno,
                 "Composicao da pior captura do dia; clique para listar as "
                 "capturas")
@@ -430,7 +504,12 @@ def render_horas(do_dia, link_hora, hora_sel=None):
     por_hora = defaultdict(list)
     for it in do_dia:
         por_hora[_hora(it["captured_at"])].append(it)
-    saida = "<div class='cal-horas'>"
+    saida = ("<div class='cal-titulo' style='margin-top:10px'><b>Horas do "
+             "dia</b> %s</div><div class='cal-horas'>"
+             % bolha("Horas do dia", "Cada coluna e uma hora: quantas capturas "
+                     "houve, a faixa da pior delas e as marcas (&Delta; mudaram, "
+                     "&ne; fora do padrao, cen cenario de teste). Clique numa "
+                     "hora para listar so ela.<br><br>" + AJUDA_FAIXA))
     for h in range(24):
         caps = por_hora.get(h)
         sel = " sel" if h == hora_sel else ""
@@ -445,17 +524,21 @@ def render_horas(do_dia, link_hora, hora_sel=None):
         cenario = sum(1 for c in caps if c["capture_type"] == "chaos")
         extra = ""
         if mudou:
-            extra += "<span class='cal-delta'>&Delta;%d</span> " % mudou
+            extra += ("<span class='cal-delta' title='%d captura(s) com achados "
+                      "Medio ou acima diferentes da anterior'>&Delta;%d</span> "
+                      % (mudou, mudou))
         if fora:
-            extra += "<span class='cal-desvio'>&ne;%d</span> " % fora
+            extra += ("<span class='cal-desvio' title='%d captura(s) fora do "
+                      "padrao do host'>&ne;%d</span> " % (fora, fora))
         if cenario:
-            extra += ("<span style='color:#ffd166' title='Capturas de cenario "
-                      "de teste'>cen %d</span>" % cenario)
+            extra += ("<span style='color:#ffd166' title='%d captura(s) de "
+                      "cenario de teste'>cen %d</span>" % (cenario, cenario))
         saida += ("<a class='cal-hora%s' href='%s' style='border-top-color:%s' "
                   "title='Clique para listar so esta hora'><b>%02dh</b>"
                   "<div>%d</div>%s<div style='font-size:9px'>%s</div></a>"
                   % (sel, link_hora(h), _cor_borda(pior), h, len(caps),
-                     _faixa(pior), extra))
+                     _faixa(pior, contexto="na pior captura desta hora"),
+                     extra))
     saida += "</div>"
     if hora_sel is not None:
         saida += ("<p><a href='%s'>&larr; dia inteiro</a></p>"
@@ -497,7 +580,9 @@ def render_lista_do_dia(dia, itens, selo, link_captura, hora=None,
         saida += ("<table><tr><th>Capturado</th><th>Coletado</th>"
                   "<th title='Coletado menos capturado: quanto a captura levou "
                   "para chegar ao servidor'>Atraso da coleta</th>"
-                  "<th>Tipo</th><th>Achados</th><th>Marcas</th><th></th></tr>")
+                  "<th>Tipo</th><th>Achados</th><th><span class='cal-titulo'>"
+                  "Marcas %s</span></th><th></th></tr>"
+                  % bolha("Marcas", AJUDA_MARCAS))
         for grupo in grupos:
             if len(grupo) == 1:
                 saida += _linha_captura(grupo[0], selo, link_captura,
@@ -505,16 +590,23 @@ def render_lista_do_dia(dia, itens, selo, link_captura, hora=None,
                 continue
             primeira, ultima = grupo[0], grupo[-1]
             atrasos = [c["atraso"] for c in grupo if c["atraso"] is not None]
+            baixos = [c["sev"][SEV_LOW] for c in grupo]
+            pior = {sv: max(c["sev"][sv] for c in grupo) for sv in SEVERIDADES}
+            variacao = ("" if min(baixos) == max(baixos) else
+                        "<div class='cal-detalhe'>Baixo de %d a %d</div>"
+                        % (min(baixos), max(baixos)))
             saida += ("<tr class='item cal-grupo'><td>%s a %s</td><td>&mdash;</td>"
                       "<td>ate %s</td><td>%s</td><td style='width:220px'>%s</td>"
-                      "<td>%s<b>%d capturas iguais</b></td>"
-                      "<td><a href='%s'>primeira</a> &middot; "
-                      "<a href='%s'>ultima</a></td></tr>"
+                      "<td>%s<b>%d capturas iguais</b>%s</td>"
+                      "<td style='white-space:nowrap'>"
+                      "<a class='cal-btn' href='%s'>primeira</a>"
+                      "<a class='cal-btn' href='%s'>ultima</a></td></tr>"
                       % (_fmt_hora(primeira["captured_at"]),
                          _fmt_hora(ultima["captured_at"]),
                          fmt_atraso(max(atrasos)) if atrasos else "&mdash;",
-                         selo(primeira["capture_type"]), _faixa(primeira["sev"]),
-                         _marcas_captura(primeira), len(grupo),
+                         selo(primeira["capture_type"]),
+                         _faixa(pior, contexto="no maximo do grupo"),
+                         _marcas_captura(primeira), len(grupo), variacao,
                          link_captura(primeira["agent_uuid"], primeira["id"]),
                          link_captura(ultima["agent_uuid"], ultima["id"])))
             internas = "".join(_linha_captura(c, selo, link_captura,
@@ -534,8 +626,9 @@ def agrupar_iguais(caps):
 
     Pedido do Mario em 2026-10-09 olhando a lista do dia: 144 linhas
     identicas (C2 A2 B2) a cada ~36 s, e "esta confuso". Mesma leitura =
-    mesma composicao por severidade, mesmo tipo e mesma marca de fora do
-    padrao. Uma captura que MUDOU, ou que vem depois de uma LACUNA, sempre abre
+    mesmos achados Medio ou acima, mesmo tipo e mesma marca de fora do
+    padrao. O Baixo nao separa grupo (varia com a atividade normal) e aparece
+    no grupo como intervalo. Uma captura que MUDOU, ou que vem depois de uma LACUNA, sempre abre
     grupo novo: o que muda nunca fica escondido dentro de uma sequencia.
 
     PARAMETER caps: capturas de UM host, em ordem de captura.
@@ -544,7 +637,7 @@ def agrupar_iguais(caps):
     for c in caps:
         if grupos:
             ref = grupos[-1][0]
-            igual = (c["sev"] == ref["sev"]
+            igual = (c["relevante"] == ref["relevante"]
                      and c["capture_type"] == ref["capture_type"]
                      and c["fora_do_padrao"] == ref["fora_do_padrao"]
                      and not c["mudou"] and not c["lacuna_antes"])
@@ -555,17 +648,36 @@ def agrupar_iguais(caps):
     return grupos
 
 
+def _diferenca(antes, depois):
+    """'Alto 2->4, Critico 2->3' com as severidades Medio+ que mudaram."""
+    partes = []
+    for sv in RELEVANTES:
+        a, d = (antes or {}).get(sv, 0), depois.get(sv, 0)
+        if a != d:
+            partes.append("%s %d&rarr;%d" % (NOME[sv], a, d))
+    return ", ".join(partes)
+
+
 def _marcas_captura(c):
-    """Marcas de uma captura: mudou, fora do padrao, lacuna antes."""
+    """
+    Marcas de uma captura, com o DETALHE de cada uma: o que mudou, qual e o
+    padrao do host e quanto durou a lacuna. Pedido do Mario: a marca sozinha
+    dizia que algo era diferente, mas nao o que.
+    """
     marcas = ""
     if c["mudou"]:
-        marcas += "<span class='cal-marca cal-delta'>&Delta; mudou</span>"
+        marcas += ("<div><span class='cal-marca cal-delta'>&Delta; mudou</span>"
+                   "<span class='cal-detalhe'>%s</span></div>"
+                   % _diferenca(c["anterior_sev"], c["sev"]))
     if c["fora_do_padrao"]:
-        marcas += ("<span class='cal-marca cal-desvio'>&ne; fora do "
-                   "padrao</span>")
+        marcas += ("<div><span class='cal-marca cal-desvio'>&ne; fora do "
+                   "padrao</span><span class='cal-detalhe'>%d achado(s) Medio ou "
+                   "acima; o comum neste host e %d</span></div>"
+                   % (c["total_relevante"], c["padrao"]))
     if c["lacuna_antes"]:
-        marcas += ("<span class='cal-marca cal-lacuna'>&#9888; lacuna "
-                   "antes</span>")
+        marcas += ("<div><span class='cal-marca cal-lacuna'>&#9888; lacuna"
+                   "</span><span class='cal-detalhe'>%s sem captura antes desta"
+                   "</span></div>" % fmt_atraso(c["lacuna_s"]))
     return marcas
 
 
@@ -577,11 +689,12 @@ def _linha_captura(c, selo, link_captura, link_eventos):
                 "data de coleta'>%s*</span>" % capt)
     return ("<tr class='item'><td>%s</td><td>%s</td><td>%s</td>"
             "<td>%s</td><td style='width:220px'>%s</td><td>%s</td>"
-            "<td><a href='%s'>relatorio</a>%s</td></tr>"
+            "<td style='white-space:nowrap'><a class='cal-btn' href='%s'>"
+            "relatorio</a>%s</td></tr>"
             % (capt, _fmt_hora(c["collected_at"]),
                fmt_atraso(c["atraso"]), selo(c["capture_type"]),
                _faixa(c["sev"]), _marcas_captura(c) or "&mdash;",
                link_captura(c["agent_uuid"], c["id"]),
-               (" &middot; <a href='%s'>eventos</a>"
+               ("<a class='cal-btn' href='%s'>eventos</a>"
                 % link_eventos(c["agent_uuid"], c["id"]))
                if link_eventos else ""))
