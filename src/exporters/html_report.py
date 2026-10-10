@@ -1323,6 +1323,23 @@ def _referral_block(referral):
            _esc(referral.get("object", ""))))
 
 
+def _texto_evidencia(valor):
+    """
+    [F-267] Valor de evidencia legivel: texto como esta, lista com um item por
+    linha, dicionario como "chave: valor". Ate 2026-10-10 tudo que nao era
+    texto saia como repr() do Python ("[{'bit': 12, 'flag': 'O', ...}]"),
+    visto pelo Mario no achado de kernel tingido.
+    """
+    if isinstance(valor, str):
+        return valor
+    if isinstance(valor, dict):
+        return ", ".join("%s: %s" % (k, _texto_evidencia(v))
+                         for k, v in valor.items())
+    if isinstance(valor, (list, tuple)):
+        return "\n".join(_texto_evidencia(v) for v in valor)
+    return str(valor)
+
+
 def _evidence_key_html(key):
     """Chave da evidencia com tooltip explicativo quando conhecida."""
     ajuda = _EVIDENCE_HELP.get(key)
@@ -1494,7 +1511,7 @@ def render_findings_panel(findings):
         # Evidencia bruta, exibida sob demanda (chave: valor).
         ev_rows = []
         for key, value in (f.get("evidence") or {}).items():
-            text = value if isinstance(value, str) else repr(value)
+            text = _texto_evidencia(value)
             if len(text) > 2000:
                 text = text[:2000] + " ... [truncated]"
             ev_rows.append(f"<div class='fnd-ev-row'>{_evidence_key_html(key)}"

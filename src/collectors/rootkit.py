@@ -225,6 +225,84 @@ def taint_flags(raiz=""):
             if valor & (1 << bit)]
 
 
+def modulos_tingidos(raiz=""):
+    """
+    [F-267] Modulos CARREGADOS que levam marca de taint, com as letras.
+
+    O kernel diz, modulo a modulo, em /sys/module/<nome>/taint, qual marca
+    cada um deixou (as mesmas letras de /proc/sys/kernel/tainted). Ate
+    2026-10-10 o achado lia so o numero global e mandava o analista "levantar
+    quais modulos" a mao; medido na .161 e na gwlocal, a resposta estava ali:
+    vboxguest e vboxsf, "OE". Devolve [(nome, letras)] so com as letras que
+    esta analise interpreta, em ordem de nome.
+    """
+    base = os.path.join(raiz, "sys/module") if raiz else "/sys/module"
+    letras_validas = {v[0] for v in TAINT_BITS.values()}
+    saida = []
+    try:
+        nomes = sorted(os.listdir(base))
+    except (IOError, OSError):
+        return []
+    for nome in nomes:
+        texto = _ler(os.path.join(base, nome, "taint")) or ""
+        letras = "".join(c for c in texto.strip() if c in letras_validas)
+        if letras:
+            saida.append((nome, letras))
+    return saida
+
+
+def _pacote_dono(caminho):
+    """
+    Nome do pacote dono do arquivo; False se nenhum pacote o possui; None se
+    nao foi possivel perguntar (sem rpm, sem arquivo). As tres respostas sao
+    diferentes num laudo, como em _tem_pacote.
+    """
+    if not caminho or not os.path.exists(caminho):
+        return None
+    try:
+        r = subprocess.run(["rpm", "-qf", "--qf", "%{NAME}-%{VERSION}\\n",
+                            caminho], stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL, universal_newlines=True,
+                           timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return False
+    return (r.stdout.strip().splitlines() or [None])[0]
+
+
+def _assinante(nome):
+    """Quem assinou o modulo, segundo modinfo; "" se sem assinatura; None se
+    nao foi possivel perguntar."""
+    try:
+        r = subprocess.run(["modinfo", "-F", "signer", nome],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           universal_newlines=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _descreve_modulo(nome, letras, raiz=""):
+    """Uma linha legivel por modulo: letras, arquivo, pacote e assinatura.
+    Com raiz (arvore sintetica de teste) so as letras: nao ha arquivo real
+    para perguntar a rpm ou modinfo."""
+    partes = ["%s [%s]" % (nome, ", ".join(letras))]
+    if raiz:
+        return partes[0]
+    caminho = _caminho_do_ko(nome)
+    partes.append(caminho or "arquivo .ko nao localizado")
+    dono = _pacote_dono(caminho)
+    partes.append("pacote: " + (dono if dono else
+                                "nenhum pacote o possui" if dono is False
+                                else "nao foi possivel consultar"))
+    signer = _assinante(nome)
+    partes.append("assinatura: " + (signer if signer else
+                                    "sem assinatura" if signer == ""
+                                    else "nao foi possivel consultar"))
+    return "; ".join(partes)
+
+
 def _tem_pacote(caminho):
     """
     Se um arquivo pertence a algum pacote instalado.
@@ -513,6 +591,39 @@ def _camada_taint(raiz=""):
     pior = max(relevantes, key=lambda b: {"Critical": 4, "High": 3, "Medium": 2,
                                           "Low": 1, "Info": 0}.get(b[3], 0))
     detalhe = "; ".join("%s (%s): %s" % (b[1], b[2], b[4]) for b in relevantes)
+
+    # [F-267] Quais modulos carregados agora levam a marca. E o que transforma
+    # o achado de "o kernel esta tingido" em "estes modulos tingiram, vindos
+    # daqui". Quando a marca existe e NENHUM modulo carregado a carrega, o
+    # responsavel entrou e saiu: e o caso mais grave, e o achado diz isso.
+    letras_marca = {b[1] for b in relevantes}
+    culpados = [(n, l) for n, l in modulos_tingidos(raiz)
+                if letras_marca & set(l)]
+    if culpados:
+        nomes = ", ".join(n for n, _l in culpados)
+        quem = (" Modulos carregados agora com essa marca: %s. A lista na "
+                "evidencia diz de que arquivo cada um veio, se pertence a "
+                "algum pacote e quem o assinou." % nomes)
+        recomendacao = (
+            "Confirmar a procedencia de %s: um modulo fora da arvore, sem "
+            "pacote dono ou sem assinatura so e legitimo se o host usa "
+            "aquele driver (DKMS, adicionais de virtualizacao, driver de "
+            "terceiro). O que nao tiver explicacao e o ponto de partida." % nomes)
+    else:
+        quem = (" NENHUM modulo carregado agora leva essa marca: o modulo "
+                "responsavel entrou no kernel e ja foi descarregado.")
+        recomendacao = (
+            "O modulo que marcou o kernel nao esta mais carregado. O kernel "
+            "registra o nome dele no momento da carga: procurar no log do "
+            "kernel desde o boot (journalctl -k, mensagens 'tainting kernel' e "
+            "'module verification failed') e cruzar com quem tinha privilegio "
+            "para carregar modulos nesse instante.")
+    evidencia = {"taint_bits": [{"bit": b[0], "flag": b[1], "meaning": b[2]}
+                                for b in bits],
+                 "modulos_com_a_marca": ([_descreve_modulo(n, l, raiz)
+                                          for n, l in culpados]
+                                         or ["nenhum modulo carregado agora "
+                                             "leva a marca"])}
     return [Finding(
         title="Kernel tingido por modulo de procedencia irregular",
         severity=pior[3],
@@ -524,14 +635,10 @@ def _camada_taint(raiz=""):
             "condicoes: %s. Este registro e CUMULATIVO e nao volta atras: ele "
             "vale mesmo que o modulo responsavel ja tenha sido descarregado e "
             "nao apareca em nenhuma lista de modulos. E, por isso, a unica "
-            "fonte que enxerga um modulo que passou por aqui e saiu." % detalhe),
-        evidence={"taint_bits": [{"bit": b[0], "flag": b[1], "meaning": b[2]}
-                                 for b in bits]},
+            "fonte que enxerga um modulo que passou por aqui e saiu.%s"
+            % (detalhe, quem)),
+        evidence=evidencia,
         technique="T1014",
         confidence=CONF_CONFIRMED,
         custody={"level": CUSTODY_METADATA},
-        recommendation=(
-            "Levantar quais modulos fora da arvore ou nao assinados o host "
-            "usa legitimamente (DKMS, drivers de terceiro) e comparar com a "
-            "lista de modulos carregada agora. O que sobrar precisa de "
-            "explicacao."))]
+        recommendation=recomendacao)]
