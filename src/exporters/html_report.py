@@ -749,7 +749,7 @@ def _get_details_html(node, mounts, tree=None):
     drop_style = "color:var(--red);font-weight:bold" if node.tcp_drops > 0 else "color:#888"
     html += (f"<div style='margin-bottom:4px'>"
              f"<span title='Contadores deste processo, sem os filhos.'>"
-             f"Deste processo &mdash; Retransmits: "
+             f"Deste processo: Retransmits: "
              f"<span style='{retr_style}'>{node.tcp_retrans}</span> | Drops: "
              f"<span style='{drop_style}'>{node.tcp_drops}</span></span></div>")
 
@@ -758,7 +758,7 @@ def _get_details_html(node, mounts, tree=None):
     html += (f"<div style='margin-bottom:8px; color:#888; font-size:11px'>"
              f"<span title='Este processo mais TODOS os descendentes. E este o "
              f"numero que o badge da arvore exibe, somado.'>"
-             f"Com os descendentes &mdash; Retransmits: {tree_r} | "
+             f"Com os descendentes: Retransmits: {tree_r} | "
              f"Drops: {tree_d} "
              f"<b style='color:#aaa'>(badge: {tree_r + tree_d})</b>"
              f"</span></div>")
@@ -1281,7 +1281,7 @@ def _custody_line(custody):
                       % _esc(str(dados["reason"])))
 
     aviso = ("" if nivel != CUSTODY_NONE or partes else
-             " &mdash; nada do artefato foi retido para pericia")
+             ": nada do artefato foi retido para pericia")
     detalhe = ("<div class='fnd-cust-det'>" + " &middot; ".join(partes) + "</div>"
                if partes else "")
 
