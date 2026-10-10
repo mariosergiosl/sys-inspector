@@ -77,6 +77,9 @@ def test_faixa_de_horas_da_linha_do_tempo():
     assert "/h/17" in html and "/h/18" in html
     assert "Critico: 1 achado(s) distintos nesta hora" in html
     assert "class='ajuda'" in html
+    # Medido em 2026-10-10: a hora das 18h da .161 tinha 3140 eventos. A ajuda
+    # nao pode prometer que a lista da hora cabe inteira.
+    assert "cabe inteira" not in html
 
 
 def test_a_lista_do_dia_tem_a_faixa_e_a_hora_restringe():
