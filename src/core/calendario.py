@@ -475,8 +475,10 @@ def render_horas_achados(eventos_do_dia, link_hora, hora_sel=None):
     """
     [F-258] Faixa das 24 horas na lista de eventos de um dia, no mesmo desenho
     da faixa do calendario de capturas. Pedido do Mario em 2026-10-10: "pode
-    colocar nessa tela aquela mesma barra de filtro de hora?". Tambem e a
-    saida natural do corte em 1500 eventos: uma hora cabe inteira na lista.
+    colocar nessa tela aquela mesma barra de filtro de hora?". Reduz o corte
+    em 1500 eventos, mas nao o elimina: medido no mesmo dia, a hora das 18h da
+    .161 tinha 3140 eventos, 1367 deles o mesmo achado reemitido a cada
+    captura. Agrupar o evento repetido na lista e o que resolve (F-266).
 
     PARAMETER eventos_do_dia: dicts de EventStore.daily_rows do dia.
     PARAMETER link_hora: funcao(hora ou None) -> URL; None volta ao dia todo.
@@ -489,7 +491,7 @@ def render_horas_achados(eventos_do_dia, link_hora, hora_sel=None):
                      "houve, a faixa dos achados distintos daquela hora (o "
                      "mesmo achado do mesmo host conta uma vez) e quantos "
                      "achados apareceram pela primeira vez no dia. Clique numa "
-                     "hora para ver so ela; a lista cabe inteira.<br><br>"
+                     "hora para ver so ela.<br><br>"
                      + AJUDA_FAIXA))
     for h in range(24):
         r = horas.get(h)
