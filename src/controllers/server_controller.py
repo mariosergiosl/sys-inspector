@@ -1873,15 +1873,42 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         captura_id = None
         recorte = "na janela de %d minuto(s)" % minutos
         voltar_cal = ""
+        faixa_horas = ""
+        hora_txt = (args.get("hora") or [""])[0]
+        hora_ev = (int(hora_txt) if hora_txt.isdigit() and int(hora_txt) < 24
+                   else None)
         m = self._RE_DIA.match(dia_txt)
         if m:
             try:
                 dia_ev = datetime.date(int(m.group(1)), int(m.group(2)),
                                        int(m.group(3)))
-                desde = datetime.datetime.combine(
+                inicio_dia = datetime.datetime.combine(
                     dia_ev, datetime.time.min).timestamp()
-                fim_janela = desde + 86400 - 0.001
+                desde, fim_janela = inicio_dia, inicio_dia + 86400 - 0.001
                 recorte = "no dia %s" % dia_ev.strftime("%d/%m/%Y")
+                # [F-258] Faixa de 24 horas, a mesma do calendario de capturas,
+                # pedida pelo Mario em 2026-10-10. Usa o dia INTEIRO, mesmo
+                # com uma hora escolhida, para a faixa nao mudar ao clicar.
+                eventos_dia = controller.events.daily_rows(
+                    inicio_dia, inicio_dia + 86400 - 0.001,
+                    agent_uuid=agente)
+
+                def _link_hora(h):
+                    p = [("dia", dia_txt)]
+                    if h is not None:
+                        p.append(("hora", h))
+                    if agente:
+                        p.append(("agent", agente))
+                    for t in tipos:
+                        p.append(("type", t))
+                    return "/timeline?" + urlparse.urlencode(p)
+                faixa_horas = calendario.render_horas_achados(
+                    eventos_dia, _link_hora, hora_ev)
+                if hora_ev is not None:
+                    desde = inicio_dia + hora_ev * 3600
+                    fim_janela = desde + 3600 - 0.001
+                    recorte = "no dia %s, das %02dh" % (
+                        dia_ev.strftime("%d/%m/%Y"), hora_ev)
             except ValueError:
                 pass
         if captura_txt.isdigit():
@@ -1890,8 +1917,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             recorte = "na captura #%d" % captura_id
         if dia_txt or captura_txt:
             base_cal = {"agent": agente} if agente else {}
-            voltar_cal = ("<p><a href='/timeline%s'>&larr; calendario de "
-                          "achados</a></p>"
+            voltar_cal = ("<p><a class='btn' href='/timeline%s'>&larr; "
+                          "calendario de achados</a></p>"
                           % (("?" + urlparse.urlencode(base_cal))
                              if base_cal else ""))
 
@@ -2097,6 +2124,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                 params = [("capture", captura_txt)]
             elif min_ is None and dia_txt:
                 params = [("dia", dia_txt)]
+                if hora_ev is not None:
+                    params.append(("hora", hora_ev))
             else:
                 params = [("min", min_ if min_ is not None else minutos)]
             if agent:
@@ -2193,7 +2222,8 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                   "<span style='margin-left:auto'>%s</span></div>%s"
                   % (atalhos, chips, _ajuda_risco(), limpar))
 
-        corpo = (voltar_cal + barras + topo
+        corpo = (voltar_cal + "<style>%s</style>" % calendario.CSS
+                 + faixa_horas + barras + topo
                  + "<p style='color:#777;font-size:12px'>%d eventos no total; "
                    "%d %s, em ordem cronologica corrigida "
                    "pelo desvio de relogio de cada host. A correlacao acima "
@@ -2210,9 +2240,10 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
             corpo = ("<div style='background:#2a1a1a;border-left:3px solid "
                      "#ff6b6b;padding:8px 14px;margin:10px 0;font-size:11px;"
                      "color:#ff9b9b'>Exibindo so os %d eventos mais recentes "
-                     "%s; ha mais. Restrinja por tipo de evento, ou abra o dia "
-                     "pelo calendario de Capturas / Coletas e escolha uma "
-                     "captura.</div>" % (limite, recorte)) + corpo
+                     "%s; ha mais. Escolha uma hora na faixa acima, restrinja "
+                     "por tipo de evento, ou abra o dia pelo calendario de "
+                     "Capturas / Coletas e escolha uma captura.</div>"
+                     % (limite, recorte)) + corpo
 
         # O titulo diz ONDE se esta: host e recorte. "Linha do tempo" sozinho
         # fazia a lista de um host parecer a lista geral.

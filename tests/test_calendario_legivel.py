@@ -73,7 +73,8 @@ def test_marcas_dizem_o_que_mudou_e_qual_e_o_padrao():
     html = calendario.render_lista_do_dia(DIA, _dia_09(), lambda t: t,
                                           lambda u, i: "/r")
     assert "Critico 2&rarr;3" in html and "Alto 2&rarr;4" in html
-    assert "7 achado(s) Medio ou acima; o comum neste host e 4" in html
+    assert ("7 achado(s) Medio ou acima; o comum neste host nas 24h "
+            "anteriores e 4") in html
 
 
 def test_lacuna_diz_quanto_tempo():
