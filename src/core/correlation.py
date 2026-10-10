@@ -410,3 +410,27 @@ def correlate(eventos):
             LOG.error("Correlation rule %s failed: %s",
                       getattr(regra, "__name__", "?"), exc)
     return achados
+
+
+def agrupar_conclusoes(conclusoes):
+    """
+    [F-260] Junta conclusoes que dizem a mesma coisa, com a contagem.
+
+    Medido no print do Mario em 2026-10-09: a "Leitura da sequencia" mostrava
+    oito cartoes de "Persistencia criada logo apos atividade suspeita", um por
+    captura que viu o mesmo par processo e arquivo, mudando so os segundos na
+    descricao. Para quem le, e um fato visto oito vezes. Mesma coisa = mesmo
+    titulo, severidade, tecnica e recomendacao; a descricao fica a da primeira.
+
+    Devolve lista de (conclusao, quantidade), na ordem da primeira aparicao.
+    """
+    grupos = {}
+    ordem = []
+    for c in conclusoes or []:
+        chave = (getattr(c, "title", ""), getattr(c, "severity", ""),
+                 getattr(c, "technique", ""), getattr(c, "recommendation", ""))
+        if chave not in grupos:
+            grupos[chave] = [c, 0]
+            ordem.append(chave)
+        grupos[chave][1] += 1
+    return [(grupos[k][0], grupos[k][1]) for k in ordem]

@@ -16,7 +16,6 @@
 
 import datetime
 import io
-import json
 import os
 import tempfile
 import time
@@ -169,10 +168,16 @@ def test_a_barra_mostra_a_captura_do_agente_e_nao_a_coleta():
 
 
 def test_o_calendario_esta_na_navegacao_e_valida_o_host():
+    """O botao tem o nome que o Mario deu, e o parametro do host e validado
+    antes do uso, nos dois calendarios (mesmo nome de parametro: agent)."""
     with io.open(os.path.join(RAIZ, "src/controllers/server_controller.py"),
                  encoding="utf-8") as fh:
         fonte = fh.read()
-    assert '("&#128197;", "/calendario", "Calendario")' in fonte
-    corpo = fonte.split("def _serve_calendario(")[1].split("\n    def ")[0]
-    assert "id_valido(host)" in corpo
-    assert json.dumps("dia") and "_RE_DIA.match" in corpo
+    assert '("&#128197;", "/calendario", "Capturas / Coletas")' in fonte
+    comum = fonte.split("def _params_calendario(")[1].split("\n    def ")[0]
+    assert "id_valido(agente)" in comum
+    assert "_RE_DIA.match" in comum and "_RE_MES.match" in comum
+    for tela in ("def _serve_calendario(", "def _serve_calendario_achados("):
+        corpo = fonte.split(tela)[1].split("\n    def ")[0]
+        assert "self._params_calendario(args)" in corpo, tela
+        assert "self._recusa_id(" in corpo, tela
