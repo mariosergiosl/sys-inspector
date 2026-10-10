@@ -133,6 +133,23 @@ lab: what the screen showed, measured against what the hosts were doing.
   same name pattern as real scenario logs. Tests now write to their own
   directory.
 
+- **The tainted-kernel finding named no module.** It read only the global
+  taint number and told the analyst to find the modules by hand. It now lists
+  the loaded modules carrying the taint, each with when it was loaded (at boot
+  or how long after), the .ko file actually loaded (checked against memory by
+  srcversion, and said so when the file on disk differs), its sha256, the
+  owning package (or that none owns it) and the signer. When the kernel is
+  tainted and no loaded module carries it, the finding says the culprit came
+  and went, and points to the kernel log. Captures made before this say the
+  module list was not captured, instead of looking like "no module".
+
+- **Finding evidence was shown as raw Python** (`[{'bit': 12, ...}]`); lists
+  now show one item per line and mappings as "key: value".
+
+- **Text no longer uses the em dash as a separator,** and the report shows a
+  single capture time (the corner showed when the inventory started, the bar
+  the custody time). The Manager button in the report bar matches the others.
+
 - **Every capture was flagged as an alert.** Any signal set the flag, including
   Info and Low ones that every active host raises all the time (DNS, sshd
   credential changes, renamed files, ephemeral listeners). The flag now needs a
