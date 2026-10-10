@@ -271,11 +271,11 @@ def _pacote_dono(caminho):
     return (r.stdout.strip().splitlines() or [None])[0]
 
 
-def _assinante(nome):
-    """Quem assinou o modulo, segundo modinfo; "" se sem assinatura; None se
-    nao foi possivel perguntar."""
+def _modinfo(campo, alvo):
+    """Um campo do modinfo; "" quando vazio; None quando nao deu para
+    perguntar (sem modinfo, tempo esgotado, modulo desconhecido)."""
     try:
-        r = subprocess.run(["modinfo", "-F", "signer", nome],
+        r = subprocess.run(["modinfo", "-F", campo, alvo],
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                            universal_newlines=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
@@ -283,20 +283,94 @@ def _assinante(nome):
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def arquivo_do_modulo(nome, raiz=""):
+    """
+    [F-267] Arquivo .ko do modulo CARREGADO, conferido contra a memoria.
+
+    Medido em 2026-10-10 na gwlocal: _caminho_do_ko devolvia o PRIMEIRO
+    arquivo com o nome em /lib/modules, o vboxguest da distribuicao
+    (kernel/drivers/virt/..., pacote kernel-default-extra), quando o carregado
+    era misc/vboxguest.ko, sem pacote e sem assinatura. O achado atribuia o
+    modulo ao pacote do kernel, o contrario da verdade.
+
+    O arquivo vem do modinfo, que segue a ordem de busca do modprobe, e e
+    CONFERIDO pelo srcversion: o de /sys/module/<nome>/srcversion (o que esta
+    na memoria) contra o do arquivo. Devolve (caminho, confere), com confere
+    True, False (arquivo em disco difere do carregado, e isso e indicio) ou
+    None (sem srcversion para comparar).
+    """
+    caminho = _modinfo("filename", nome)
+    if not caminho or caminho.startswith("("):
+        return None, None
+    base = os.path.join(raiz, "sys/module") if raiz else "/sys/module"
+    na_memoria = (_ler(os.path.join(base, nome, "srcversion")) or "").strip()
+    no_disco = _modinfo("srcversion", caminho)
+    if not na_memoria or not no_disco:
+        return caminho, None
+    return caminho, na_memoria == no_disco
+
+
+def _sha256(caminho):
+    """sha256 do arquivo, para comparar com outro host ou base de referencia."""
+    import hashlib
+    try:
+        h = hashlib.sha256()
+        with open(caminho, "rb") as fh:
+            for bloco in iter(lambda: fh.read(65536), b""):
+                h.update(bloco)
+        return h.hexdigest()
+    except (IOError, OSError):
+        return None
+
+
+def _quando_carregou(nome, raiz=""):
+    """Instante de carga (data do diretorio em /sys/module) e distancia do
+    boot. Aproximacao documentada: e a mesma fonte do detector de modulo
+    carregado fora do boot."""
+    info = modulos_em_sysfs(raiz).get(nome) or {}
+    carga = info.get("loaded_at") or 0
+    if not carga:
+        return "instante de carga nao disponivel"
+    boot = _boot_time(raiz)
+    quando = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(carga))
+    if boot and carga - boot <= FOLGA_DE_BOOT_S:
+        return "carregado no boot (%s, +%ds)" % (quando, carga - boot)
+    if boot:
+        return ("carregado DEPOIS do boot (%s, %.1fh apos o boot)"
+                % (quando, (carga - boot) / 3600.0))
+    return "carregado em %s" % quando
+
+
 def _descreve_modulo(nome, letras, raiz=""):
-    """Uma linha legivel por modulo: letras, arquivo, pacote e assinatura.
-    Com raiz (arvore sintetica de teste) so as letras: nao ha arquivo real
-    para perguntar a rpm ou modinfo."""
-    partes = ["%s [%s]" % (nome, ", ".join(letras))]
+    """
+    Uma linha por modulo, com o que a pos-analise precisa: marca, quando
+    carregou, de que arquivo (conferido contra a memoria), hash, pacote dono e
+    assinatura. Pedido do Mario: "adicionou mais informacao mas ainda nao ajuda
+    na pos analise".
+
+    Com raiz (arvore sintetica de teste) so marca e carga: nao ha arquivo real
+    para perguntar a modinfo ou rpm.
+    """
+    partes = ["%s [%s]" % (nome, ", ".join(letras)),
+              _quando_carregou(nome, raiz)]
     if raiz:
-        return partes[0]
-    caminho = _caminho_do_ko(nome)
-    partes.append(caminho or "arquivo .ko nao localizado")
+        return "; ".join(partes)
+    caminho, confere = arquivo_do_modulo(nome)
+    if not caminho:
+        partes.append("arquivo .ko nao localizado")
+        return "; ".join(partes)
+    partes.append("arquivo %s" % caminho)
+    partes.append({True: "confere com o modulo na memoria (srcversion)",
+                   False: "DIFERE do modulo na memoria (srcversion): o arquivo "
+                          "em disco nao e o que esta carregado",
+                   None: "sem srcversion para conferir com a memoria"}[confere])
+    digest = _sha256(caminho)
+    partes.append("sha256 %s" % digest if digest else "sha256 indisponivel")
     dono = _pacote_dono(caminho)
     partes.append("pacote: " + (dono if dono else
                                 "nenhum pacote o possui" if dono is False
                                 else "nao foi possivel consultar"))
-    signer = _assinante(nome)
+    signer = _modinfo("signer", caminho)
     partes.append("assinatura: " + (signer if signer else
                                     "sem assinatura" if signer == ""
                                     else "nao foi possivel consultar"))

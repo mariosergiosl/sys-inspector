@@ -66,8 +66,9 @@ def test_o_achado_nomeia_os_modulos(tmpdir):
                  {"vboxguest": "OEn", "vboxsf": "OEn"})
     a = _achado(raiz)
     assert "vboxguest, vboxsf" in a.description
-    assert a.evidence["modulos_com_a_marca"] == ["vboxguest [O, E]",
-                                                 "vboxsf [O, E]"]
+    linhas = a.evidence["modulos_com_a_marca"]
+    esperado = ["vboxguest [O, E]", "vboxsf [O, E]"]
+    assert [ln.split(";")[0] for ln in linhas] == esperado
     assert "Confirmar a procedencia de vboxguest, vboxsf" in a.recommendation
 
 
@@ -85,7 +86,8 @@ def test_modulo_com_outra_marca_nao_e_apontado(tmpdir):
     """So entra quem leva uma das marcas que acenderam o achado."""
     raiz = _host(tmpdir, (1 << 12), {"nvidia": "P", "zfs": "O"})
     a = _achado(raiz)
-    assert a.evidence["modulos_com_a_marca"] == ["zfs [O]"]
+    linhas = a.evidence["modulos_com_a_marca"]
+    assert [ln.split(";")[0] for ln in linhas] == ["zfs [O]"]
 
 
 def test_evidencia_legivel_e_nao_repr():
@@ -97,3 +99,67 @@ def test_evidencia_legivel_e_nao_repr():
     assert "{" not in texto and "'" not in texto
     assert _texto_evidencia("ja e texto") == "ja e texto"
     assert _texto_evidencia(42) == "42"
+
+
+def test_instante_de_carga_relativo_ao_boot(tmpdir):
+    """Para a pos-analise: carregado no boot ou depois, e quando."""
+    raiz = _host(tmpdir, (1 << 12), {"no_boot": "O", "depois": "O"})
+    for nome, carga in (("no_boot", BOOT + 20), ("depois", BOOT + 7200)):
+        _escreve(os.path.join(raiz, "sys", "module", nome, "initstate"),
+                 "live\n")
+        os.utime(os.path.join(raiz, "sys", "module", nome), (carga, carga))
+    linhas = _achado(raiz).evidence["modulos_com_a_marca"]
+    assert "carregado DEPOIS do boot" in linhas[0] and "2.0h" in linhas[0]
+    assert "carregado no boot" in linhas[1] and "+20s" in linhas[1]
+
+
+def _modinfo_falso(tabela):
+    def _f(campo, alvo):
+        return tabela.get((campo, alvo))
+    return _f
+
+
+def test_arquivo_do_modulo_e_o_carregado_e_conferido(tmpdir, monkeypatch):
+    """REPROVA A PRIMEIRA VERSAO DESTA CORRECAO: na gwlocal o achado apontava
+    o vboxguest da distribuicao (pacote do kernel), e o carregado era o de
+    misc/, sem pacote. O arquivo vem do modinfo e e conferido pelo srcversion
+    da memoria."""
+    from src.collectors import rootkit
+    raiz = str(tmpdir)
+    _escreve(os.path.join(raiz, "sys", "module", "vboxguest", "srcversion"),
+             "146BF037A6FCEF06C0A6A2A\n")
+    misc = "/lib/modules/x/misc/vboxguest.ko"
+    monkeypatch.setattr(rootkit, "_modinfo", _modinfo_falso({
+        ("filename", "vboxguest"): misc,
+        ("srcversion", misc): "146BF037A6FCEF06C0A6A2A"}))
+    assert rootkit.arquivo_do_modulo("vboxguest", raiz) == (misc, True)
+
+
+def test_arquivo_em_disco_diferente_da_memoria_e_dito(tmpdir, monkeypatch):
+    """Arquivo em disco que nao e o carregado e, por si, indicio."""
+    from src.collectors import rootkit
+    raiz = str(tmpdir)
+    _escreve(os.path.join(raiz, "sys", "module", "m", "srcversion"),
+             "AAAA\n")
+    monkeypatch.setattr(rootkit, "_modinfo", _modinfo_falso({
+        ("filename", "m"): "/x/m.ko", ("srcversion", "/x/m.ko"): "BBBB"}))
+    assert rootkit.arquivo_do_modulo("m", raiz) == ("/x/m.ko", False)
+
+
+def test_descricao_completa_para_pos_analise(tmpdir, monkeypatch):
+    """Arquivo, conferencia, sha256, pacote e assinatura na mesma linha."""
+    from src.collectors import rootkit
+    ko = os.path.join(str(tmpdir), "vboxsf.ko")
+    _escreve(ko, "conteudo")
+    monkeypatch.setattr(rootkit, "arquivo_do_modulo",
+                        lambda nome, raiz="": (ko, True))
+    monkeypatch.setattr(rootkit, "_pacote_dono", lambda c: False)
+    monkeypatch.setattr(rootkit, "_modinfo", lambda campo, alvo: "")
+    monkeypatch.setattr(rootkit, "_quando_carregou",
+                        lambda nome, raiz="": "carregado no boot")
+    linha = rootkit._descreve_modulo("vboxsf", "OE")
+    assert "arquivo %s" % ko in linha
+    assert "confere com o modulo na memoria" in linha
+    assert "sha256 " in linha and len(linha.split("sha256 ")[1][:64]) == 64
+    assert "pacote: nenhum pacote o possui" in linha
+    assert "assinatura: sem assinatura" in linha
