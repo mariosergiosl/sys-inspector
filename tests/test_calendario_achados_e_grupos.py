@@ -188,7 +188,7 @@ def test_os_dois_botoes_dentro_de_cada_host():
     fonte = _fonte("src/controllers/server_controller.py")
     assert 'href=\\"/timeline?agent=%s\\"' in fonte
     assert 'href=\\"/calendario?agent=%s\\"' in fonte
-    assert "Linha do tempo</a>" in fonte and "Capturas / \"" in fonte
+    assert "Linha do tempo" in fonte and "Capturas / \"" in fonte
 
 
 # ------------------------------------------------------------------------------

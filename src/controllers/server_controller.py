@@ -235,6 +235,14 @@ def _selo_tipo_captura(tipo):
             "title=\"%s\">%s</span>" % (cor, cor, explicacao, rotulo))
 
 
+# Botao da barra do relatorio no desenho dos botoes de navegacao da Manager
+# (cor, borda e cantos), escrito inline porque a pagina do relatorio nao
+# carrega o CSS das telas do servidor.
+_ESTILO_BOTAO_BARRA = ("color:#4ec9b0;text-decoration:none;font-size:11px;"
+                       "font-family:sans-serif;border:1px solid #2f4f4a;"
+                       "border-radius:4px;padding:3px 10px;white-space:nowrap")
+
+
 def _barra_navegacao(atual=""):
     """Links entre as telas do servidor, com a atual marcada."""
     saida = ""
@@ -1026,13 +1034,18 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                        % agent_uuid)
                     # [F-258/F-259] Os dois calendarios dentro do host, ja
                     # filtrados por ele: os mesmos botoes da barra geral.
-                    + ("<a class=\"navlink\" href=\"/timeline?agent=%s\" "
+                    # O estilo vai no proprio link: a classe navlink da
+                    # Manager nao existe na pagina do relatorio, e os botoes
+                    # apareciam como links sublinhados (visto pelo Mario em
+                    # 2026-10-10).
+                    + ("<a href=\"/timeline?agent=%s\" "
                        "title=\"Calendario de achados deste host\" "
-                       "style=\"margin-left:12px\">&#128337; Linha do tempo</a>"
-                       "<a class=\"navlink\" href=\"/calendario?agent=%s\" "
+                       "style=\"%s;margin-left:12px\">&#128337; Linha do tempo"
+                       "</a><a href=\"/calendario?agent=%s\" "
                        "title=\"Calendario de capturas e coletas deste host\" "
-                       "style=\"margin-left:6px\">&#128197; Capturas / "
-                       "Coletas</a>" % (agent_uuid, agent_uuid))
+                       "style=\"%s;margin-left:6px\">&#128197; Capturas / "
+                       "Coletas</a>" % (agent_uuid, _ESTILO_BOTAO_BARRA,
+                                        agent_uuid, _ESTILO_BOTAO_BARRA))
                     + _acao("collect", "&#128248;",
                             "Solicitar captura agora: entra na fila, o agente "
                             "executa no proximo check-in (ate ~1 ciclo)")
@@ -2075,7 +2088,17 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         # todas.
         # ----------------------------------------------------------------------
         def _url(min_=None, agent=None, types=None):
-            params = [("min", min_ if min_ is not None else minutos)]
+            # [F-258] Dentro do recorte de um dia ou de uma captura, os filtros
+            # de tipo MANTEM o recorte. Ate 2026-10-10 todo link desta tela
+            # montava "?min=", e um clique num tipo dentro do dia de um host
+            # saia do dia e caia na ultima hora. So os botoes de janela, que
+            # passam min_ explicitamente, trocam o dia pela janela recente.
+            if min_ is None and captura_txt.isdigit():
+                params = [("capture", captura_txt)]
+            elif min_ is None and dia_txt:
+                params = [("dia", dia_txt)]
+            else:
+                params = [("min", min_ if min_ is not None else minutos)]
             if agent:
                 params.append(("agent", agent))
             for t in (types or []):
@@ -2123,14 +2146,25 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                               % _esc(nomes.get(agente, agente[:8])))
             if tipos:
                 ativos.append("%d tipo(s) de evento" % len(tipos))
+            # [F-258] "ver tudo" tirava o host E o recorte de uma vez, e quem
+            # estava no dia de um host ia parar na lista geral da ultima hora.
+            # Cada filtro ganha a propria saida, e o recorte (dia ou captura)
+            # fica.
+            saidas = ""
+            if tipos:
+                saidas += ("<a class='btn' href='%s' style='margin-left:10px;"
+                           "padding:2px 10px'>todos os tipos</a>"
+                           % _url(agent=agente))
+            if agente:
+                saidas += ("<a class='btn' href='%s' style='margin-left:10px;"
+                           "padding:2px 10px'>todos os hosts</a>"
+                           % _url(types=tipos))
             limpar = ("<div style='background:#2a2a1a;border-left:3px solid "
                       "#ffd166;padding:8px 14px;margin:10px 0;font-size:11px;"
                       "color:#ffd166'>Filtrado por %s: exibindo %d de %d "
-                      "evento(s) da janela. "
-                      "<a class='btn' href='%s' style='margin-left:10px;"
-                      "padding:2px 10px'>ver tudo</a></div>"
+                      "evento(s) %s. %s</div>"
                       % (" e ".join(ativos), len(eventos), total_janela,
-                         _url()))
+                         recorte, saidas))
 
         cabecalho_tabela = (
             "<thead><tr>"
@@ -2169,8 +2203,26 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                    % (stats["total"], total_janela, recorte,
                       cabecalho_tabela, linhas))
 
+        # [F-258] Quando o recorte tem mais eventos do que o limite exibido,
+        # dizer. Ate 2026-10-10 a tela dizia "1500 no dia" num dia com mais,
+        # e o corte era silencioso.
+        if total_janela >= limite:
+            corpo = ("<div style='background:#2a1a1a;border-left:3px solid "
+                     "#ff6b6b;padding:8px 14px;margin:10px 0;font-size:11px;"
+                     "color:#ff9b9b'>Exibindo so os %d eventos mais recentes "
+                     "%s; ha mais. Restrinja por tipo de evento, ou abra o dia "
+                     "pelo calendario de Capturas / Coletas e escolha uma "
+                     "captura.</div>" % (limite, recorte)) + corpo
+
+        # O titulo diz ONDE se esta: host e recorte. "Linha do tempo" sozinho
+        # fazia a lista de um host parecer a lista geral.
+        titulo = "Linha do tempo"
+        if agente:
+            titulo += ": " + str(nomes.get(agente, agente[:8]))
+        if dia_txt or captura_txt:
+            titulo += ", " + recorte
         self._set_headers()
-        self.wfile.write(self._pagina("Linha do tempo", corpo).encode("utf-8"))
+        self.wfile.write(self._pagina(_esc(titulo), corpo).encode("utf-8"))
 
     def _serve_capabilities(self, controller):
         """
