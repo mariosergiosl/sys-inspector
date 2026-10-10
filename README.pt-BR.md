@@ -32,7 +32,7 @@ Diferente das ferramentas tradicionais que consultam o `/proc` periodicamente, o
 * **Achados forenses (Findings):** Todo coletor emite achados normalizados numa escala única de severidade (Info a Crítico), cada um informando a fonte que o produziu, a técnica MITRE ATT&CK, a evidência bruta e a ação recomendada.
 * **Enumeração de persistência:** Responde à primeira pergunta diante de suspeita de comprometimento, como um invasor sobreviveria a um reboot: units systemd, tarefas cron/at, scripts de inicialização e de perfil, `/etc/ld.so.preload`, autoload de módulos de kernel, regras udev, pilhas PAM e `authorized_keys` por usuário. Itens de baseline permanecem informativos; a severidade só sobe diante de indicadores reais, como execução a partir de diretórios graváveis por usuário, arquivos graváveis por todos, nomes ocultos ou alteração recente.
 
-* **Painel Fleet View:** Monitora vários nós da infraestrutura a partir de uma interface web centralizada.
+* **Painel de Hosts (Manager):** Monitora vários nós da infraestrutura a partir de uma interface web centralizada.
 * **Time Machine Forense:** Pausa a execução ao vivo e volta no tempo para inspecionar snapshots históricos armazenados em SQLite.
 * **Visibilidade em Nível de Kernel:** Usa kprobes/tracepoints do eBPF para monitoramento sem pontos cegos.
 * **Forense Profunda:**
@@ -214,11 +214,10 @@ Para parar: pressione Ctrl+C. O script captura o sinal e limpa automaticamente a
     ├── conf/                  # Configuração e Chaves Criptográficas
     ├── data/                  # Persistência SQLite e IDs de Agente
     ├── docs/                  # Documentação narrativa (docs/en, docs/pt-BR)
-    ├── report/                # Saída de Relatórios HTML
     ├── scripts/               # Auxiliares de desenvolvimento (formatação, venv, testes)
     ├── src/
     │   ├── collectors/        # Engine eBPF e Construtores da Árvore de Processos
-    │   ├── controllers/       # Modos de Execução (Daemon, Web, Snapshot)
+    │   ├── controllers/       # Agente (daemon) e servidor
     │   ├── core/              # Lógica de Banco de Dados e Criptografia
     │   ├── exporters/         # HTML e Web Assets
     │   ├── probes/            # Código-fonte C do eBPF

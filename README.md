@@ -222,11 +222,10 @@ To Stop: Press Ctrl+C. The script traps the signal and automatically cleans up t
     ├── conf/                  # Configuration and Cryptographic Keys
     ├── data/                  # SQLite Persistence and Agent IDs
     ├── docs/                  # Narrative documentation (docs/en, docs/pt-BR)
-    ├── report/                # Standalone HTML Reports Output
     ├── scripts/               # Development helpers (formatting, venv, test runner)
     ├── src/
     │   ├── collectors/        # eBPF Engine and Process Tree Builders
-    │   ├── controllers/       # Execution Modes (Daemon, Web, Snapshot)
+    │   ├── controllers/       # Agent (daemon) and server
     │   ├── core/              # Database and Crypto Logic
     │   ├── exporters/         # HTML and Web Assets
     │   ├── probes/            # C eBPF source code
