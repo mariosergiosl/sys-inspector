@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-10
+
+Wording and hygiene left out of 1.4.0. No change to capture, storage or
+transport.
+
+### Changed
+
+- **"Encaminhamento a bancada" is now "Encaminhamento para analise"**
+  (referral for analysis), the block in every finding that says what the tool
+  does not conclude and who does. "Bancada" (bench) left every other screen
+  text and the Portuguese documentation too.
+
+- **An empty field always says what it is.** 1.4.0 removed the em dash used as
+  a separator, but kept it alone as the value of an empty field. It is now
+  gone from every screen: the "looked and found nothing" state of the report
+  reads "nada encontrado" (nothing found), and other empty cells say what
+  happened in their context: "sem captura" (no capture) for an hour or day
+  without captures, "sem evento" for a Timeline hour without events, "nao
+  medido" for a delay that could not be measured, "nenhuma" for a capture
+  without marks, plus "sem data", "sem FQDN", "nao informado" and "sem
+  resultado" in the Manager screens. The em dash also left the titles and
+  running text of the documentation.
+
+- **New interface screenshots** in `docs/Capturas`, replacing the August set,
+  which still showed Frota and Laudo. They are embedded in the interface
+  guides and the README.
+
+### Fixed
+
+- **The Capabilities screen showed `&mdash;` literally** for a host that did
+  not report its operating system: the placeholder was escaped as text.
+
+- **The test suite no longer fills `/tmp`.** Each run left about 430
+  temporary directories behind; the suite now keeps its temporary files in
+  one session directory, removed at the end when the run passes.
+
+### Removed
+
+- `run_local.live.bash` and `run_snapshot.bash`, which called the `local-live`
+  and `snapshot` modes removed in 1.1.0 and failed when run.
+- The author's personal git helper, a notes file and local test round logs,
+  which were tracked by mistake.
+
 ## [1.4.0] - 2026-10-10
 
 Four defects, all found **on the bench** while bringing the lab up for 1.3.0,

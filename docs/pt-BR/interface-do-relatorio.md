@@ -8,6 +8,8 @@
 
 ## 1. Tela Manager (os hosts)
 
+![Tela Manager](../Capturas/01_hosts/hosts.jpg)
+
 É a primeira tela: uma linha por agente.
 
 ### 1.1 Identidade do host
@@ -63,6 +65,10 @@ redimensionamento.
 
 ### 1.6 Calendários: Linha do tempo e Capturas / Coletas
 
+![Calendário da Linha do tempo](../Capturas/02_linha_do_tempo/calendario_todos_os_hosts.jpg)
+
+![Capturas / Coletas, um dia](../Capturas/03_capturas_coletas/dia_horas_e_lista.jpg)
+
 Dois botões da barra de navegação abrem calendários do mês, e os mesmos dois
 botões existem dentro de cada host (na barra do relatório), já filtrados por ele.
 Acima do mês, um seletor alterna entre todos os hosts e cada host.
@@ -104,6 +110,8 @@ uma lacuna sempre começa um grupo novo. Cada captura leva ao relatório e à li
 de eventos dela.
 
 ## 2. Relatório (por agente)
+
+![Relatório, aba Findings](../Capturas/07_relatorio/achados.jpg)
 
 ### 2.1 Barra superior
 
@@ -166,6 +174,8 @@ ficava espremida. O estado é lembrado pelo navegador, então quem trabalha na
 
 ### 2.3 Abas
 
+![Achado com o encaminhamento para análise](../Capturas/07_relatorio/achado_encaminhamento_para_analise.jpg)
+
 **Findings** (o que está errado), **Processes** (quem executa) e **ATT&CK** (que
 técnica é). A faixa "COMO LER" sugere essa ordem.
 
@@ -184,6 +194,8 @@ processo a que ir.
 
 ### 2.4 Árvore de processos
 
+![Árvore de processos](../Capturas/07_relatorio/processos_arvore.jpg)
+
 - **Rolagem própria**: a árvore rola dentro da própria caixa, nos dois eixos, e o
   cabeçalho das colunas acompanha. A página em si não rola.
 - **Colunas ajustáveis**: mesma divisa arrastável da tela Manager.
@@ -193,6 +205,8 @@ processo a que ir.
 - **ALERTS usa duas linhas** quando há muitos sinais.
 
 ### 2.5 Painel de detalhe do processo
+
+![Detalhe do processo](../Capturas/07_relatorio/processo_detalhe.jpg)
 
 Clicar numa linha abre o detalhe. **Todos os blocos aparecem sempre**, mesmo sem
 dado:

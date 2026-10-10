@@ -1,45 +1,109 @@
-# Capturas de tela para o manual (Sys-Inspector v1.0.0)
+# Capturas de tela (Sys-Inspector v1.4.1)
 
-Capturas do lab (openSUSE/161 sob chaos_maker), organizadas por tela, com nomes
-autoidentificaveis. Acompanha `GUIA-elementos.md` (texto de todo tooltip, menu e
-acao clicavel de cada tela).
+Telas do painel do servidor no laboratório em 10/10/2026: servidor na `openSUSE`
+(192.168.56.161) e três agentes (`openSUSE`, `gwlocal` e `sles15efiboot1`), em
+modo ocioso. O texto de cada tooltip, balão de ajuda e ação clicável está em
+[GUIA-elementos.md](GUIA-elementos.md), porque tooltip não aparece em captura de
+tela.
 
-## Telas de nivel de hosts (Manager)
+As capturas de agosto (v1.0.0) foram substituídas: mostravam "Frota" e "Laudo",
+nomes que a interface deixou na 1.4.0.
 
-- `01_manager_frota/frota_overview.png` — dashboard dos hosts.
-- `02_linha_do_tempo/` — `timeline_overview`, janelas `timeline_janela_15min/6h/24h`,
-  filtros `timeline_filtro_achado/persistencia/processo_inicio/captura`, `timeline_ajuda`.
-- `03_fila/fila_overview.png` — fila de comandos.
-- `04_comandos/comandos_overview.png` — log de comandos.
-- `05_capacidades/capacidades_overview.png` — capacidades por agente (eBPF/BTF/root/cgroup2).
+## 1. Hosts
 
-## Relatorio do agente
+Tela inicial (Manager): um host por linha, com severidade da última captura,
+presença e ritmo do agente, e as ações.
 
-- `06_laudo_findings/` — `findings_overview`, filtros `findings_filtro_critical/high/low/info`,
-  `findings_expandido_persistencia`, `findings_expandido_wx_memoria`, `findings_ajuda`.
-- `07_laudo_processes/`
-  - `processes_arvore` — arvore de processos expandida.
-  - `processes_ordenar_cpu/io/memoria/rede/prioridade` — ordenacoes.
-  - `processes_ajuda_anomaly_score` — legenda dos bits de alerta.
-  - **Detalhe expandido por tipo de deteccao (chaos_maker):**
-    - `processes_detalhe_systemd_pid1` — exemplo geral (todos os campos).
-    - `processes_detalhe_binario_apagado` — deleted_sleep (Executable deleted from disk + unsafe path + unsafe lib).
-    - `processes_detalhe_ferramenta_rede` — artifact_net (Network Resilience: Drops; unsafe path).
-    - `processes_detalhe_firewall_edr` — artifact_fw (bloqueio de trafego/EDR).
-    - `processes_detalhe_lib_nao_confiavel` — artifact_unsafe (Unsafe Library Path).
-    - `processes_detalhe_prioridade_nice` — nice_test_low (prioridade anomala).
-    - `processes_detalhe_mineracao_gpu` — kryptominer (assinatura de GPU/mineracao).
-    - `processes_detalhe_zombie` — artifact_zombie (processo pai).
-    - `processes_detalhe_lsattr_zombie` — lsattr defunct (ZOMBIE/DEFUNCT).
-- `08_laudo_attack/` — `attack_overview`, `attack_ajuda`.
-- `09_laudo_storage/storage_expandido.png` — disco -> particoes -> LVM -> mount.
-- `10_historico/` — `historico_overview`, `historico_comparar` (diff entre duas capturas).
+![Hosts](01_hosts/hosts.jpg)
+
+## 2. Linha do tempo
+
+Calendário de achados e descobertas de todos os hosts. Cada dia mostra a faixa de
+severidade dos achados distintos, os achados novos e o total de eventos.
+
+![Linha do tempo: calendário de todos os hosts](02_linha_do_tempo/calendario_todos_os_hosts.jpg)
+
+Lista de um dia: faixa das 24 horas, filtros por janela e por tipo de evento, a
+leitura da sequência (correlação) e os eventos em ordem cronológica. A hora sem
+evento diz "sem evento", e o processo sem sinal de risco diz "nada encontrado".
+
+![Linha do tempo: lista de um dia](02_linha_do_tempo/dia_todos_os_hosts.jpg)
+
+O mesmo dia, dentro de um host: o título diz o host e o dia, e o corte da lista é
+avisado.
+
+![Linha do tempo: um host num dia](02_linha_do_tempo/dia_de_um_host.jpg)
+
+## 3. Capturas / Coletas
+
+Calendário de capturas de todos os hosts: quantas capturas, a faixa da pior
+captura do dia e as marcas (mudaram, fora do padrão, lacunas).
+
+![Capturas / Coletas: calendário de todos os hosts](03_capturas_coletas/calendario_todos_os_hosts.jpg)
+
+Dia selecionado, com a faixa das 24 horas abaixo do mês. A hora sem captura diz
+"sem captura".
+
+![Capturas / Coletas: dia selecionado](03_capturas_coletas/dia_selecionado.jpg)
+
+Lista do dia por host: horário capturado (agente) e coletado (servidor), atraso
+da coleta, tipo, achados e marcas com o detalhe de cada uma. Capturas iguais em
+sequência viram um grupo, com "primeira" e "ultima".
+
+![Capturas / Coletas: horas e lista do dia](03_capturas_coletas/dia_horas_e_lista.jpg)
+
+## 4. Fila de ingestão
+
+![Fila de ingestão](04_fila/fila.jpg)
+
+## 5. Registro de comandos
+
+![Registro de comandos](05_comandos/comandos.jpg)
+
+## 6. Capacidades dos hosts
+
+![Capacidades dos hosts](06_capacidades/capacidades.jpg)
+
+## 7. Relatório do agente
+
+Aba Findings: barra de navegação entre capturas (com o tipo da captura e os botões
+Linha do tempo e Capturas / Coletas do host), inventário e achados por prioridade.
+
+![Relatório: achados](07_relatorio/achados.jpg)
+
+Achado de kernel tingido aberto: os módulos que carregam a marca, com horário de
+carga, arquivo conferido contra a memória, sha256, pacote e assinante.
+
+![Relatório: kernel tingido](07_relatorio/achado_kernel_tingido.jpg)
+
+Achado com o bloco "Encaminhamento para analise": o que a ferramenta não conclui,
+por quê, e sobre qual objeto.
+
+![Relatório: encaminhamento para análise](07_relatorio/achado_encaminhamento_para_analise.jpg)
+
+Aba Processes, com o inventário recolhido e a árvore aberta.
+
+![Relatório: árvore de processos](07_relatorio/processos_arvore.jpg)
+
+Detalhe de um processo.
+
+![Relatório: detalhe do processo](07_relatorio/processo_detalhe.jpg)
+
+Aba ATT&CK: as técnicas citadas pelos achados, na ordem do kill chain.
+
+![Relatório: ATT&CK](07_relatorio/attack.jpg)
+
+## 8. Histórico do agente
+
+Comportamento ao longo das capturas recentes e a lista de capturas para comparar
+ou baixar.
+
+![Histórico do agente](08_historico/historico.jpg)
 
 ## Como reproduzir
 
-Chrome headless grava o PNG direto no caminho. Estados interativos (abas, filtros,
-detalhe de processo, baloes de ajuda) sao capturados injetando as funcoes da propria
-pagina (`showTab`, `filterFindings`, `filterTable`, `toggleDet`, `toggleDisk`,
-`sortView`) numa copia local do HTML. O detalhe de um processo do chaos e obtido
-filtrando pelo nome (`filterTable`) e chamando `toggleDet(pid)` na linha que casa.
-Os processos do chaos so existem enquanto o chaos_maker roda (janela de ~300s).
+As capturas foram feitas no Chrome, janela de 1600 por 1000, a partir do painel
+`https://192.168.56.161:8443/`. O guia de elementos foi extraído das mesmas
+páginas por um script que lê o HTML servido e reúne os atributos `title`, os
+balões `.balao` e `.score-tooltip` e os manipuladores `onclick`, agrupando valores
+que mudam a cada captura.

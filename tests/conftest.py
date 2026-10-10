@@ -9,8 +9,34 @@
 # ==============================================================================
 
 import os
+import shutil
 import sys
+import tempfile
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+
+# [F-273] Temporarios da suite numa pasta so, apagada quando a suite passa.
+# Medido em 2026-10-10 na VM de testes: cada rodada deixava cerca de 430
+# diretorios tmpXXXX no /tmp (um banco t.db e um .agent_id em cada), porque os
+# testes usam tempfile.mkdtemp sem limpar; ja eram 16833 desde agosto. Este
+# arquivo e importado antes da coleta, entao o desvio pega tambem o mkdtemp
+# feito no corpo de uma classe. Com falha, a pasta fica, para investigar.
+# O tmp_path do proprio pytest fica FORA do desvio: ele limpa a pasta dele no
+# encerramento, depois deste arquivo, e com ela dentro da pasta da sessao
+# reclamava de FileNotFoundError ao final de toda rodada. O pytest ja guarda so
+# as tres ultimas rodadas dele.
+os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", tempfile.gettempdir())
+TMP_DA_SESSAO = tempfile.mkdtemp(prefix="si-pytest-")
+tempfile.tempdir = TMP_DA_SESSAO
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Apaga os temporarios da sessao se a suite passou; senao diz onde estao."""
+    tempfile.tempdir = None
+    if exitstatus == 0:
+        shutil.rmtree(TMP_DA_SESSAO, ignore_errors=True)
+    else:
+        sys.stderr.write("\n[conftest] temporarios mantidos em %s\n"
+                         % TMP_DA_SESSAO)

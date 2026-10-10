@@ -8,6 +8,8 @@
 
 ## 1. Manager screen (the hosts)
 
+![Manager screen](../Capturas/01_hosts/hosts.jpg)
+
 The first screen: one row per agent.
 
 ### 1.1 Host identity
@@ -62,6 +64,10 @@ highlights on hover and the cursor changes to the resize cursor.
 
 ### 1.6 Calendars: Timeline and Captures / Collections
 
+![Timeline calendar](../Capturas/02_linha_do_tempo/calendario_todos_os_hosts.jpg)
+
+![Captures / Collections, one day](../Capturas/03_capturas_coletas/dia_horas_e_lista.jpg)
+
 Two buttons in the navigation bar open month calendars, and the same two buttons
 exist inside every host (in the report bar), already filtered to it. Above the
 month, a selector switches between all hosts and each host.
@@ -106,6 +112,8 @@ always starts a new group. Each capture links to its report and to its event
 list.
 
 ## 2. Report (per agent)
+
+![Report, Findings tab](../Capturas/07_relatorio/achados.jpg)
 
 ### 2.1 Top bar
 
@@ -169,6 +177,8 @@ does not have to collapse it on every report they open.
 
 ### 2.3 Tabs
 
+![Finding with the referral for analysis](../Capturas/07_relatorio/achado_encaminhamento_para_analise.jpg)
+
 **Findings** (what is wrong), **Processes** (who executes) and **ATT&CK** (which
 technique). The "HOW TO READ" strip suggests that order.
 
@@ -188,6 +198,8 @@ no process to go to.
 
 ### 2.4 Process tree
 
+![Process tree](../Capturas/07_relatorio/processos_arvore.jpg)
+
 - **Its own scrolling**: the tree scrolls inside its own box, in both axes, and
   the column header travels with it. The page itself does not scroll.
 - **Resizable columns**: the same draggable divider as the Manager screen.
@@ -197,6 +209,8 @@ no process to go to.
 - **ALERTS uses two lines** when there are many signals.
 
 ### 2.5 Process detail panel
+
+![Process detail](../Capturas/07_relatorio/processo_detalhe.jpg)
 
 Clicking a row opens the detail. **Every block always appears**, even with no
 data:

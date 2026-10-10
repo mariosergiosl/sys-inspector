@@ -2,8 +2,10 @@
 
 This document outlines the development trajectory of **Sys-Inspector**.
 
-## ✅ Completed (v1.4.0)
+## ✅ Completed (v1.4.0 and v1.4.1)
 
+- [x] **Every empty field says what it is** *(v1.4.1)*. No bare dash on any
+  screen; the referral block is "Encaminhamento para analise".
 - [x] **Two calendars, for all hosts and inside each host.** Timeline opens on
   a month of findings and discoveries; Captures / Collections counts captures
   per day. Both share colours and marks, have a 24-hour strip inside each day,

@@ -20,8 +20,9 @@
 
 Unlike traditional tools that poll `/proc` periodically, Sys-Inspector hooks directly into the Linux Kernel to capture events (process execution, file I/O, network connections) in real-time.
 
-## Features (v1.4.0)
+## Features (v1.4.1)
 
+* **Changed in v1.4.1 - Every empty field says what it is:** No screen shows a bare dash any more. The report's "looked and found nothing" state reads "nada encontrado" (nothing found), and other empty cells say what happened in their context, such as "sem captura" for an hour without captures. The referral block of every finding is now "Encaminhamento para analise".
 * **Fixed in v1.4.0 - The signing identity survives a redeploy on a correctly configured agent:** Three defects found in the lab inside the 1.3.0 fix: the inheritance failed on agents holding only the analyst public key, declaring half of the key pair regenerated the other half, and an agent without the analyst private key was refused at startup. `verify_tls` is now documented in `conf/config.yaml`.
 * **New in v1.4.0 - Finding the capture that matters:** The navigation bar shows each capture's type, and a capture taken while the test scenario runs is marked as such however it was started. The SSH and container badges no longer light up on host processes, and the interface now says Hosts and Report, with capture (agent) distinct from collection (server).
 * **New in v1.3.0 - A signing identity that survives a redeploy:** The key that signs captures now lives where state lives, next to the database, and is inherited from the old location rather than regenerated. Every capture carries the fingerprint of the key that signed it and says how that key got there. A new key is legitimate; being born silently is not, because the same agent signing with two keys and nothing explaining it is exactly what the opposing side looks for.
@@ -108,6 +109,16 @@ Once installed, the command is available globally:
 ```bash
     sys-inspector
 ```
+
+## Screenshots
+
+![Hosts screen](https://raw.githubusercontent.com/mariosergiosl/sys-inspector/v1.4.1/docs/Capturas/01_hosts/hosts.jpg)
+
+![Captures / Collections calendar, one day](https://raw.githubusercontent.com/mariosergiosl/sys-inspector/v1.4.1/docs/Capturas/03_capturas_coletas/dia_horas_e_lista.jpg)
+
+![Report, finding with the referral for analysis](https://raw.githubusercontent.com/mariosergiosl/sys-inspector/v1.4.1/docs/Capturas/07_relatorio/achado_encaminhamento_para_analise.jpg)
+
+Every screen, with the text of each tooltip, is in [docs/Capturas](https://github.com/mariosergiosl/sys-inspector/blob/main/docs/Capturas/README.md).
 
 ## Usage
 
