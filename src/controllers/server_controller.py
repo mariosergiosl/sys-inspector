@@ -1003,10 +1003,10 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                     # procura, nao um sinonimo do conceito.
                     "<div style=\"background:#1a1a1a; border-bottom:1px solid #333; "
                     "padding:4px 16px; display:flex; align-items:center\">"
-                    "<a href=\"/\" title=\"Voltar para a tela Manager\" "
-                    "style=\"color:#4ec9b0; padding:4px 10px; font-size:12px; "
-                    "font-family:sans-serif; text-decoration:none\">"
-                    "&larr; Manager</a>"
+                    # Mesmo desenho dos botoes Linha do tempo e Capturas /
+                    # Coletas (pedido do Mario em 2026-10-10).
+                    + ("<a href=\"/\" title=\"Voltar para a tela Manager\" "
+                       "style=\"%s\">&larr; Manager</a>" % _ESTILO_BOTAO_BARRA)
                     + carimbo
                     # [F-234] Navegacao entre as capturas deste agente. A barra
                     # do laudo e o lugar dela: quem esta lendo uma captura quer
