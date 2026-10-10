@@ -2,6 +2,30 @@
 
 This document outlines the development trajectory of **Sys-Inspector**.
 
+## ✅ Completed (v1.4.0)
+
+- [x] **Two calendars, for all hosts and inside each host.** Timeline opens on
+  a month of findings and discoveries; Captures / Collections counts captures
+  per day. Both share colours and marks, have a 24-hour strip inside each day,
+  and group identical consecutive captures.
+- [x] **Captures say what they are.** The navigation bar shows complete, test
+  scenario or idle, and a capture taken while the test scenario runs is marked
+  however the scenario was started.
+- [x] **An alert means something.** The flag needs a Medium-or-above finding or
+  signal; routine Info and Low activity no longer raises it.
+- [x] **Findings that support the follow-up.** The tainted-kernel finding names
+  the modules, their files checked against memory, hashes, packages and
+  signers. Evidence is shown in words, not raw data structures.
+- [x] **Interface vocabulary.** Hosts and Report; the agent captures, the
+  server collects.
+
+## ✅ Completed (v1.2.0 and v1.3.0)
+
+- [x] **The report as an exhibit**: download as a file, navigation between
+  captures, the jump to the process from every finding about one.
+- [x] **A signing identity that survives a redeploy**, and an agent that can be
+  idle between captures.
+
 ## ✅ Completed (v1.1.0)
 
 - [x] **One execution path** (breaking change). The `snapshot`, `live` and

@@ -7,12 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.3.1] - 2026-10-09
+## [1.4.0] - 2026-10-10
 
 Four defects, all found **on the bench** while bringing the lab up for 1.3.0,
 none by reading code. Three of them were inside the fix for the signing key
 that disappeared on redeploy, which already had tests, review and a green CI.
-The rest of this release came from evaluating 1.3.1 itself on a three-agent
+The rest of this release came from evaluating it on a three-agent
 lab: what the screen showed, measured against what the hosts were doing.
 
 ### Changed
