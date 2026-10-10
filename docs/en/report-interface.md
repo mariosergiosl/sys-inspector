@@ -85,7 +85,14 @@ collection delay. Day marks: Δ for captures whose composition changed against t
 previous capture of the same host, ≠ for captures whose total departs from the
 host's usual value (the most common one), and ⚠ for gaps, intervals with no
 capture much longer than usual. In the all-hosts view, the day says how many hosts
-have something to look at.
+have something to look at. The three marks only look at Medium-or-above findings:
+Low ones vary with the host's normal activity and, if they counted, almost every
+capture would be marked. They stay in the strip and, in a group, appear as a
+range ("Low from 4 to 23"). Every piece of the strip and every mark says in words
+what it counts on hover, and the "?" next to the legend, the hours and the Marks
+column explains how to read them. In the list, the Marks column gives the detail:
+what changed ("Critical 2->3"), what the host's usual value is and how long the
+gap lasted.
 
 Clicking a day shows a 24-hour strip with the number of captures per hour, in the
 same colours; clicking an hour narrows the list. In the list, identical

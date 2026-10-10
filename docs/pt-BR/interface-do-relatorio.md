@@ -85,7 +85,13 @@ entre os dois instantes é o atraso da coleta. Marcas do dia: Δ para capturas c
 composição mudou em relação à anterior do mesmo host, ≠ para capturas cujo total
 foge do padrão do host (o valor mais comum), e ⚠ para lacunas, intervalos sem
 captura bem maiores que o típico. Na visão geral, o dia diz quantos hosts têm
-algo a olhar.
+algo a olhar. As três marcas olham só os achados Médio ou acima: o Baixo varia
+com a atividade normal do host e, se contasse, quase toda captura sairia marcada.
+Ele continua na faixa e, num grupo, aparece como intervalo ("Baixo de 4 a 23").
+Cada pedaço da faixa e cada marca dizem por extenso o que contam ao passar o
+mouse, e o "?" ao lado da legenda, das horas e da coluna Marcas explica a leitura.
+Na lista, a coluna Marcas traz o detalhe: o que mudou ("Crítico 2→3"), qual é o
+padrão do host e quanto durou a lacuna.
 
 Ao clicar no dia, uma faixa de 24 horas mostra quantas capturas houve em cada
 hora, com as mesmas cores; clicar numa hora restringe a lista. Na lista, capturas
