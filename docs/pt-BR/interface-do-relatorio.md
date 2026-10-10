@@ -61,6 +61,39 @@ Todas as colunas têm uma **divisa arrastável** na borda direita do título. O
 traço fica destacado ao passar o mouse, e o cursor muda para o de
 redimensionamento.
 
+### 1.6 Calendários: Linha do tempo e Capturas / Coletas
+
+Dois botões da barra de navegação abrem calendários do mês, e os mesmos dois
+botões existem dentro de cada host (na barra do relatório), já filtrados por ele.
+Acima do mês, um seletor alterna entre todos os hosts e cada host.
+
+Os dois usam as mesmas cores: a borda do dia tem a cor da severidade mais alta, e
+a faixa mostra a composição por severidade (C crítico, A alto, M médio, B baixo).
+Info fica de fora, porque é inventário e aparece em toda captura.
+
+**Linha do tempo** abre no calendário de **achados e descobertas**. Em cada dia:
+os achados distintos (o mesmo achado do mesmo host conta uma vez no dia), quantos
+são novos (primeira vez que aquele host mostra aquele achado) e quantos outros
+eventos houve. Clicar no dia abre a lista de eventos daquele dia, a mesma lista
+de antes, com a leitura da sequência no topo; uma leitura repetida a cada captura
+aparece uma vez, com "visto N vezes". Os botões de janela (15min, 1h, 6h, 24h)
+continuam levando à lista recente.
+
+**Capturas / Coletas** conta as capturas por dia. Capturar é o agente obtendo os
+dados do host; coletar é o servidor recebendo o que foi capturado, e a diferença
+entre os dois instantes é o atraso da coleta. Marcas do dia: Δ para capturas cuja
+composição mudou em relação à anterior do mesmo host, ≠ para capturas cujo total
+foge do padrão do host (o valor mais comum), e ⚠ para lacunas, intervalos sem
+captura bem maiores que o típico. Na visão geral, o dia diz quantos hosts têm
+algo a olhar.
+
+Ao clicar no dia, uma faixa de 24 horas mostra quantas capturas houve em cada
+hora, com as mesmas cores; clicar numa hora restringe a lista. Na lista, capturas
+iguais e seguidas aparecem numa linha só ("N capturas iguais", do primeiro ao
+último horário), que abre sob demanda; uma captura que mudou ou que vem depois de
+uma lacuna sempre começa um grupo novo. Cada captura leva ao relatório e à lista
+de eventos dela.
+
 ## 2. Relatório (por agente)
 
 ### 2.1 Barra superior
