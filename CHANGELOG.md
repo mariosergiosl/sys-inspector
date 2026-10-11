@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Timeline list groups the same event repeated on every capture.** One
+  hour of one host had 3,140 events, 1,367 of them the same finding raised again
+  by each of 81 captures. The repeated event (same type, host, subject,
+  severity and PID) now takes one row at its first occurrence, with "seen N
+  times, from ... to ...", which opens to list the times and the capture each
+  one came from.
+
+- **The CI runs on current GitHub actions** (`checkout` and `setup-python` v7,
+  on Node.js 24), replacing v3, which ran on the Node.js 20 being retired.
+
+### Fixed
+
+- **Every capture in idle mode was marked as a gap.** The typical interval was
+  the median of the whole loaded period, stuck at the ~35-second cadence of the
+  day before; at one capture every 300 seconds, each one exceeded it. The
+  typical interval is now the recent one, so only the first captures after a
+  cadence change are marked.
+
+- **Every capture was "off the usual" for a day after the host's state
+  changed.** The 24-hour reference counted captures, and hundreds of
+  ~35-second captures of the old state outvoted a few 300-second ones of the
+  new. The reference is now the host's latest twelve captures within 24 hours,
+  and test scenario captures, abnormal on purpose, no longer enter it.
+
+- **The hour strip cut the first letter.** A narrow Critical segment shrank
+  until "C1" was unreadable; each segment now keeps at least its own label.
+
+- **The test scenario left empty directories in the host's `/tmp`.** Its
+  `pivot_root` loop created one with `mktemp -d` every 6 seconds and never
+  removed it, about 50 per 300-second run. The mount point now lives in the
+  scenario's own directory and is removed on every pass.
+
 ## [1.4.1] - 2026-10-10
 
 Wording and hygiene left out of 1.4.0. No change to capture, storage or

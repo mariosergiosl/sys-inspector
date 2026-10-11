@@ -84,7 +84,11 @@ that day's events, the same list as before, with the sequence reading on top; a
 reading repeated on every capture appears once, with "seen N times". The day list
 has on top the same 24-hour strip as the other calendar, counting the distinct
 findings of each hour; clicking an hour narrows the list, and type filters keep
-the day and hour. The window buttons (15min, 1h, 6h, 24h) still lead to the
+the day and hour. The same event repeated on every capture (same type, host,
+subject, severity and PID) takes a single row, at its first occurrence, with
+"visto N vezes, de HH:MM:SS a HH:MM:SS" (seen N times, from ... to ...);
+clicking it lists the times, each one leading to the capture it came from.
+The window buttons (15min, 1h, 6h, 24h) still lead to the
 recent list.
 
 **Captures / Collections** ("Capturas / Coletas") counts captures per day.
@@ -92,9 +96,13 @@ Capturing is the agent obtaining data from the host; collecting is the server
 receiving what was captured, and the gap between the two moments is the
 collection delay. Day marks: Δ for captures whose composition changed against the
 previous capture of the same host, ≠ for captures whose total departs from the
-host's usual value (the most common one in the previous 24 hours, with at least
-three captures to compare), and ⚠ for gaps, intervals with no
-capture much longer than usual. In the all-hosts view, the day says how many hosts
+host's usual value (the most common one in its latest captures, up to twelve
+within the previous 24 hours, leaving out test scenario captures and needing at
+least three to compare), and ⚠ for gaps, intervals with no capture much longer
+than the host's recent typical interval. Counting captures rather than hours
+lets a new state become the usual one within a few captures whatever the
+cadence; and when the cadence changes (switching to idle mode, for example),
+only the first captures at the new cadence are marked as gaps. In the all-hosts view, the day says how many hosts
 have something to look at. The three marks only look at Medium-or-above findings:
 Low ones vary with the host's normal activity and, if they counted, almost every
 capture would be marked. They stay in the strip and, in a group, appear as a

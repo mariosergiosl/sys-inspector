@@ -434,3 +434,30 @@ def agrupar_conclusoes(conclusoes):
             ordem.append(chave)
         grupos[chave][1] += 1
     return [(grupos[k][0], grupos[k][1]) for k in ordem]
+
+
+def agrupar_eventos(eventos):
+    """
+    [F-266] Junta o mesmo evento repetido em uma linha da Linha do tempo.
+
+    Medido em 2026-10-10 na .161: a hora das 18h de 09/10 tinha 3140 eventos,
+    1367 deles o mesmo achado reemitido por cada uma das 81 capturas. Para quem
+    le, e um fato visto 81 vezes. Mesmo evento = mesmo tipo, host, assunto,
+    severidade e PID: o PID entra para que dois processos distintos com a mesma
+    linha de comando continuem sendo duas linhas.
+
+    PARAMETER eventos: em ordem cronologica, como devolve EventStore.
+    Devolve lista de listas de eventos, cada grupo na ordem em que ocorreu e os
+    grupos na ordem da PRIMEIRA ocorrencia, para a lista seguir cronologica.
+    """
+    grupos = {}
+    ordem = []
+    for ev in eventos or []:
+        detalhe = ev.get("detail") or {}
+        chave = (ev.get("type"), ev.get("agent_uuid"), ev.get("subject"),
+                 ev.get("severity"), detalhe.get("pid"))
+        if chave not in grupos:
+            grupos[chave] = []
+            ordem.append(chave)
+        grupos[chave].append(ev)
+    return [grupos[k] for k in ordem]
