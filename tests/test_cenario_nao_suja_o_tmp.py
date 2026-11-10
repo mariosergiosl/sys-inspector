@@ -48,6 +48,13 @@ def _script_do_pivot():
     return corpo[:corpo.index("\nEOF\n") + 1]
 
 
+def _grava_lf(caminho, texto):
+    """Grava com LF. O argumento newline do write_text de Path so existe no
+    Python 3.10+, e a suite roda no Python 3.6 do Leap 15.6."""
+    with io.open(str(caminho), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(texto)
+
+
 def _rodar(tmp_path):
     cenario = tmp_path / "chaos_artifacts"
     tmp_do_host = tmp_path / "tmp_do_host"
@@ -56,10 +63,10 @@ def _rodar(tmp_path):
         d.mkdir()
     for nome, texto in STUBS.items():
         caminho = stubs / nome
-        caminho.write_text(texto, newline="\n")
+        _grava_lf(caminho, texto)
         os.chmod(str(caminho), 0o755)
     script = cenario / "probe_pivot_root.sh"
-    script.write_text(_script_do_pivot(), newline="\n")
+    _grava_lf(script, _script_do_pivot())
     env = dict(os.environ)
     env["PATH"] = str(stubs) + os.pathsep + env.get("PATH", "")
     env["TMPDIR"] = str(tmp_do_host)
