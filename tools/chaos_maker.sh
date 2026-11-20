@@ -1105,15 +1105,23 @@ EOF
 # Este artefato dispara TRES sinais no mesmo processo, e isso e proposital:
 # pivot_root nao acontece sem unshare (NS_CHANGE) e sem mount (MOUNT_OP). A
 # sequencia inteira e o padrao de fuga de conteiner que se quer ver junto.
+#
+# [F-277] O ponto de montagem nasce na pasta do proprio cenario e e removido a
+# cada volta. Ate a 1.4.1 ele vinha de "mktemp -d" DENTRO do namespace: o
+# diretorio era criado no /tmp real do host e so o tmpfs montado sobre ele
+# sumia com o namespace. Medido em 2026-10-10: 1742 diretorios vazios no /tmp
+# da .161, uns 50 por cenario de 300 s.
+BASE=$(cd "$(dirname "$0")" && pwd)
 while true; do
+    NOVA=$(mktemp -d "${BASE}/pivot.XXXXXX") || exit 0
     unshare --mount --fork -- /bin/bash -c '
-        NOVA=$(mktemp -d)
-        mount -t tmpfs tmpfs "$NOVA" 2>/dev/null || exit 0
-        mkdir -p "$NOVA/raiz_antiga" "$NOVA/bin" "$NOVA/tmp"
-        cd "$NOVA" || exit 0
+        mount -t tmpfs tmpfs "$1" 2>/dev/null || exit 0
+        mkdir -p "$1/raiz_antiga" "$1/bin" "$1/tmp"
+        cd "$1" || exit 0
         pivot_root . raiz_antiga 2>/dev/null
         sleep 2
-    ' 2>/dev/null
+    ' _ "$NOVA" 2>/dev/null
+    rmdir "$NOVA" 2>/dev/null
     sleep 4
 done
 EOF

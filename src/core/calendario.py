@@ -60,6 +60,16 @@ RELEVANTES = (SEV_CRITICAL, SEV_HIGH, SEV_MEDIUM)
 # de poucos segundos.
 MULTIPLO_LACUNA = 3
 PISO_LACUNA_S = 120
+# [F-274] O intervalo tipico e a mediana dos ULTIMOS intervalos do host, e
+# nao do periodo carregado inteiro. Medido em 2026-10-10: com o mes
+# dominado por capturas a cada ~35 s, a mediana ficava em 35 s e, depois de
+# o agente passar ao modo ocioso (uma captura a cada 300 s), TODA captura
+# saia como lacuna. Com a janela recente, a troca de cadencia marca as
+# primeiras capturas (a troca aconteceu) e para quando a nova cadencia vira
+# a maioria. Com menos de LACUNA_MINIMO intervalos nao ha tipico, e a marca
+# nao acende.
+JANELA_INTERVALOS = 5
+LACUNA_MINIMO = 3
 
 # [F-265] Padrao do host: o total de achados Medio ou acima mais comum nas
 # capturas das ULTIMAS 24 HORAS antes de cada captura. Ate 2026-10-10 era o
@@ -70,6 +80,16 @@ PISO_LACUNA_S = 120
 # ha padrao para comparar, e a marca nao acende.
 JANELA_PADRAO_S = 24 * 3600
 PADRAO_MINIMO = 3
+# [F-275] A janela das 24 h passa a ter tambem um teto de capturas. Medido em
+# 2026-10-10: as 24 h anteriores tinham centenas de capturas de ~35 s do
+# estado antigo contra poucas de 300 s do estado novo, e o padrao ficava
+# preso ao estado antigo o dia inteiro, so por causa da cadencia. Contando
+# so as ultimas PADRAO_MAXIMO capturas, o estado novo vira padrao depois de
+# poucas capturas, qualquer que seja a cadencia. A captura do cenario de
+# teste (capture_type chaos) e anormal de proposito e nao entra na
+# referencia; ela propria continua comparada com o padrao.
+PADRAO_MAXIMO = 12
+TIPO_CENARIO = "chaos"
 
 NOMES_MES = ("janeiro", "fevereiro", "marco", "abril", "maio", "junho",
              "julho", "agosto", "setembro", "outubro", "novembro", "dezembro")
@@ -126,6 +146,7 @@ def preparar(linhas, nomes=None):
             "lacuna_antes": False,
             "anterior_sev": None,
             "padrao": None,
+            "padrao_n": 0,
             "lacuna_s": None,
         })
     itens.sort(key=lambda i: i["captured_at"])
@@ -134,10 +155,7 @@ def preparar(linhas, nomes=None):
     for item in itens:
         por_host[item["agent_uuid"]].append(item)
     for capturas in por_host.values():
-        intervalos = [b["captured_at"] - a["captured_at"]
-                      for a, b in zip(capturas, capturas[1:])]
-        tipico = statistics.median(intervalos) if intervalos else 0
-        limite = max(PISO_LACUNA_S, MULTIPLO_LACUNA * tipico)
+        recentes = deque(maxlen=JANELA_INTERVALOS)
         anterior = None
         janela = deque()
         contagem = Counter()
@@ -145,7 +163,8 @@ def preparar(linhas, nomes=None):
             # Janela deslizante das 24 h anteriores a ESTA captura, com o
             # contador mantido incrementalmente (meses de capturas a cada ~40 s
             # nao podem custar uma varredura por captura).
-            while janela and (c["captured_at"] - janela[0]["captured_at"]
+            while janela and (len(janela) > PADRAO_MAXIMO - 1
+                              or c["captured_at"] - janela[0]["captured_at"]
                               > JANELA_PADRAO_S):
                 velha = janela.popleft()
                 contagem[velha["total_relevante"]] -= 1
@@ -156,15 +175,21 @@ def preparar(linhas, nomes=None):
                 # normal e ter menos").
                 maior = max(contagem.values())
                 c["padrao"] = min(t for t, n in contagem.items() if n == maior)
+                c["padrao_n"] = len(janela)
                 c["fora_do_padrao"] = c["total_relevante"] != c["padrao"]
-            janela.append(c)
-            contagem[c["total_relevante"]] += 1
+            if c["capture_type"] != TIPO_CENARIO:
+                janela.append(c)
+                contagem[c["total_relevante"]] += 1
             if anterior is not None:
                 c["anterior_sev"] = anterior["sev"]
                 c["mudou"] = c["relevante"] != anterior["relevante"]
                 intervalo = c["captured_at"] - anterior["captured_at"]
-                c["lacuna_antes"] = intervalo > limite
+                if len(recentes) >= LACUNA_MINIMO:
+                    tipico = statistics.median(recentes)
+                    limite = max(PISO_LACUNA_S, MULTIPLO_LACUNA * tipico)
+                    c["lacuna_antes"] = intervalo > limite
                 c["lacuna_s"] = intervalo if c["lacuna_antes"] else None
+                recentes.append(intervalo)
             anterior = c
     return itens
 
@@ -279,7 +304,11 @@ CSS = (
     ".cal-hora{background:var(--drk);border:1px solid #333;border-top-width:4px;"
     "border-radius:3px;padding:3px;font-size:10px;color:#bbb;"
     "text-decoration:none;text-align:center;display:block}"
-    ".cal-hora .cal-faixa span{min-width:0}"
+    # [F-276] Na celula da hora o pedaco estreito encolhia ate cortar a
+    # letra ("C1" virava um traco). Cada pedaco ocupa ao menos o proprio
+    # texto; se a celula nao couber, o que se corta e o fim da faixa, o
+    # Baixo, e nao o Critico, que vem primeiro.
+    ".cal-hora .cal-faixa span{min-width:max-content;flex-shrink:0}"
     ".cal-hora.sel{outline:2px solid var(--cyn)}"
     # Botoes no desenho dos da tela Manager, e nao links sublinhados.
     ".cal-btn{color:var(--cyn);text-decoration:none;border:1px solid #2f4f4a;"
@@ -316,11 +345,14 @@ AJUDA_MARCAS = (
     "<b class='cal-delta'>mudou</b>: a captura tem achados Medio ou acima "
     "diferentes da captura anterior do mesmo host. "
     "<b class='cal-desvio'>fora do padrao</b>: o total de achados Medio ou "
-    "acima difere do valor mais comum daquele host nas 24 horas anteriores "
-    "(com pelo menos tres capturas para comparar). "
+    "acima difere do valor mais comum nas ultimas capturas daquele host "
+    "(ate doze, nas 24 horas anteriores, sem as do cenario de teste, e com "
+    "pelo menos tres para comparar). "
     "<b class='cal-lacuna'>lacuna</b>: o intervalo desde a captura anterior foi "
-    "bem maior que o tipico do host (agente parado, host desligado ou "
-    "entrega interrompida). Achados Baixos variam com a atividade normal e "
+    "bem maior que o tipico recente do host (agente parado, host desligado "
+    "ou entrega interrompida); quando a cadencia muda, como ao passar ao "
+    "modo ocioso, so as primeiras capturas da cadencia nova sao marcadas. "
+    "Achados Baixos variam com a atividade normal e "
     "nao disparam nenhuma destas marcas.")
 
 
@@ -752,9 +784,9 @@ def _marcas_captura(c):
     if c["fora_do_padrao"]:
         marcas += ("<div><span class='cal-marca cal-desvio'>&ne; fora do "
                    "padrao</span><span class='cal-detalhe'>%d achado(s) Medio ou "
-                   "acima; o comum neste host nas 24h anteriores e %d</span>"
-                   "</div>"
-                   % (c["total_relevante"], c["padrao"]))
+                   "acima; o comum nas %d capturas anteriores deste host "
+                   "e %d</span></div>"
+                   % (c["total_relevante"], c["padrao_n"], c["padrao"]))
     if c["lacuna_antes"]:
         marcas += ("<div><span class='cal-marca cal-lacuna'>&#9888; lacuna"
                    "</span><span class='cal-detalhe'>%s sem captura antes desta"
@@ -779,3 +811,41 @@ def _linha_captura(c, selo, link_captura, link_eventos):
                ("<a class='cal-btn' href='%s'>eventos</a>"
                 % link_eventos(c["agent_uuid"], c["id"]))
                if link_eventos else ""))
+
+
+# [F-266] Quantas ocorrencias de um evento repetido a linha abre por extenso.
+# Uma hora pode ter 81 repeticoes; a lista inteira so empurraria a tela, e o
+# que interessa e o intervalo e o acesso as capturas de onde elas sairam.
+REPETICOES_LISTADAS = 30
+
+
+def render_repeticao(grupo, link_captura=None):
+    """
+    [F-266] "visto N vezes, de HH:MM:SS a HH:MM:SS", abrivel, para um evento
+    repetido na Linha do tempo. Grupo de um evento so nao ganha nada.
+
+    PARAMETER grupo: eventos iguais, em ordem (ver correlation.agrupar_eventos).
+    PARAMETER link_captura: funcao(evento) -> URL da captura de onde ele saiu,
+              ou None.
+    """
+    if not grupo or len(grupo) < 2:
+        return ""
+    itens = []
+    for ev in grupo[:REPETICOES_LISTADAS]:
+        hora = _fmt_hora(ev["corrected_ts"])
+        url = link_captura(ev) if link_captura else None
+        itens.append("<a class='cal-btn' href='%s'>%s</a>" % (url, hora)
+                     if url else "<span style='margin-right:8px'>%s</span>"
+                     % hora)
+    resto = len(grupo) - REPETICOES_LISTADAS
+    if resto > 0:
+        itens.append("<span style='color:#777'>e mais %d</span>" % resto)
+    return ("<details class='ev-repete' style='margin-top:3px'>"
+            "<summary style='color:#ffd166;font-size:11px;cursor:pointer' "
+            "title='O mesmo evento (tipo, host, assunto, severidade e PID) "
+            "apareceu %d vezes; a linha mostra a primeira. Clique para ver "
+            "quando, e a captura de cada vez.'>visto %d vezes, de %s a %s"
+            "</summary><div style='margin-top:4px;line-height:2'>%s</div>"
+            "</details>"
+            % (len(grupo), len(grupo), _fmt_hora(grupo[0]["corrected_ts"]),
+               _fmt_hora(grupo[-1]["corrected_ts"]), "".join(itens)))

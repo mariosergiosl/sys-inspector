@@ -73,8 +73,10 @@ def test_marcas_dizem_o_que_mudou_e_qual_e_o_padrao():
     html = calendario.render_lista_do_dia(DIA, _dia_09(), lambda t: t,
                                           lambda u, i: "/r")
     assert "Critico 2&rarr;3" in html and "Alto 2&rarr;4" in html
-    assert ("7 achado(s) Medio ou acima; o comum neste host nas 24h "
-            "anteriores e 4") in html
+    # [F-275] O texto diz quantas capturas formaram o padrao, e nao mais "nas
+    # 24h anteriores": a janela passou a ter teto de capturas.
+    assert ("7 achado(s) Medio ou acima; o comum nas 10 capturas anteriores "
+            "deste host e 4") in html
 
 
 def test_lacuna_diz_quanto_tempo():

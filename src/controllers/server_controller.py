@@ -65,7 +65,8 @@ def id_valido(valor):
 
 
 from src.version import __version__
-from src.core.correlation import correlate, agrupar_conclusoes
+from src.core.correlation import (correlate, agrupar_conclusoes,
+                                  agrupar_eventos)
 from src.core.commands import CommandQueue, ALLOWED, STUCK_LIMIT
 from src.core.tls import ensure_self_signed_cert
 from src.core.outbox import PATH_SLOT, PATH_INGEST, PATH_COMMAND_RESULT
@@ -2000,7 +2001,11 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
 
         linhas = ""
         anterior = None
-        for ev in eventos:
+        # [F-266] O mesmo evento repetido a cada captura vira uma linha so,
+        # na primeira ocorrencia, com "visto N vezes" abrivel.
+        grupos_ev = agrupar_eventos(eventos)
+        for grupo in grupos_ev:
+            ev = grupo[0]
             icone, cor, nome_tipo = self.ICONE_EVENTO.get(
                 ev["type"], ("&#8226;", "#888", ev["type"]))
             # Data e hora completas, local e UTC, como no restante da ferramenta:
@@ -2089,6 +2094,10 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
                         "font-size:13px'>&#8631;</a>" % destino)
 
             attck = _selo_attck(detalhe.get("technique"))
+            contexto += calendario.render_repeticao(
+                grupo, lambda e: ("/agent/%s?capture=%s"
+                                  % (e["agent_uuid"], e["capture_id"])
+                                  if e.get("capture_id") else None))
 
             linhas += ("<tr class='item'>"
                        "<td style='width:90px;color:#888'>%s %s</td>"
@@ -2236,13 +2245,14 @@ class ServerHTTPHandler(BaseHTTPRequestHandler):
         corpo = (voltar_cal + "<style>%s</style>" % calendario.CSS
                  + faixa_horas + barras + topo
                  + "<p style='color:#777;font-size:12px'>%d eventos no total; "
-                   "%d %s, em ordem cronologica corrigida "
+                   "%d %s, em %d linha(s): o evento repetido aparece uma "
+                   "vez, com a contagem. Ordem cronologica corrigida "
                    "pelo desvio de relogio de cada host. A correlacao acima "
                    "analisa exatamente esta janela. O simbolo &#8631; leva do "
                    "evento ao processo na arvore do relatorio.</p>"
                    "<table>%s<tbody>%s</tbody></table>"
                    % (stats["total"], total_janela, recorte,
-                      cabecalho_tabela, linhas))
+                      len(grupos_ev), cabecalho_tabela, linhas))
 
         # [F-258] Quando o recorte tem mais eventos do que o limite exibido,
         # dizer. Ate 2026-10-10 a tela dizia "1500 no dia" num dia com mais,

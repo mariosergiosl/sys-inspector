@@ -84,16 +84,24 @@ eventos houve. Clicar no dia abre a lista de eventos daquele dia, a mesma lista
 de antes, com a leitura da sequência no topo; uma leitura repetida a cada captura
 aparece uma vez, com "visto N vezes". A lista do dia tem no topo a mesma faixa de
 24 horas do outro calendário, contando os achados distintos de cada hora; clicar
-numa hora restringe a lista, e os filtros de tipo mantêm o dia e a hora. Os botões
+numa hora restringe a lista, e os filtros de tipo mantêm o dia e a hora. O mesmo
+evento repetido a cada captura (mesmo tipo, host, assunto, severidade e PID)
+ocupa uma linha só, na primeira vez em que apareceu, com "visto N vezes, de
+HH:MM:SS a HH:MM:SS"; clicar abre os horários, cada um levando à captura de
+onde saiu. Os botões
 de janela (15min, 1h, 6h, 24h) continuam levando à lista recente.
 
 **Capturas / Coletas** conta as capturas por dia. Capturar é o agente obtendo os
 dados do host; coletar é o servidor recebendo o que foi capturado, e a diferença
 entre os dois instantes é o atraso da coleta. Marcas do dia: Δ para capturas cuja
 composição mudou em relação à anterior do mesmo host, ≠ para capturas cujo total
-foge do padrão do host (o valor mais comum nas 24 horas anteriores, com pelo
-menos três capturas para comparar), e ⚠ para lacunas, intervalos sem
-captura bem maiores que o típico. Na visão geral, o dia diz quantos hosts têm
+foge do padrão do host (o valor mais comum nas últimas capturas dele, até doze
+nas 24 horas anteriores, sem as do cenário de teste e com pelo menos três para
+comparar), e ⚠ para lacunas, intervalos sem captura bem maiores que o típico
+recente do host. Contar capturas, e não horas, faz o estado novo virar padrão
+em poucas capturas qualquer que seja a cadência; e, quando a cadência muda (ao
+passar ao modo ocioso, por exemplo), só as primeiras capturas da nova saem como
+lacuna. Na visão geral, o dia diz quantos hosts têm
 algo a olhar. As três marcas olham só os achados Médio ou acima: o Baixo varia
 com a atividade normal do host e, se contasse, quase toda captura sairia marcada.
 Ele continua na faixa e, num grupo, aparece como intervalo ("Baixo de 4 a 23").
